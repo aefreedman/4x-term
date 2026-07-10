@@ -1,0 +1,20 @@
+[package]
+name = "game-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+crossterm.workspace = true
+futures-util.workspace = true
+game-app = { path = "../game-app" }
+ratatui.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+game-core = { path = "../game-core" }
+
+[lints]
+workspace = true

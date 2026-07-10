@@ -791,6 +791,7 @@ dependencies = [
  "crossterm",
  "futures-util",
  "game-app",
+ "game-core",
  "ratatui",
  "tokio",
 ]

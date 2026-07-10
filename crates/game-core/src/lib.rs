@@ -51,10 +51,8 @@ pub struct Position3 {
 impl Position3 {
     #[must_use]
     pub fn distance(self, other: Self) -> f64 {
-        ((self.x - other.x).powi(2)
-            + (self.y - other.y).powi(2)
-            + (self.z - other.z).powi(2))
-        .sqrt()
+        ((self.x - other.x).powi(2) + (self.y - other.y).powi(2) + (self.z - other.z).powi(2))
+            .sqrt()
     }
 
     #[must_use]
@@ -214,12 +212,7 @@ impl SystemGraph {
             let mut neighbors: Vec<_> = systems
                 .iter()
                 .filter(|other| other.id != system.id)
-                .map(|other| {
-                    (
-                        system.position.distance(other.position),
-                        other.id.clone(),
-                    )
-                })
+                .map(|other| (system.position.distance(other.position), other.id.clone()))
                 .collect();
             neighbors.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
             for (_, neighbor) in neighbors.into_iter().take(3) {
@@ -238,8 +231,14 @@ impl SystemGraph {
             .collect();
         for (a, b) in undirected {
             let distance = positions[&a].distance(positions[&b]);
-            edges.get_mut(&a).expect("known graph node").push((b.clone(), distance));
-            edges.get_mut(&b).expect("known graph node").push((a.clone(), distance));
+            edges
+                .get_mut(&a)
+                .expect("known graph node")
+                .push((b.clone(), distance));
+            edges
+                .get_mut(&b)
+                .expect("known graph node")
+                .push((a.clone(), distance));
         }
         for neighbors in edges.values_mut() {
             neighbors.sort_by(|a, b| a.0.cmp(&b.0));
@@ -371,12 +370,34 @@ struct Clock(pub u64);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GameEvent {
     TickAdvanced(u64),
-    Produced { system: ContentId, recipe: ContentId },
-    Consumed { system: ContentId, recipe: ContentId },
-    Bought { trader: ContentId, good: ContentId, quantity: u32, total: Money },
-    Sold { trader: ContentId, good: ContentId, quantity: u32, total: Money },
-    Departed { trader: ContentId, destination: ContentId },
-    Arrived { trader: ContentId, system: ContentId },
+    Produced {
+        system: ContentId,
+        recipe: ContentId,
+    },
+    Consumed {
+        system: ContentId,
+        recipe: ContentId,
+    },
+    Bought {
+        trader: ContentId,
+        good: ContentId,
+        quantity: u32,
+        total: Money,
+    },
+    Sold {
+        trader: ContentId,
+        good: ContentId,
+        quantity: u32,
+        total: Money,
+    },
+    Departed {
+        trader: ContentId,
+        destination: ContentId,
+    },
+    Arrived {
+        trader: ContentId,
+        system: ContentId,
+    },
     Rejected(String),
 }
 
@@ -453,7 +474,11 @@ pub struct GameSession {
 
 impl GameSession {
     pub fn new(definition: GameDefinition) -> Result<Self, CoreError> {
-        let player_count = definition.traders.iter().filter(|trader| trader.player).count();
+        let player_count = definition
+            .traders
+            .iter()
+            .filter(|trader| trader.player)
+            .count();
         if player_count != 1 {
             return Err(CoreError::InvalidPlayerCount);
         }
@@ -534,7 +559,11 @@ impl GameSession {
     pub fn step(&mut self) -> Result<(), CoreError> {
         self.advance_travel();
         self.replenish_sources()?;
-        for layer in [RecipeLayer::Primary, RecipeLayer::Secondary, RecipeLayer::Tertiary] {
+        for layer in [
+            RecipeLayer::Primary,
+            RecipeLayer::Secondary,
+            RecipeLayer::Tertiary,
+        ] {
             self.execute_recipes(layer)?;
         }
         self.run_automated_traders()?;
@@ -583,7 +612,11 @@ impl GameSession {
             })
             .collect::<Vec<_>>();
         traders.sort_by(|a, b| a.id.cmp(&b.id));
-        CoreSnapshot { tick: self.tick(), markets, traders }
+        CoreSnapshot {
+            tick: self.tick(),
+            markets,
+            traders,
+        }
     }
 
     #[must_use]
@@ -594,6 +627,30 @@ impl GameSession {
     #[must_use]
     pub fn catalog(&self) -> &Catalog {
         self.world.resource::<Catalog>()
+    }
+
+    pub fn quotes(
+        &mut self,
+        system: &ContentId,
+        good: &ContentId,
+    ) -> Result<(Money, Money), CoreError> {
+        let entity = self.market_entity(system)?;
+        let market = self.world.get::<Market>(entity).expect("market");
+        Ok((
+            self.buy_quote(market, good)?,
+            self.sell_quote(market, good)?,
+        ))
+    }
+
+    #[must_use]
+    pub fn shortest_path(
+        &self,
+        start: &ContentId,
+        destination: &ContentId,
+    ) -> Option<(Vec<ContentId>, f64)> {
+        self.world
+            .resource::<SystemGraph>()
+            .shortest_path(start, destination)
     }
 
     fn player_entity(&mut self) -> Result<Entity, CoreError> {
@@ -610,14 +667,22 @@ impl GameSession {
             .iter(&self.world)
             .find(|(_, id)| &id.0 == system_id)
             .map(|(entity, _)| entity)
-            .ok_or_else(|| CoreError::Unknown { kind: "system", id: system_id.to_string() })
+            .ok_or_else(|| CoreError::Unknown {
+                kind: "system",
+                id: system_id.to_string(),
+            })
     }
 
     fn player_buy(&mut self, good: &ContentId, quantity: u32) -> Result<(), CoreError> {
         let trader_entity = self.player_entity()?;
         let system = {
-            let trader = self.world.get::<Trader>(trader_entity).expect("trader component");
-            if trader.travel.is_some() { return Err(CoreError::InTransit); }
+            let trader = self
+                .world
+                .get::<Trader>(trader_entity)
+                .expect("trader component");
+            if trader.travel.is_some() {
+                return Err(CoreError::InTransit);
+            }
             trader.system.clone()
         };
         self.buy(trader_entity, &system, good, quantity)
@@ -626,8 +691,13 @@ impl GameSession {
     fn player_sell(&mut self, good: &ContentId, quantity: u32) -> Result<(), CoreError> {
         let trader_entity = self.player_entity()?;
         let system = {
-            let trader = self.world.get::<Trader>(trader_entity).expect("trader component");
-            if trader.travel.is_some() { return Err(CoreError::InTransit); }
+            let trader = self
+                .world
+                .get::<Trader>(trader_entity)
+                .expect("trader component");
+            if trader.travel.is_some() {
+                return Err(CoreError::InTransit);
+            }
             trader.system.clone()
         };
         self.sell(trader_entity, &system, good, quantity)
@@ -638,70 +708,163 @@ impl GameSession {
         self.begin_travel(entity, destination)
     }
 
-    fn buy(&mut self, trader_entity: Entity, system: &ContentId, good: &ContentId, quantity: u32) -> Result<(), CoreError> {
-        if quantity == 0 { return Err(CoreError::ZeroQuantity); }
+    fn buy(
+        &mut self,
+        trader_entity: Entity,
+        system: &ContentId,
+        good: &ContentId,
+        quantity: u32,
+    ) -> Result<(), CoreError> {
+        if quantity == 0 {
+            return Err(CoreError::ZeroQuantity);
+        }
         let market_entity = self.market_entity(system)?;
         let price = {
             let market = self.world.get::<Market>(market_entity).expect("market");
             self.sell_quote(market, good)?
         };
-        let total = price.0.checked_mul(i64::from(quantity)).ok_or(CoreError::Overflow)?;
+        let total = price
+            .0
+            .checked_mul(i64::from(quantity))
+            .ok_or(CoreError::Overflow)?;
         {
             let market = self.world.get::<Market>(market_entity).expect("market");
-            if market.inventory.get(good).copied().unwrap_or(0) < quantity { return Err(CoreError::InsufficientStock); }
+            if market.inventory.get(good).copied().unwrap_or(0) < quantity {
+                return Err(CoreError::InsufficientStock);
+            }
             let trader = self.world.get::<Trader>(trader_entity).expect("trader");
-            if trader.currency.0 < total { return Err(CoreError::InsufficientFunds); }
+            if trader.currency.0 < total {
+                return Err(CoreError::InsufficientFunds);
+            }
             let used: u32 = trader.cargo.values().sum();
-            if used.checked_add(quantity).ok_or(CoreError::Overflow)? > trader.cargo_capacity { return Err(CoreError::InsufficientCapacity); }
+            if used.checked_add(quantity).ok_or(CoreError::Overflow)? > trader.cargo_capacity {
+                return Err(CoreError::InsufficientCapacity);
+            }
         }
-        self.world.get_mut::<Market>(market_entity).expect("market").inventory.entry(good.clone()).and_modify(|stock| *stock -= quantity);
-        self.world.get_mut::<Market>(market_entity).expect("market").currency.0 = self.world.get::<Market>(market_entity).expect("market").currency.0.checked_add(total).ok_or(CoreError::Overflow)?;
-        let trader_id = self.world.get::<StableId>(trader_entity).expect("id").0.clone();
+        self.world
+            .get_mut::<Market>(market_entity)
+            .expect("market")
+            .inventory
+            .entry(good.clone())
+            .and_modify(|stock| *stock -= quantity);
+        self.world
+            .get_mut::<Market>(market_entity)
+            .expect("market")
+            .currency
+            .0 = self
+            .world
+            .get::<Market>(market_entity)
+            .expect("market")
+            .currency
+            .0
+            .checked_add(total)
+            .ok_or(CoreError::Overflow)?;
+        let trader_id = self
+            .world
+            .get::<StableId>(trader_entity)
+            .expect("id")
+            .0
+            .clone();
         let mut trader = self.world.get_mut::<Trader>(trader_entity).expect("trader");
         trader.currency.0 -= total;
         *trader.cargo.entry(good.clone()).or_default() += quantity;
         trader.ledger.purchase_cost += total;
         trader.ledger.completed_transactions += 1;
-        self.world.resource_mut::<EventBuffer>().0.push(GameEvent::Bought { trader: trader_id, good: good.clone(), quantity, total: Money(total) });
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::Bought {
+                trader: trader_id,
+                good: good.clone(),
+                quantity,
+                total: Money(total),
+            });
         Ok(())
     }
 
-    fn sell(&mut self, trader_entity: Entity, system: &ContentId, good: &ContentId, quantity: u32) -> Result<(), CoreError> {
-        if quantity == 0 { return Err(CoreError::ZeroQuantity); }
+    fn sell(
+        &mut self,
+        trader_entity: Entity,
+        system: &ContentId,
+        good: &ContentId,
+        quantity: u32,
+    ) -> Result<(), CoreError> {
+        if quantity == 0 {
+            return Err(CoreError::ZeroQuantity);
+        }
         let market_entity = self.market_entity(system)?;
         let price = {
             let market = self.world.get::<Market>(market_entity).expect("market");
             self.buy_quote(market, good)?
         };
-        let total = price.0.checked_mul(i64::from(quantity)).ok_or(CoreError::Overflow)?;
+        let total = price
+            .0
+            .checked_mul(i64::from(quantity))
+            .ok_or(CoreError::Overflow)?;
         {
             let market = self.world.get::<Market>(market_entity).expect("market");
-            if market.currency.0 < total { return Err(CoreError::InsufficientFunds); }
+            if market.currency.0 < total {
+                return Err(CoreError::InsufficientFunds);
+            }
             let trader = self.world.get::<Trader>(trader_entity).expect("trader");
-            if trader.cargo.get(good).copied().unwrap_or(0) < quantity { return Err(CoreError::InsufficientStock); }
+            if trader.cargo.get(good).copied().unwrap_or(0) < quantity {
+                return Err(CoreError::InsufficientStock);
+            }
         }
-        let trader_id = self.world.get::<StableId>(trader_entity).expect("id").0.clone();
+        let trader_id = self
+            .world
+            .get::<StableId>(trader_entity)
+            .expect("id")
+            .0
+            .clone();
         let mut trader = self.world.get_mut::<Trader>(trader_entity).expect("trader");
-        trader.currency.0 = trader.currency.0.checked_add(total).ok_or(CoreError::Overflow)?;
+        trader.currency.0 = trader
+            .currency
+            .0
+            .checked_add(total)
+            .ok_or(CoreError::Overflow)?;
         let cargo = trader.cargo.get_mut(good).expect("validated cargo");
         *cargo -= quantity;
-        if *cargo == 0 { trader.cargo.remove(good); }
+        if *cargo == 0 {
+            trader.cargo.remove(good);
+        }
         trader.ledger.sales_revenue += total;
         trader.ledger.cargo_units_moved += u64::from(quantity);
         trader.ledger.completed_transactions += 1;
         let mut market = self.world.get_mut::<Market>(market_entity).expect("market");
         market.currency.0 -= total;
         *market.inventory.entry(good.clone()).or_default() += quantity;
-        self.world.resource_mut::<EventBuffer>().0.push(GameEvent::Sold { trader: trader_id, good: good.clone(), quantity, total: Money(total) });
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::Sold {
+                trader: trader_id,
+                good: good.clone(),
+                quantity,
+                total: Money(total),
+            });
         Ok(())
     }
 
     fn midpoint(&self, market: &Market, good: &ContentId) -> Result<Money, CoreError> {
-        let definition = self.world.resource::<Catalog>().goods.get(good).ok_or_else(|| CoreError::Unknown { kind: "good", id: good.to_string() })?;
+        let definition = self
+            .world
+            .resource::<Catalog>()
+            .goods
+            .get(good)
+            .ok_or_else(|| CoreError::Unknown {
+                kind: "good",
+                id: good.to_string(),
+            })?;
         let target = i64::from(market.targets.get(good).copied().unwrap_or(1).max(1));
         let inventory = i64::from(market.inventory.get(good).copied().unwrap_or(0));
         let scarcity = (target - inventory).clamp(-target, target);
-        let adjustment = definition.base_price.0.checked_mul(scarcity).ok_or(CoreError::Overflow)? / (2 * target);
+        let adjustment = definition
+            .base_price
+            .0
+            .checked_mul(scarcity)
+            .ok_or(CoreError::Overflow)?
+            / (2 * target);
         Ok(Money((definition.base_price.0 + adjustment).max(1)))
     }
 
@@ -713,19 +876,53 @@ impl GameSession {
         Ok(Money((self.midpoint(market, good)?.0 * 110 / 100).max(1)))
     }
 
-    fn begin_travel(&mut self, trader_entity: Entity, destination: &ContentId) -> Result<(), CoreError> {
+    fn begin_travel(
+        &mut self,
+        trader_entity: Entity,
+        destination: &ContentId,
+    ) -> Result<(), CoreError> {
         let (start, speed) = {
             let trader = self.world.get::<Trader>(trader_entity).expect("trader");
-            if trader.travel.is_some() { return Err(CoreError::InTransit); }
+            if trader.travel.is_some() {
+                return Err(CoreError::InTransit);
+            }
             (trader.system.clone(), trader.speed)
         };
-        if &start == destination { return Err(CoreError::AlreadyThere); }
-        let (route, _) = self.world.resource::<SystemGraph>().shortest_path(&start, destination).ok_or(CoreError::NoRoute)?;
-        let first_distance = self.world.resource::<SystemGraph>().route_distance(&route[..2]);
+        if &start == destination {
+            return Err(CoreError::AlreadyThere);
+        }
+        let (route, _) = self
+            .world
+            .resource::<SystemGraph>()
+            .shortest_path(&start, destination)
+            .ok_or(CoreError::NoRoute)?;
+        let first_distance = self
+            .world
+            .resource::<SystemGraph>()
+            .route_distance(&route[..2]);
         let remaining_ticks = ticks_for_distance(first_distance, speed);
-        self.world.get_mut::<Trader>(trader_entity).expect("trader").travel = Some(TravelPlan { destination: destination.clone(), route, next_leg: 1, remaining_ticks });
-        let trader_id = self.world.get::<StableId>(trader_entity).expect("id").0.clone();
-        self.world.resource_mut::<EventBuffer>().0.push(GameEvent::Departed { trader: trader_id, destination: destination.clone() });
+        self.world
+            .get_mut::<Trader>(trader_entity)
+            .expect("trader")
+            .travel = Some(TravelPlan {
+            destination: destination.clone(),
+            route,
+            next_leg: 1,
+            remaining_ticks,
+        });
+        let trader_id = self
+            .world
+            .get::<StableId>(trader_entity)
+            .expect("id")
+            .0
+            .clone();
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::Departed {
+                trader: trader_id,
+                destination: destination.clone(),
+            });
         Ok(())
     }
 
@@ -735,7 +932,9 @@ impl GameSession {
         let mut query = self.world.query::<(Entity, &StableId, &mut Trader)>();
         for (entity, id, mut trader) in query.iter_mut(&mut self.world) {
             let speed = trader.speed;
-            let Some(mut plan) = trader.travel.take() else { continue; };
+            let Some(mut plan) = trader.travel.take() else {
+                continue;
+            };
             plan.remaining_ticks = plan.remaining_ticks.saturating_sub(1);
             if plan.remaining_ticks > 0 {
                 trader.travel = Some(plan);
@@ -749,13 +948,20 @@ impl GameSession {
             } else {
                 let from = &plan.route[plan.next_leg - 1];
                 let to = &plan.route[plan.next_leg];
-                let distance = graph.neighbors(from).iter().find(|(id, _)| id == to).map_or(0.0, |(_, distance)| *distance);
+                let distance = graph
+                    .neighbors(from)
+                    .iter()
+                    .find(|(id, _)| id == to)
+                    .map_or(0.0, |(_, distance)| *distance);
                 plan.remaining_ticks = ticks_for_distance(distance, speed);
                 trader.travel = Some(plan);
             }
         }
         for (_, trader, system) in arrivals {
-            self.world.resource_mut::<EventBuffer>().0.push(GameEvent::Arrived { trader, system });
+            self.world
+                .resource_mut::<EventBuffer>()
+                .0
+                .push(GameEvent::Arrived { trader, system });
         }
     }
 
@@ -764,7 +970,9 @@ impl GameSession {
         for mut market in query.iter_mut(&mut self.world) {
             for source in market.sources.clone() {
                 let stock = market.inventory.entry(source.good).or_default();
-                *stock = stock.checked_add(source.quantity_per_tick).ok_or(CoreError::Overflow)?;
+                *stock = stock
+                    .checked_add(source.quantity_per_tick)
+                    .ok_or(CoreError::Overflow)?;
             }
         }
         Ok(())
@@ -776,42 +984,94 @@ impl GameSession {
         let mut query = self.world.query::<(&StableId, &mut Market)>();
         for (system_id, mut market) in query.iter_mut(&mut self.world) {
             for recipe_id in market.recipes.clone() {
-                let recipe = recipes.get(&recipe_id).ok_or_else(|| CoreError::Unknown { kind: "recipe", id: recipe_id.to_string() })?;
-                if recipe.layer != layer || !recipe.inputs.iter().all(|input| market.inventory.get(&input.good).copied().unwrap_or(0) >= input.quantity) { continue; }
+                let recipe = recipes.get(&recipe_id).ok_or_else(|| CoreError::Unknown {
+                    kind: "recipe",
+                    id: recipe_id.to_string(),
+                })?;
+                if recipe.layer != layer
+                    || !recipe.inputs.iter().all(|input| {
+                        market.inventory.get(&input.good).copied().unwrap_or(0) >= input.quantity
+                    })
+                {
+                    continue;
+                }
                 for input in &recipe.inputs {
-                    *market.inventory.get_mut(&input.good).expect("validated input") -= input.quantity;
+                    *market
+                        .inventory
+                        .get_mut(&input.good)
+                        .expect("validated input") -= input.quantity;
                 }
                 for output in &recipe.outputs {
-                    *market.inventory.entry(output.good.clone()).or_default() = market.inventory.get(&output.good).copied().unwrap_or(0).checked_add(output.quantity).ok_or(CoreError::Overflow)?;
+                    *market.inventory.entry(output.good.clone()).or_default() = market
+                        .inventory
+                        .get(&output.good)
+                        .copied()
+                        .unwrap_or(0)
+                        .checked_add(output.quantity)
+                        .ok_or(CoreError::Overflow)?;
                 }
                 produced.push((system_id.0.clone(), recipe.id.clone(), layer));
             }
         }
         for (system, recipe, layer) in produced {
-            let event = if layer == RecipeLayer::Tertiary { GameEvent::Consumed { system, recipe } } else { GameEvent::Produced { system, recipe } };
+            let event = if layer == RecipeLayer::Tertiary {
+                GameEvent::Consumed { system, recipe }
+            } else {
+                GameEvent::Produced { system, recipe }
+            };
             self.world.resource_mut::<EventBuffer>().0.push(event);
         }
         Ok(())
     }
 
     fn run_automated_traders(&mut self) -> Result<(), CoreError> {
-        let automated: Vec<Entity> = self.world.query_filtered::<Entity, (With<Trader>, Without<PlayerControlled>)>().iter(&self.world).collect();
+        let automated: Vec<Entity> = self
+            .world
+            .query_filtered::<Entity, (With<Trader>, Without<PlayerControlled>)>()
+            .iter(&self.world)
+            .collect();
         for entity in automated {
             let (system, traveling, cargo) = {
                 let trader = self.world.get::<Trader>(entity).expect("trader");
-                (trader.system.clone(), trader.travel.is_some(), trader.cargo.clone())
+                (
+                    trader.system.clone(),
+                    trader.travel.is_some(),
+                    trader.cargo.clone(),
+                )
             };
-            if traveling { continue; }
-            if let Some((good, quantity)) = cargo.iter().next().map(|(good, quantity)| (good.clone(), *quantity)) {
+            if traveling {
+                continue;
+            }
+            if let Some((good, quantity)) = cargo
+                .iter()
+                .next()
+                .map(|(good, quantity)| (good.clone(), *quantity))
+            {
                 let _ = self.sell(entity, &system, &good, quantity);
                 continue;
             }
             if let Some((good, destination)) = self.best_trade(entity, &system)? {
                 let market_entity = self.market_entity(&system)?;
-                let available = self.world.get::<Market>(market_entity).expect("market").inventory.get(&good).copied().unwrap_or(0);
+                let available = self
+                    .world
+                    .get::<Market>(market_entity)
+                    .expect("market")
+                    .inventory
+                    .get(&good)
+                    .copied()
+                    .unwrap_or(0);
                 let trader = self.world.get::<Trader>(entity).expect("trader");
-                let unit = self.sell_quote(self.world.get::<Market>(market_entity).expect("market"), &good)?.0;
-                let affordable = if unit > 0 { u32::try_from(trader.currency.0 / unit).unwrap_or(u32::MAX) } else { 0 };
+                let unit = self
+                    .sell_quote(
+                        self.world.get::<Market>(market_entity).expect("market"),
+                        &good,
+                    )?
+                    .0;
+                let affordable = if unit > 0 {
+                    u32::try_from(trader.currency.0 / unit).unwrap_or(u32::MAX)
+                } else {
+                    0
+                };
                 let quantity = available.min(trader.cargo_capacity).min(affordable);
                 if quantity > 0 && self.buy(entity, &system, &good, quantity).is_ok() {
                     self.begin_travel(entity, &destination)?;
@@ -821,28 +1081,58 @@ impl GameSession {
         Ok(())
     }
 
-    fn best_trade(&mut self, _trader: Entity, origin: &ContentId) -> Result<Option<(ContentId, ContentId)>, CoreError> {
+    fn best_trade(
+        &mut self,
+        _trader: Entity,
+        origin: &ContentId,
+    ) -> Result<Option<(ContentId, ContentId)>, CoreError> {
         let origin_entity = self.market_entity(origin)?;
-        let origin_market = self.world.get::<Market>(origin_entity).expect("market").clone();
+        let origin_market = self
+            .world
+            .get::<Market>(origin_entity)
+            .expect("market")
+            .clone();
         let graph = self.world.resource::<SystemGraph>().clone();
-        let markets: Vec<(ContentId, Market)> = self.world.query_filtered::<(&StableId, &Market), With<SystemMarker>>().iter(&self.world).map(|(id, market)| (id.0.clone(), market.clone())).collect();
+        let markets: Vec<(ContentId, Market)> = self
+            .world
+            .query_filtered::<(&StableId, &Market), With<SystemMarker>>()
+            .iter(&self.world)
+            .map(|(id, market)| (id.0.clone(), market.clone()))
+            .collect();
         let mut candidates = Vec::new();
         for (good, stock) in &origin_market.inventory {
-            if *stock == 0 { continue; }
+            if *stock == 0 {
+                continue;
+            }
             let origin_price = self.sell_quote(&origin_market, good)?.0;
             for (destination, market) in &markets {
-                if destination == origin { continue; }
-                let Some((route, distance)) = graph.shortest_path(origin, destination) else { continue; };
+                if destination == origin {
+                    continue;
+                }
+                let Some((route, distance)) = graph.shortest_path(origin, destination) else {
+                    continue;
+                };
                 let destination_price = self.buy_quote(market, good)?.0;
                 let profit = destination_price - origin_price;
                 if profit > 0 {
                     let ticks = graph.route_distance(&route).ceil().max(1.0);
-                    candidates.push((profit as f64 / ticks, good.clone(), destination.clone(), distance));
+                    candidates.push((
+                        profit as f64 / ticks,
+                        good.clone(),
+                        destination.clone(),
+                        distance,
+                    ));
                 }
             }
         }
-        candidates.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)).then_with(|| a.2.cmp(&b.2)));
-        Ok(candidates.first().map(|(_, good, destination, _)| (good.clone(), destination.clone())))
+        candidates.sort_by(|a, b| {
+            b.0.total_cmp(&a.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+        });
+        Ok(candidates
+            .first()
+            .map(|(_, good, destination, _)| (good.clone(), destination.clone())))
     }
 }
 
@@ -855,7 +1145,9 @@ pub fn ticks_for_distance(distance: f64, speed: f64) -> u32 {
 mod tests {
     use super::*;
 
-    fn id(value: &str) -> ContentId { ContentId::new(value).unwrap() }
+    fn id(value: &str) -> ContentId {
+        ContentId::new(value).unwrap()
+    }
 
     #[test]
     fn ids_require_a_namespace() {
@@ -865,19 +1157,38 @@ mod tests {
 
     #[test]
     fn distance_and_duration_are_derived() {
-        let a = Position3 { x: 0.0, y: 0.0, z: 0.0 };
-        let b = Position3 { x: 3.0, y: 4.0, z: 12.0 };
+        let a = Position3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let b = Position3 {
+            x: 3.0,
+            y: 4.0,
+            z: 12.0,
+        };
         assert_eq!(a.distance(b), 13.0);
         assert_eq!(ticks_for_distance(13.0, 5.0), 3);
     }
 
     #[test]
     fn graph_finds_multi_hop_path() {
-        let systems = (0..5).map(|i| SystemDefinition {
-            id: id(&format!("core:s{i}")), name: format!("S{i}"),
-            position: Position3 { x: f64::from(i) * 10.0, y: 0.0, z: 0.0 },
-            inventory: BTreeMap::new(), targets: BTreeMap::new(), currency: Money(0), recipes: vec![], sources: vec![],
-        }).collect::<Vec<_>>();
+        let systems = (0..5)
+            .map(|i| SystemDefinition {
+                id: id(&format!("core:s{i}")),
+                name: format!("S{i}"),
+                position: Position3 {
+                    x: f64::from(i) * 10.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                inventory: BTreeMap::new(),
+                targets: BTreeMap::new(),
+                currency: Money(0),
+                recipes: vec![],
+                sources: vec![],
+            })
+            .collect::<Vec<_>>();
         let graph = SystemGraph::build(&systems).unwrap();
         let (path, distance) = graph.shortest_path(&id("core:s0"), &id("core:s4")).unwrap();
         assert_eq!(path.first(), Some(&id("core:s0")));

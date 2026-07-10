@@ -1,0 +1,19 @@
+[package]
+name = "game-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+game-app = { path = "../game-app" }
+game-content = { path = "../game-content" }
+game-core = { path = "../game-core" }
+game-tui = { path = "../game-tui" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
