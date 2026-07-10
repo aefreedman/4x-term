@@ -16,12 +16,13 @@
 | ECS | `bevy_ecs` without the full Bevy engine |
 | TUI | `ratatui` |
 | Terminal backend | `crossterm` |
+| Async runtime | `tokio` |
 | Serialization | `serde` |
-| Initial content format | RON, YAML, or JSON through format-specific adapters |
+| Initial content format | RON through a format-specific adapter |
 | Error handling | `thiserror` in libraries; `anyhow` at executable boundaries |
 | Logging and diagnostics | `tracing` and `tracing-subscriber` |
 
-The exact human-authored content format can be selected after a small authoring experiment. Runtime code must not depend on that choice.
+RON is the initial human-authored content format. Runtime code must not depend on that choice; deserialized source definitions are validated and compiled into format-independent typed definitions.
 
 ## High-level structure
 
@@ -177,7 +178,9 @@ Use separate stable identifiers for:
 - Save-file references
 - External commands and integrations
 
-Mappings between stable IDs and ECS entities belong in core resources or persistence reconstruction code.
+Stable content IDs are validated string newtypes using a namespace-qualified form such as `core:system_01`. Mappings between stable IDs and ECS entities belong in core resources or persistence reconstruction code.
+
+Currency balances use an integer `Money` newtype representing minor units; floating-point values are not used for balances or transactions. Three-dimensional map coordinates and derived Euclidean distances use finite `f64` values in prototype distance units.
 
 ## Application boundary
 
@@ -194,7 +197,9 @@ pub trait GameSession {
 }
 ```
 
-The TUI consumes immutable view models from `game-app`. View models are designed for presentation but contain no `ratatui` types. This keeps the same interface usable by tests, a graphical client, or a remote protocol adapter.
+The TUI consumes complete immutable view-model snapshots from `game-app`. View models are designed for presentation but contain no `ratatui` types. This keeps the same interface usable by tests, a graphical client, or a remote protocol adapter. Incremental view diffs are deferred until profiling demonstrates a need.
+
+Structurally invalid requests fail immediately at the application boundary. Commands that are structurally valid but rejected by simulation rules produce typed rejection events.
 
 ## TUI adapter
 
@@ -210,15 +215,16 @@ The TUI consumes immutable view models from `game-app`. View models are designed
 
 The TUI has its own local UI state. Selection cursors, active tabs, scroll positions, and focus are not ECS components unless they have simulation meaning.
 
-The main loop is conceptually:
+The TUI runs as an async adapter and concurrently awaits terminal input, application updates, and shutdown signals:
 
 ```text
-poll terminal input
-→ update local UI state or submit a game command
-→ step the application when required
-→ request immutable view models
-→ render
+tokio::select!
+├── terminal input → update local UI state or submit a game command
+├── application update → replace cached view model and render
+└── shutdown signal → exit cleanly
 ```
+
+The TUI renders immutable view-model snapshots received from the application layer. It must not hold locks on the ECS world or query it during rendering.
 
 Terminal setup and restoration should use an RAII guard so raw mode and alternate-screen state are restored after errors or panics where possible.
 
@@ -317,19 +323,51 @@ Perfect cross-platform determinism is not an initial requirement, but replayable
 - Load older fixtures through migrations.
 - Verify stable-reference reconstruction.
 
+## Async execution model
+
+The application is asynchronous from the first prototype, but individual ECS schedules remain synchronous and deterministic.
+
+Use an actor-style owner for the simulation:
+
+```text
+TUI task
+  ├── sends typed requests over a bounded Tokio channel
+  └── receives events/view snapshots over a bounded Tokio channel or watch channel
+
+simulation task
+  ├── exclusively owns GameSession and the ECS World
+  ├── processes one request at a time
+  ├── runs synchronous ECS schedules
+  └── publishes resulting events and immutable view snapshots
+```
+
+Rules:
+
+- Exactly one task owns and mutates the ECS world.
+- Never place the world behind a broadly shared `Arc<Mutex<_>>`.
+- Use bounded channels to make backpressure explicit.
+- Use Tokio `mpsc` for ordered requests and events and `watch` for the latest replaceable view snapshot.
+- Commands that need acknowledgement use a request envelope with a Tokio `oneshot` sender.
+- Use a `watch` channel for the latest replaceable view snapshot; use an `mpsc` channel for ordered events that must not be silently coalesced.
+- Blocking filesystem operations belong in `spawn_blocking` or dedicated adapter tasks.
+- Systems do not spawn tasks or await futures. Async work completes outside the core and returns through typed commands.
+- Cancellation and shutdown are explicit messages/signals, not dropped-task side effects.
+
+This preserves a deterministic core while allowing terminal input, timers, persistence, networking, and future integrations to operate concurrently.
+
 ## Separate-process option
 
-The initial application runs the TUI and simulation in one process. The command/query boundary must remain serialization-friendly enough that a future adapter could replace direct calls with IPC or a network protocol.
+The initial application runs the TUI and simulation in one process with separate Tokio tasks. The command/query boundary must remain serialization-friendly enough that a future adapter could replace in-process channels with IPC or a network protocol.
 
 A separate server process should only be introduced for a concrete requirement such as multiplayer, remote clients, process isolation, or a continuously running world.
 
 ## Implementation sequence
 
 1. Create the Cargo workspace and initial four crates.
-2. Establish a headless `game-core` world and explicit schedule.
-3. Implement the `game-app` command/query facade.
-4. Add a minimal Ratatui event loop using immutable view models.
-5. Add typed content definitions and validation.
+2. Establish a headless `game-core` world and explicit synchronous schedule.
+3. Implement the async `game-app` actor, bounded request channels, and view publication.
+4. Add a minimal async Ratatui event loop using `tokio::select!` and immutable view models.
+5. Add typed RON content definitions, namespace-qualified stable IDs, and validation.
 6. Add snapshot persistence after the first persistent components exist.
 7. Add CI checks for formatting, Clippy, tests, and content validation.
 8. Revisit crate boundaries after the first end-to-end vertical slice.
