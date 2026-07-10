@@ -24,6 +24,8 @@
 
 RON is the initial human-authored content format. Runtime code must not depend on that choice; deserialized source definitions are validated and compiled into format-independent typed definitions.
 
+The workspace MSRV is Rust 1.97. Dependency metadata was verified against the selected releases on 2026-07-10: [bevy_ecs 0.19](https://docs.rs/bevy_ecs/0.19.0), [Tokio 1.52](https://docs.rs/tokio/1.52.3), [Ratatui 0.30](https://docs.rs/ratatui/0.30.2), [Crossterm 0.29](https://docs.rs/crossterm/0.29.0), [Serde 1.0](https://docs.rs/serde/1.0.228), and [RON 0.12](https://docs.rs/ron/0.12.2). The highest dependency MSRV is `bevy_ecs` at Rust 1.95, below the workspace MSRV.
+
 ## High-level structure
 
 ```text

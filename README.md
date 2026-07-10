@@ -30,8 +30,10 @@ Controls:
 - `Space`: pause or resume
 - `s`: advance one tick while paused
 - `r`: change tick rate
-- `b` / `x`: buy or sell one unit of the selected good
+- `n`: enter the quantity used by buy and sell commands
+- `b` / `x`: buy or sell the selected quantity of the selected good
 - `Enter`: travel to the selected system
+- `?`: show or hide help
 - `q`: quit
 
 The terminal should be at least 70 columns by 24 rows. The prototype exposes current market information for all systems.

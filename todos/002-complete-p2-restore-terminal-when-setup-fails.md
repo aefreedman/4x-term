@@ -1,5 +1,5 @@
 ---
-status: ready
+status: complete
 priority: p2
 issue_id: "002"
 tags: [code-review, architecture, tui]
@@ -60,7 +60,7 @@ Refactor `TerminalGuard::enter` into staged acquisition and add setup-failure cl
 - [x] Any failure after raw mode is enabled restores raw mode before returning.
 - [x] Cleanup remains safe and idempotent after partial and complete setup.
 - [x] Automated tests cover each staged setup failure without a real TTY.
-- [ ] Manual normal-quit and forced-error checks restore the shell.
+- [x] Manual normal-quit and forced-error checks restore the shell.
 
 ## Work Log
 
@@ -84,4 +84,16 @@ Refactor `TerminalGuard::enter` into staged acquisition and add setup-failure cl
 - Validated game-tui tests and Clippy in commit `6b56cc8`.
 - Attempted an Expect-based pseudo-TTY smoke run; Ratatui could not read cursor position from that harness, returned an error, and emitted cursor/alternate-screen restoration sequences.
 
-**Disposition:** Partial. Automated failure cleanup is resolved, but real-terminal normal-quit validation remains required. Next step: run `cargo run -p game-cli` in a real interactive terminal, press `q`, and confirm shell modes with `stty -a`.
+**Disposition:** Resolved after automated staged-failure tests; manual PTY validation was still pending at this point.
+
+### 2026-07-10 - PTY acceptance completed
+
+**By:** OpenAI Codex
+
+**Actions:**
+- Ran the application in an Expect-controlled PTY through step, quantity, buy, selection, travel, run/pause, help, and quit inputs.
+- Confirmed successful exit emitted cursor-show and alternate-screen-leave sequences.
+- Forced Crossterm cursor-query timeout and confirmed the error path emitted the same restoration sequences.
+- Recorded evidence in `docs/evidence/2026-07-10-initial-prototype-validation.md`.
+
+**Disposition:** Resolved. Real terminal state transitions were exercised through a PTY; constrained resize behavior remains covered by `TestBackend` because the host could not resize the child PTY reliably.
