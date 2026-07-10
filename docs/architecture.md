@@ -332,7 +332,7 @@ Use an actor-style owner for the simulation:
 ```text
 TUI task
   ├── sends typed requests over a bounded Tokio channel
-  └── receives events/view snapshots over a bounded Tokio channel or watch channel
+  └── receives the latest bounded-history view snapshot over a watch channel
 
 simulation task
   ├── exclusively owns GameSession and the ECS World
@@ -346,7 +346,8 @@ Rules:
 - Exactly one task owns and mutates the ECS world.
 - Never place the world behind a broadly shared `Arc<Mutex<_>>`.
 - Use bounded channels to make backpressure explicit.
-- Use Tokio `mpsc` for ordered requests and events and `watch` for the latest replaceable view snapshot.
+- Use Tokio `mpsc` for ordered requests and `watch` for the latest replaceable view snapshot, which includes bounded recent event history.
+- Add a separate ordered event stream only when a concrete consumer requires lossless independent delivery.
 - Commands that need acknowledgement use a request envelope with a Tokio `oneshot` sender.
 - Blocking filesystem operations belong in `spawn_blocking` or dedicated adapter tasks.
 - Systems do not spawn tasks or await futures. Async work completes outside the core and returns through typed commands.

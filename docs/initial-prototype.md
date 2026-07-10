@@ -409,8 +409,7 @@ UI-only navigation does not enter the simulation. `SelectSystem` is application 
 ### Channels
 
 - Bounded `mpsc` channel: TUI requests to the application task
-- `watch` channel: latest immutable application view
-- Bounded `mpsc` channel: ordered simulation events for the visible log
+- `watch` channel: latest immutable application view, including bounded recent event history
 - `oneshot` response: request acknowledgement or error when needed
 - Cancellation token or explicit shutdown signal: coordinated termination
 

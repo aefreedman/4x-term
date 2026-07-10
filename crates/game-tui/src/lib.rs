@@ -56,25 +56,82 @@ impl Default for UiState {
     }
 }
 
-struct TerminalGuard;
+trait TerminalOps {
+    fn enable_raw(&mut self) -> Result<()>;
+    fn enter_alternate(&mut self) -> Result<()>;
+    fn hide_cursor(&mut self) -> Result<()>;
+    fn show_cursor(&mut self) -> Result<()>;
+    fn leave_alternate(&mut self) -> Result<()>;
+    fn disable_raw(&mut self) -> Result<()>;
+}
 
-impl TerminalGuard {
-    fn enter() -> Result<Self> {
-        enable_raw_mode()?;
-        execute!(stdout(), EnterAlternateScreen, crossterm::cursor::Hide)?;
-        Ok(Self)
+struct RealTerminal;
+
+impl TerminalOps for RealTerminal {
+    fn enable_raw(&mut self) -> Result<()> {
+        enable_raw_mode().map_err(Into::into)
+    }
+    fn enter_alternate(&mut self) -> Result<()> {
+        execute!(stdout(), EnterAlternateScreen).map_err(Into::into)
+    }
+    fn hide_cursor(&mut self) -> Result<()> {
+        execute!(stdout(), crossterm::cursor::Hide).map_err(Into::into)
+    }
+    fn show_cursor(&mut self) -> Result<()> {
+        execute!(stdout(), crossterm::cursor::Show).map_err(Into::into)
+    }
+    fn leave_alternate(&mut self) -> Result<()> {
+        execute!(stdout(), LeaveAlternateScreen).map_err(Into::into)
+    }
+    fn disable_raw(&mut self) -> Result<()> {
+        disable_raw_mode().map_err(Into::into)
     }
 }
 
-impl Drop for TerminalGuard {
+struct TerminalGuard<O: TerminalOps> {
+    ops: O,
+    raw: bool,
+    alternate: bool,
+    cursor_hidden: bool,
+}
+
+impl<O: TerminalOps> TerminalGuard<O> {
+    fn enter(ops: O) -> Result<Self> {
+        let mut guard = Self {
+            ops,
+            raw: false,
+            alternate: false,
+            cursor_hidden: false,
+        };
+        guard.ops.enable_raw()?;
+        guard.raw = true;
+        guard.ops.enter_alternate()?;
+        guard.alternate = true;
+        guard.ops.hide_cursor()?;
+        guard.cursor_hidden = true;
+        Ok(guard)
+    }
+}
+
+impl<O: TerminalOps> Drop for TerminalGuard<O> {
     fn drop(&mut self) {
-        restore_terminal();
+        if self.cursor_hidden {
+            let _ = self.ops.show_cursor();
+        }
+        if self.alternate {
+            let _ = self.ops.leave_alternate();
+        }
+        if self.raw {
+            let _ = self.ops.disable_raw();
+        }
     }
 }
 
 fn restore_terminal() {
-    let _ = disable_raw_mode();
-    let _ = execute!(stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
+    let mut terminal = RealTerminal;
+    let _ = terminal.show_cursor();
+    let _ = terminal.leave_alternate();
+    let _ = terminal.disable_raw();
 }
 
 fn install_terminal_panic_hook() {
@@ -87,7 +144,7 @@ fn install_terminal_panic_hook() {
 
 pub async fn run(mut app: AppHandle) -> Result<()> {
     install_terminal_panic_hook();
-    let guard = TerminalGuard::enter()?;
+    let guard = TerminalGuard::enter(RealTerminal)?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = ratatui::Terminal::new(backend)?;
     terminal.clear()?;
@@ -116,9 +173,6 @@ pub async fn run(mut app: AppHandle) -> Result<()> {
                 view = app.views.borrow_and_update().clone();
                 clamp_selection(&mut ui, &view);
                 terminal.draw(|frame| render(frame, &view, &ui))?;
-            }
-            event = app.events.recv() => {
-                if event.is_none() { break; }
             }
         }
     }
@@ -441,10 +495,98 @@ mod tests {
     use game_app::{PlayerStatusView, SystemListItem, TickRate};
     use game_core::{ContentId, Money};
     use ratatui::backend::TestBackend;
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    struct FakeOps {
+        calls: Rc<RefCell<Vec<&'static str>>>,
+        fail: Option<&'static str>,
+    }
+
+    impl FakeOps {
+        fn call(&self, name: &'static str) -> Result<()> {
+            self.calls.borrow_mut().push(name);
+            if self.fail == Some(name) {
+                anyhow::bail!("forced {name} failure");
+            }
+            Ok(())
+        }
+    }
+
+    impl TerminalOps for FakeOps {
+        fn enable_raw(&mut self) -> Result<()> {
+            self.call("enable_raw")
+        }
+        fn enter_alternate(&mut self) -> Result<()> {
+            self.call("enter_alternate")
+        }
+        fn hide_cursor(&mut self) -> Result<()> {
+            self.call("hide_cursor")
+        }
+        fn show_cursor(&mut self) -> Result<()> {
+            self.call("show_cursor")
+        }
+        fn leave_alternate(&mut self) -> Result<()> {
+            self.call("leave_alternate")
+        }
+        fn disable_raw(&mut self) -> Result<()> {
+            self.call("disable_raw")
+        }
+    }
 
     fn id(value: &str) -> ContentId {
         ContentId::new(value).unwrap()
+    }
+
+    #[test]
+    fn partial_terminal_setup_is_cleaned_up() {
+        for (failure, expected) in [
+            (
+                "enter_alternate",
+                vec!["enable_raw", "enter_alternate", "disable_raw"],
+            ),
+            (
+                "hide_cursor",
+                vec![
+                    "enable_raw",
+                    "enter_alternate",
+                    "hide_cursor",
+                    "leave_alternate",
+                    "disable_raw",
+                ],
+            ),
+        ] {
+            let calls = Rc::new(RefCell::new(Vec::new()));
+            let result = TerminalGuard::enter(FakeOps {
+                calls: Rc::clone(&calls),
+                fail: Some(failure),
+            });
+            assert!(result.is_err());
+            assert_eq!(*calls.borrow(), expected);
+        }
+    }
+
+    #[test]
+    fn complete_terminal_setup_is_cleaned_up_in_reverse_order() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let guard = TerminalGuard::enter(FakeOps {
+            calls: Rc::clone(&calls),
+            fail: None,
+        })
+        .unwrap();
+        drop(guard);
+        assert_eq!(
+            *calls.borrow(),
+            vec![
+                "enable_raw",
+                "enter_alternate",
+                "hide_cursor",
+                "show_cursor",
+                "leave_alternate",
+                "disable_raw"
+            ]
+        );
     }
 
     #[test]

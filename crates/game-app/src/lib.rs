@@ -8,7 +8,6 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 const REQUEST_CAPACITY: usize = 64;
-const EVENT_CAPACITY: usize = 256;
 const EVENT_HISTORY: usize = 100;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,7 +137,6 @@ struct Envelope {
 pub struct AppHandle {
     requests: mpsc::Sender<Envelope>,
     pub views: watch::Receiver<ApplicationView>,
-    pub events: mpsc::Receiver<GameEvent>,
     task: JoinHandle<Result<(), CoreError>>,
 }
 
@@ -177,12 +175,10 @@ pub fn spawn(mut session: GameSession) -> AppHandle {
     );
     let (request_tx, request_rx) = mpsc::channel(REQUEST_CAPACITY);
     let (view_tx, view_rx) = watch::channel(initial);
-    let (event_tx, event_rx) = mpsc::channel(EVENT_CAPACITY);
-    let task = tokio::spawn(run_owner(session, selected, request_rx, view_tx, event_tx));
+    let task = tokio::spawn(run_owner(session, selected, request_rx, view_tx));
     AppHandle {
         requests: request_tx,
         views: view_rx,
-        events: event_rx,
         task,
     }
 }
@@ -192,7 +188,6 @@ async fn run_owner(
     mut selected: ContentId,
     mut requests: mpsc::Receiver<Envelope>,
     views: watch::Sender<ApplicationView>,
-    events: mpsc::Sender<GameEvent>,
 ) -> Result<(), CoreError> {
     let mut state = RunState::Paused;
     let mut rate = TickRate::Normal;
@@ -216,13 +211,13 @@ async fn run_owner(
                     AppRequest::Shutdown => { let _ = envelope.reply.send(Ok(())); break; }
                 };
                 if result.is_err() { publish = true; }
-                collect_events(&mut session, &events, &mut history).await;
+                collect_events(&mut session, &mut history);
                 if publish { views.send_replace(build_view(&mut session, selected.clone(), state, rate, &history)); }
                 let _ = envelope.reply.send(result);
             }
             _ = interval.tick(), if state == RunState::Running => {
                 session.step()?;
-                collect_events(&mut session, &events, &mut history).await;
+                collect_events(&mut session, &mut history);
                 views.send_replace(build_view(&mut session, selected.clone(), state, rate, &history));
             }
         }
@@ -230,17 +225,12 @@ async fn run_owner(
     Ok(())
 }
 
-async fn collect_events(
-    session: &mut GameSession,
-    output: &mpsc::Sender<GameEvent>,
-    history: &mut VecDeque<String>,
-) {
+fn collect_events(session: &mut GameSession, history: &mut VecDeque<String>) {
     for event in session.drain_events() {
         if history.len() == EVENT_HISTORY {
             history.pop_front();
         }
         history.push_back(format_event(&event));
-        let _ = output.try_send(event);
     }
 }
 
@@ -472,6 +462,20 @@ mod tests {
         handle.request(AppRequest::Step).await.unwrap();
         let view = handle.views.borrow().clone();
         assert_eq!(view.tick, 1);
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn view_retains_a_bounded_recent_event_history() {
+        let session = GameSession::new(definition()).unwrap();
+        let handle = spawn(session);
+        for _ in 0..150 {
+            handle.request(AppRequest::Step).await.unwrap();
+        }
+        let view = handle.views.borrow().clone();
+        assert_eq!(view.tick, 150);
+        assert_eq!(view.events.len(), EVENT_HISTORY);
+        assert_eq!(view.events.last().map(String::as_str), Some("Tick 150"));
         handle.shutdown().await.unwrap();
     }
 }
