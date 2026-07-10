@@ -86,4 +86,4 @@ Refactor buy, sell, source replenishment, and recipe execution to use validate-t
 - Added buy, sell, source, and recipe overflow regression tests.
 - Validated with game-core tests and Clippy.
 
-**Commits:** `69895f5`, `36d55ef`, `6258a3e`
+**Commits:** `69895f5`, `36d55ef`, `6258a3e`, `b85d26b`
