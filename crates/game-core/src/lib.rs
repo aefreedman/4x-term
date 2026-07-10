@@ -1304,10 +1304,11 @@ mod tests {
             .insert(ore.clone(), u32::MAX);
         let mut session = GameSession::new(definition).unwrap();
         let player = session.player_entity().unwrap();
-        let mut trader = session.world.get_mut::<Trader>(player).unwrap();
-        trader.currency = Money(i64::MAX);
-        trader.cargo.insert(ore.clone(), 1);
-        drop(trader);
+        {
+            let mut trader = session.world.get_mut::<Trader>(player).unwrap();
+            trader.currency = Money(i64::MAX);
+            trader.cargo.insert(ore.clone(), 1);
+        }
         let before = format!("{:?}", session.snapshot());
         assert_eq!(
             session.submit(GameCommand::Sell {
