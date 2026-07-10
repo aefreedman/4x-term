@@ -1,5 +1,5 @@
 ---
-status: ready
+status: complete
 priority: p2
 issue_id: "003"
 tags: [code-review, architecture, async]
@@ -58,10 +58,10 @@ Remove the redundant event channel for this prototype, update architecture wordi
 
 ## Acceptance Criteria
 
-- [ ] No ordered-event API silently discards events.
-- [ ] The selected UI event-history policy is bounded and documented.
-- [ ] Tests verify retention and overflow behavior.
-- [ ] TUI remains responsive and renders recent simulation/rejection events.
+- [x] No ordered-event API silently discards events.
+- [x] The selected UI event-history policy is bounded and documented.
+- [x] Tests verify retention and overflow behavior.
+- [x] TUI remains responsive and renders recent simulation/rejection events.
 
 ## Work Log
 
@@ -75,3 +75,15 @@ Remove the redundant event channel for this prototype, update architecture wordi
 
 **Learnings:**
 - The current TUI does not need both a watch-contained history and a separate event stream.
+
+### 2026-07-10 - Resolved
+
+**By:** OpenAI Codex
+
+**Actions:**
+- Removed the redundant lossy event channel and TUI receiver branch.
+- Kept bounded recent history in immutable watch snapshots as the prototype contract.
+- Added a retention-cap test and updated architecture/prototype documentation.
+- Validated game-app and game-tui tests and Clippy.
+
+**Commit:** `6b56cc8`

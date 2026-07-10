@@ -57,9 +57,9 @@ Refactor `TerminalGuard::enter` into staged acquisition and add setup-failure cl
 
 ## Acceptance Criteria
 
-- [ ] Any failure after raw mode is enabled restores raw mode before returning.
-- [ ] Cleanup remains safe and idempotent after partial and complete setup.
-- [ ] Automated tests cover each staged setup failure without a real TTY.
+- [x] Any failure after raw mode is enabled restores raw mode before returning.
+- [x] Cleanup remains safe and idempotent after partial and complete setup.
+- [x] Automated tests cover each staged setup failure without a real TTY.
 - [ ] Manual normal-quit and forced-error checks restore the shell.
 
 ## Work Log
@@ -73,3 +73,15 @@ Refactor `TerminalGuard::enter` into staged acquisition and add setup-failure cl
 
 **Learnings:**
 - Drop-based cleanup only protects resources acquired after guard construction.
+
+### 2026-07-10 - Partial resolution
+
+**By:** OpenAI Codex
+
+**Actions:**
+- Refactored terminal acquisition into staged, tracked operations with reverse-order cleanup.
+- Added fake-terminal tests for alternate-screen failure, cursor-hide failure, and successful cleanup.
+- Validated game-tui tests and Clippy in commit `6b56cc8`.
+- Attempted an Expect-based pseudo-TTY smoke run; Ratatui could not read cursor position from that harness, returned an error, and emitted cursor/alternate-screen restoration sequences.
+
+**Disposition:** Partial. Automated failure cleanup is resolved, but real-terminal normal-quit validation remains required. Next step: run `cargo run -p game-cli` in a real interactive terminal, press `q`, and confirm shell modes with `stty -a`.
