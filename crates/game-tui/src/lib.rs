@@ -784,6 +784,33 @@ mod tests {
             let backend = TestBackend::new(width, height);
             let mut terminal = ratatui::Terminal::new(backend).unwrap();
             terminal.draw(|frame| render(frame, view, &ui)).unwrap();
+            let rendered = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            if width < 70 || height < 24 {
+                assert!(rendered.contains("Terminal too small"));
+            } else {
+                for label in [
+                    "Systems",
+                    "System / Route",
+                    "Market",
+                    "Player / Trade",
+                    "Events",
+                    "Controls",
+                ] {
+                    assert!(rendered.contains(label), "missing {label}");
+                }
+                if ui.help_visible {
+                    assert!(rendered.contains("Help"));
+                }
+                if ui.quantity_input.is_some() {
+                    assert!(rendered.contains("Trade Quantity"));
+                }
+            }
         }
     }
 
