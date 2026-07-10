@@ -14,3 +14,34 @@ On macOS, run:
 ```
 
 See [setup/README.md](setup/README.md) for prerequisites and details.
+
+## Run the prototype
+
+From the repository root:
+
+```bash
+cargo run -p game-cli
+```
+
+Controls:
+
+- `Tab`: move focus
+- Arrow keys or `j`/`k`: move selection
+- `Space`: pause or resume
+- `s`: advance one tick while paused
+- `r`: change tick rate
+- `b` / `x`: buy or sell one unit of the selected good
+- `Enter`: travel to the selected system
+- `q`: quit
+
+The terminal should be at least 70 columns by 24 rows. The prototype exposes current market information for all systems.
+
+## Validation
+
+```bash
+cargo run -p game-cli -- --validate-content
+cargo run -p game-cli -- --headless
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+```

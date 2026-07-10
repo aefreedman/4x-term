@@ -1,15 +1,23 @@
 use anyhow::{Context, Result};
 use game_core::GameSession;
+use std::fs::OpenOptions;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("4x-term.log")
+        .context("failed to open 4x-term.log")?;
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
         )
-        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_writer(Mutex::new(log))
         .try_init()
         .ok();
 

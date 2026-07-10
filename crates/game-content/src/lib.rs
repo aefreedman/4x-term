@@ -471,8 +471,7 @@ mod tests {
 
     #[test]
     fn repository_content_loads() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
-        let definition = load_directory(root).expect("repository content should validate");
+        let definition = repository_definition();
         assert_eq!(definition.systems.len(), 20);
         assert_eq!(definition.goods.len(), 10);
         assert_eq!(definition.recipes.len(), 9);
@@ -484,5 +483,34 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn repository_economy_is_deterministic_and_active() {
+        let definition = repository_definition();
+        let mut first = game_core::GameSession::new(definition.clone()).unwrap();
+        let mut second = game_core::GameSession::new(definition).unwrap();
+        for _ in 0..50 {
+            first.step().unwrap();
+            second.step().unwrap();
+        }
+        let first = first.snapshot();
+        let second = second.snapshot();
+        assert_eq!(format!("{first:?}"), format!("{second:?}"));
+        assert!(
+            first
+                .traders
+                .iter()
+                .filter(|trader| !trader.player)
+                .any(|trader| trader.ledger.completed_transactions > 0),
+            "at least one automated trader should transact"
+        );
+        assert!(first.markets.iter().all(|market| market.currency.0 >= 0));
+        assert!(first.traders.iter().all(|trader| trader.currency.0 >= 0));
+    }
+
+    fn repository_definition() -> GameDefinition {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        load_directory(root).expect("repository content should validate")
     }
 }

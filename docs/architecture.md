@@ -13,11 +13,11 @@
 | Concern | Choice |
 | --- | --- |
 | Language | Rust |
-| ECS | `bevy_ecs` without the full Bevy engine |
-| TUI | `ratatui` |
-| Terminal backend | `crossterm` |
-| Async runtime | `tokio` |
-| Serialization | `serde` |
+| ECS | `bevy_ecs` 0.19 without the full Bevy engine |
+| TUI | `ratatui` 0.30 |
+| Terminal backend | `crossterm` 0.29 |
+| Async runtime | `tokio` 1.52 |
+| Serialization | `serde` 1.0 |
 | Initial content format | RON through a format-specific adapter |
 | Error handling | `thiserror` in libraries; `anyhow` at executable boundaries |
 | Logging and diagnostics | `tracing` and `tracing-subscriber` |
@@ -99,7 +99,7 @@ tests/
 content/
 ```
 
-This is the intended separation, not a requirement to create every crate immediately. We can begin with `game-core`, `game-app`, `game-tui`, and `game-cli`, then extract content and persistence when their APIs become concrete.
+The initial prototype includes `game-core`, `game-content`, `game-app`, `game-tui`, and `game-cli`. `game-persistence` remains deferred until save APIs become concrete.
 
 ## Dependency rules
 
@@ -348,7 +348,6 @@ Rules:
 - Use bounded channels to make backpressure explicit.
 - Use Tokio `mpsc` for ordered requests and events and `watch` for the latest replaceable view snapshot.
 - Commands that need acknowledgement use a request envelope with a Tokio `oneshot` sender.
-- Use a `watch` channel for the latest replaceable view snapshot; use an `mpsc` channel for ordered events that must not be silently coalesced.
 - Blocking filesystem operations belong in `spawn_blocking` or dedicated adapter tasks.
 - Systems do not spawn tasks or await futures. Async work completes outside the core and returns through typed commands.
 - Cancellation and shutdown are explicit messages/signals, not dropped-task side effects.

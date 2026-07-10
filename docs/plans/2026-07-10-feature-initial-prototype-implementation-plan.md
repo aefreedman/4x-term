@@ -193,57 +193,57 @@ There is no save-data compatibility requirement in this prototype.
 
 ### Phase 1: Workspace, dependency, and contract foundation
 
-- [ ] Create the root Cargo workspace and `game-core`, `game-content`, `game-app`, `game-tui`, and `game-cli` crates.
+- [x] Create the root Cargo workspace and `game-core`, `game-content`, `game-app`, `game-tui`, and `game-cli` crates.
 - [ ] Check official release documentation/changelogs for compatible Bevy ECS, Tokio, Ratatui, Crossterm, Serde, and RON versions; pin intentional versions and record the Rust toolchain/MSRV.
-- [ ] Configure workspace lint policy, formatting, shared dependencies, test features, and release/dev profiles.
-- [ ] Define dependency edges so `game-core` cannot import TUI, terminal, filesystem, async runtime, or RON concerns.
-- [ ] Add `tracing` initialization and an executable error boundary without entering terminal mode yet.
-- [ ] Update `docs/architecture.md` if final crate boundaries, version constraints, or terminal input integration differ from its current intended structure.
+- [x] Configure workspace lint policy, formatting, shared dependencies, test features, and release/dev profiles.
+- [x] Define dependency edges so `game-core` cannot import TUI, terminal, filesystem, async runtime, or RON concerns.
+- [x] Add `tracing` initialization and an executable error boundary without entering terminal mode yet.
+- [x] Update `docs/architecture.md` if final crate boundaries, version constraints, or terminal input integration differ from its current intended structure.
 
 Validation:
 
-- [ ] `cargo check --workspace --all-targets` succeeds.
+- [x] `cargo check --workspace --all-targets` succeeds.
 - [ ] `cargo tree` confirms the intended direct dependency direction and `game-core` has no forbidden direct dependencies.
 - [ ] A compile-time smoke test imports each public boundary from the intended downstream crate.
 
 ### Phase 2: Typed content pipeline and authored fixture
 
-- [ ] Implement validated stable IDs and source DTOs for systems, goods, recipes, economic sites, markets, sources/sinks, traders, and global economy configuration.
-- [ ] Implement RON parsing, cross-file ID resolution, semantic validation, aggregated diagnostics, and compilation into core-owned typed definitions.
-- [ ] Author 20 systems with varied 3D coordinates and deterministic economy/trader placement.
-- [ ] Author the documented frontier goods and production/sink recipes.
-- [ ] Author initial inventory, targets, balances, capacities, source rates, travel speeds, and trader configuration that force trade across systems.
-- [ ] Add a content-validation command or headless startup path suitable for CI.
+- [x] Implement validated stable IDs and source DTOs for systems, goods, recipes, economic sites, markets, sources/sinks, traders, and global economy configuration.
+- [x] Implement RON parsing, cross-file ID resolution, semantic validation, aggregated diagnostics, and compilation into core-owned typed definitions.
+- [x] Author 20 systems with varied 3D coordinates and deterministic economy/trader placement.
+- [x] Author the documented frontier goods and production/sink recipes.
+- [x] Author initial inventory, targets, balances, capacities, source rates, travel speeds, and trader configuration that force trade across systems.
+- [x] Add a content-validation command or headless startup path suitable for CI.
 
 Validation:
 
-- [ ] Valid repository content compiles into exactly 20 systems, 10 goods, 9 recipes, one player, and the configured AI traders.
+- [x] Valid repository content compiles into exactly 20 systems, 10 goods, 9 recipes, one player, and the configured AI traders.
 - [ ] Table-driven invalid fixtures cover duplicate/malformed IDs, unknown references, nonfinite/duplicate positions, nonpositive values, incorrect recipe-layer inputs/outputs, missing/multiple players, and disconnected economic configuration.
-- [ ] Diagnostics identify source file, definition ID, and field/path where available.
+- [x] Diagnostics identify source file, definition ID, and field/path where available.
 
 ### Phase 3: Map graph and headless ECS shell
 
-- [ ] Implement core components/resources and deterministic ECS world construction from compiled definitions.
-- [ ] Construct normalized undirected three-nearest-neighbor edges and reject disconnected graphs.
-- [ ] Implement Euclidean distances, deterministic Dijkstra shortest paths, stable tie-breaking, route plans, and distance-derived leg durations.
-- [ ] Implement the explicit synchronous schedule skeleton, simulation clock, command queue, typed events, and projection/query boundary.
-- [ ] Add a minimal headless runner that loads content, constructs the world, steps it, and reports a summary without terminal initialization.
+- [x] Implement core components/resources and deterministic ECS world construction from compiled definitions.
+- [x] Construct normalized undirected three-nearest-neighbor edges and reject disconnected graphs.
+- [x] Implement Euclidean distances, deterministic Dijkstra shortest paths, stable tie-breaking, route plans, and distance-derived leg durations.
+- [x] Implement the explicit synchronous schedule skeleton, simulation clock, command queue, typed events, and projection/query boundary.
+- [x] Add a minimal headless runner that loads content, constructs the world, steps it, and reports a summary without terminal initialization.
 
 Validation:
 
 - [ ] Unit tests cover distance calculation, edge normalization, varied distances, connectivity, shortest/direct/multi-hop routes, equal-cost tie-breaking, unreachable destinations, and route timing.
 - [ ] Two sessions created from the same content/seed produce identical initial projections and event sequences over a fixed number of empty ticks.
-- [ ] Headless integration test confirms the repository content builds a runnable world without Ratatui or Crossterm.
+- [x] Headless integration test confirms the repository content builds a runnable world without Ratatui or Crossterm.
 
 ### Phase 4: Economy, transactions, and trader simulation
 
-- [ ] Implement inventory, currency, market, recipe, source, sink, trader, travel, and ledger state.
-- [ ] Implement the documented integer pricing formula with checked arithmetic and explicit rounding.
-- [ ] Implement one atomic transaction service shared by player and AI commands, including stock, balance, capacity, location, transit, and quantity validation.
-- [ ] Implement raw replenishment, primary processing, secondary processing, tertiary sinks, market quote updates, and explicit schedule ordering.
-- [ ] Implement multi-hop travel progression and arrival events.
-- [ ] Implement deterministic AI opportunity evaluation across all reachable systems, profit-per-tick ranking, stable tie-breaking, purchase, route traversal, and sale.
-- [ ] Implement player ledger and comparative economy statistics.
+- [x] Implement inventory, currency, market, recipe, source, sink, trader, travel, and ledger state.
+- [x] Implement the documented integer pricing formula with checked arithmetic and explicit rounding.
+- [x] Implement one atomic transaction service shared by player and AI commands, including stock, balance, capacity, location, transit, and quantity validation.
+- [x] Implement raw replenishment, primary processing, secondary processing, tertiary sinks, market quote updates, and explicit schedule ordering.
+- [x] Implement multi-hop travel progression and arrival events.
+- [x] Implement deterministic AI opportunity evaluation across all reachable systems, profit-per-tick ranking, stable tie-breaking, purchase, route traversal, and sale.
+- [x] Implement player ledger and comparative economy statistics.
 
 Validation:
 
@@ -251,15 +251,15 @@ Validation:
 - [ ] Transaction tests prove atomic failure and goods/currency conservation for success, insufficient funds, insufficient stock, insufficient market funds, cargo overflow, zero quantity, wrong location, and transit.
 - [ ] Recipe tests prove atomic inputs/outputs and source/sink accounting for each layer.
 - [ ] Route/trader tests prove AI can prefer a profitable nonadjacent destination and complete a multi-leg trade.
-- [ ] A fixed-seed multi-tick integration test verifies deterministic snapshots, intended goods sources/sinks, and no unintended negative balances/inventories.
+- [x] A fixed-seed multi-tick integration test verifies deterministic snapshots, intended goods sources/sinks, and no unintended negative balances/inventories.
 
 ### Phase 5: Async application owner and immutable views
 
-- [ ] Define `AppRequest`, acknowledgements, command/rejection events, run states, tick rates, shutdown protocol, and channel capacities.
-- [ ] Implement the sole-owner Tokio task around the synchronous session.
-- [ ] Implement pause, exact single-step, continuous timer advancement, tick-rate changes, and clean cancellation.
-- [ ] Implement complete `ApplicationView`, system details, route preview/active route, market rows, player status, rankings/shares, and bounded recent-event projection.
-- [ ] Process buy, sell, and begin-travel requests through the same core transaction/travel rules used by AI.
+- [x] Define `AppRequest`, acknowledgements, command/rejection events, run states, tick rates, shutdown protocol, and channel capacities.
+- [x] Implement the sole-owner Tokio task around the synchronous session.
+- [x] Implement pause, exact single-step, continuous timer advancement, tick-rate changes, and clean cancellation.
+- [x] Implement complete `ApplicationView`, system details, route preview/active route, market rows, player status, rankings/shares, and bounded recent-event projection.
+- [x] Process buy, sell, and begin-travel requests through the same core transaction/travel rules used by AI.
 - [ ] Ensure slow view receivers coalesce snapshots without losing ordered user-visible events or blocking ECS indefinitely.
 
 Validation:
@@ -271,12 +271,12 @@ Validation:
 
 ### Phase 6: Ratatui interaction and terminal lifecycle
 
-- [ ] Implement responsive pane layout for systems, details/routes, market, player/trade status, events, and controls.
+- [x] Implement responsive pane layout for systems, details/routes, market, player/trade status, events, and controls.
 - [ ] Implement local focus, list/table selection, scrolling, quantity entry, route preview, and help/control labels.
-- [ ] Map pause/resume, step, tick rate, buy, sell, travel, and quit intents to application requests.
-- [ ] Integrate Crossterm input with `tokio::select!` using the version-appropriate event strategy established in Phase 1.
-- [ ] Implement terminal RAII setup/restoration, idempotent cleanup, panic-hook cleanup, and application task shutdown.
-- [ ] Render command rejections and simulation events without writing diagnostic traces to the terminal surface.
+- [x] Map pause/resume, step, tick rate, buy, sell, travel, and quit intents to application requests.
+- [x] Integrate Crossterm input with `tokio::select!` using the version-appropriate event strategy established in Phase 1.
+- [x] Implement terminal RAII setup/restoration, idempotent cleanup, panic-hook cleanup, and application task shutdown.
+- [x] Render command rejections and simulation events without writing diagnostic traces to the terminal surface.
 
 Validation:
 
@@ -287,60 +287,63 @@ Validation:
 
 ### Phase 7: End-to-end stabilization and CI
 
-- [ ] Add an end-to-end headless scenario matching the acceptance flow through purchase, multi-hop travel, sale, production, sinks, and player status updates.
-- [ ] Add a bounded economy soak test that runs enough fixed-seed ticks to detect overflow, negative inventory/balance, route stalls, and nondeterminism.
-- [ ] Add CI for formatting, Clippy, workspace tests, content validation, and headless acceptance execution.
-- [ ] Update `README.md` with build/run/test/content-validation commands and controls.
-- [ ] Reconcile `docs/architecture.md` and `docs/initial-prototype.md` with implemented names and deliberate deviations; record follow-up work separately rather than expanding prototype scope.
+- [x] Add an end-to-end headless scenario matching the acceptance flow through purchase, multi-hop travel, sale, production, sinks, and player status updates.
+- [x] Add a bounded economy soak test that runs enough fixed-seed ticks to detect overflow, negative inventory/balance, route stalls, and nondeterminism.
+- [x] Add CI for formatting, Clippy, workspace tests, content validation, and headless acceptance execution.
+- [x] Update `README.md` with build/run/test/content-validation commands and controls.
+- [x] Reconcile `docs/architecture.md` and `docs/initial-prototype.md` with implemented names and deliberate deviations; record follow-up work separately rather than expanding prototype scope.
 
 Validation:
 
-- [ ] `cargo fmt --all -- --check` passes.
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes.
-- [ ] `cargo test --workspace --all-features` passes.
+- [x] `cargo fmt --all -- --check` passes.
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes.
+- [x] `cargo test --workspace --all-features` passes.
 - [ ] Repository content validation and the headless acceptance scenario pass in CI.
 - [ ] Manual TUI acceptance is completed in a real terminal and terminal state is verified after normal quit and a forced recoverable error.
 
+## Execution Status (2026-07-10)
+
+Implemented and locally validated the complete architectural vertical slice, authored economy, deterministic headless simulation, async owner, and functional TUI. The remaining unchecked items are intentionally visible validation/coverage gaps rather than claims of completion. In particular, official API documentation links, exhaustive invalid-fixture/transaction/async/backpressure tests, and real-TTY manual acceptance remain pending review follow-up. CI configuration is present but has not run remotely in this local workflow.
 ## Acceptance Criteria
 
 ### Functional requirements
 
-- [ ] Startup validates and compiles the four RON content files before creating the interactive terminal session.
-- [ ] The world contains exactly 20 uniquely identified systems with finite, nonduplicate 3D positions and varied derived distances.
-- [ ] Three-nearest-neighbor graph construction produces one connected undirected map, and deterministic shortest paths support multi-hop travel.
-- [ ] The documented 10 frontier goods and 9 recipes execute through raw, primary, secondary, and tertiary/sink layers.
-- [ ] Prices follow the documented integer scarcity formula and markets expose distinct trader buy/sell quotes.
-- [ ] Raw sources and tertiary sinks are the only intended goods creation/removal paths; market/trader transactions conserve both goods and currency.
-- [ ] Automated traders evaluate all reachable markets and can complete profitable multi-hop trades deterministically.
-- [ ] The player can inspect markets, buy cargo, preview and begin a route, advance through travel, and sell at arrival under the same market rules as AI.
-- [ ] Player status reports location/travel, currency, cargo, cargo value, net worth, ledger totals, rank, net-worth share, and sales-volume share.
+- [x] Startup validates and compiles the four RON content files before creating the interactive terminal session.
+- [x] The world contains exactly 20 uniquely identified systems with finite, nonduplicate 3D positions and varied derived distances.
+- [x] Three-nearest-neighbor graph construction produces one connected undirected map, and deterministic shortest paths support multi-hop travel.
+- [x] The documented 10 frontier goods and 9 recipes execute through raw, primary, secondary, and tertiary/sink layers.
+- [x] Prices follow the documented integer scarcity formula and markets expose distinct trader buy/sell quotes.
+- [x] Raw sources and tertiary sinks are the only intended goods creation/removal paths; market/trader transactions conserve both goods and currency.
+- [x] Automated traders evaluate all reachable markets and can complete profitable multi-hop trades deterministically.
+- [x] The player can inspect markets, buy cargo, preview and begin a route, advance through travel, and sell at arrival under the same market rules as AI.
+- [x] Player status reports location/travel, currency, cargo, cargo value, net worth, ledger totals, rank, net-worth share, and sales-volume share.
 - [ ] Paused, single-step, and continuous tick-rate modes behave as specified while terminal input remains responsive.
-- [ ] The TUI renders systems, routes/details, markets, player/trade state, events, and controls without direct ECS access.
+- [x] The TUI renders systems, routes/details, markets, player/trade state, events, and controls without direct ECS access.
 - [ ] Quit and recoverable error paths stop the application owner and restore terminal raw mode, cursor, and alternate screen.
-- [ ] The same content and simulation flow can run headlessly without terminal initialization.
+- [x] The same content and simulation flow can run headlessly without terminal initialization.
 
 ### Quality requirements
 
-- [ ] `game-core` has no direct Ratatui, Crossterm, Tokio, filesystem, or RON dependency.
-- [ ] Exactly one task owns and mutates the ECS world; no shared `Arc<Mutex<World>>` is introduced.
-- [ ] Fixed content and seed yield repeatable tested behavior on the supported target.
-- [ ] Content failures produce actionable source-aware diagnostics.
-- [ ] Bounded channels and event/view retention prevent unbounded memory growth.
+- [x] `game-core` has no direct Ratatui, Crossterm, Tokio, filesystem, or RON dependency.
+- [x] Exactly one task owns and mutates the ECS world; no shared `Arc<Mutex<World>>` is introduced.
+- [x] Fixed content and seed yield repeatable tested behavior on the supported target.
+- [x] Content failures produce actionable source-aware diagnostics.
+- [x] Bounded channels and event/view retention prevent unbounded memory growth.
 - [ ] Compile, format, Clippy, automated tests, content validation, and headless acceptance checks pass in CI.
 - [ ] Manual real-terminal validation covers rendering, resizing, interaction, failure display, and terminal restoration.
-- [ ] No save/content migration is required because this is the first runtime implementation.
+- [x] No save/content migration is required because this is the first runtime implementation.
 
 ## Validation Plan
 
 ### Automated validation
 
-- [ ] Run `cargo fmt --all -- --check`.
-- [ ] Run `cargo check --workspace --all-targets --all-features`.
-- [ ] Run `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
-- [ ] Run `cargo test --workspace --all-features`.
+- [x] Run `cargo fmt --all -- --check`.
+- [x] Run `cargo check --workspace --all-targets --all-features`.
+- [x] Run `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- [x] Run `cargo test --workspace --all-features`.
 - [ ] Run the content validator against repository content and invalid fixtures.
-- [ ] Run the headless acceptance scenario twice and compare deterministic projections/events.
-- [ ] Run the bounded economy soak test under a fixed seed.
+- [x] Run the headless acceptance scenario twice and compare deterministic projections/events.
+- [x] Run the bounded economy soak test under a fixed seed.
 
 Test development should proceed with each phase rather than after integration: pure unit tests for IDs/math/pricing/routes; table-driven content validation; ECS schedule integration tests; Tokio paused-time/concurrency tests; Ratatui `TestBackend` rendering tests; and one end-to-end headless flow. If snapshot testing is not adopted, assert stable structural properties of rendered buffers so the lack of a dedicated snapshot framework does not block TUI coverage.
 
@@ -392,9 +395,9 @@ Test development should proceed with each phase rather than after integration: p
 
 ### Documentation to update
 
-- [ ] `README.md` — build, run, headless validation, tests, controls, and log location.
-- [ ] `docs/architecture.md` — final crate boundaries, dependency versions/constraints, channel/input implementation, and any deliberate architectural deviation.
-- [ ] `docs/initial-prototype.md` — only deliberate behavior/name changes discovered during implementation.
+- [x] `README.md` — build, run, headless validation, tests, controls, and log location.
+- [x] `docs/architecture.md` — final crate boundaries, dependency versions/constraints, channel/input implementation, and any deliberate architectural deviation.
+- [x] `docs/initial-prototype.md` — only deliberate behavior/name changes discovered during implementation.
 - [ ] Add solution documentation under `docs/solutions/` only for reusable problems actually solved during implementation.
 
 ### Intentional follow-up
