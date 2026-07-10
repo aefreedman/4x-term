@@ -727,38 +727,61 @@ impl GameSession {
             .0
             .checked_mul(i64::from(quantity))
             .ok_or(CoreError::Overflow)?;
-        {
+        let (
+            market_stock,
+            market_currency,
+            trader_currency,
+            cargo_quantity,
+            purchase_cost,
+            transactions,
+        ) = {
             let market = self.world.get::<Market>(market_entity).expect("market");
-            if market.inventory.get(good).copied().unwrap_or(0) < quantity {
+            let stock = market.inventory.get(good).copied().unwrap_or(0);
+            if stock < quantity {
                 return Err(CoreError::InsufficientStock);
             }
             let trader = self.world.get::<Trader>(trader_entity).expect("trader");
             if trader.currency.0 < total {
                 return Err(CoreError::InsufficientFunds);
             }
-            let used: u32 = trader.cargo.values().sum();
+            let used = trader
+                .cargo
+                .values()
+                .try_fold(0_u32, |sum, value| sum.checked_add(*value))
+                .ok_or(CoreError::Overflow)?;
             if used.checked_add(quantity).ok_or(CoreError::Overflow)? > trader.cargo_capacity {
                 return Err(CoreError::InsufficientCapacity);
             }
-        }
-        self.world
-            .get_mut::<Market>(market_entity)
-            .expect("market")
-            .inventory
-            .entry(good.clone())
-            .and_modify(|stock| *stock -= quantity);
-        self.world
-            .get_mut::<Market>(market_entity)
-            .expect("market")
-            .currency
-            .0 = self
-            .world
-            .get::<Market>(market_entity)
-            .expect("market")
-            .currency
-            .0
-            .checked_add(total)
-            .ok_or(CoreError::Overflow)?;
+            (
+                stock - quantity,
+                market
+                    .currency
+                    .0
+                    .checked_add(total)
+                    .ok_or(CoreError::Overflow)?,
+                trader.currency.0 - total,
+                trader
+                    .cargo
+                    .get(good)
+                    .copied()
+                    .unwrap_or(0)
+                    .checked_add(quantity)
+                    .ok_or(CoreError::Overflow)?,
+                trader
+                    .ledger
+                    .purchase_cost
+                    .checked_add(total)
+                    .ok_or(CoreError::Overflow)?,
+                trader
+                    .ledger
+                    .completed_transactions
+                    .checked_add(1)
+                    .ok_or(CoreError::Overflow)?,
+            )
+        };
+        let mut market = self.world.get_mut::<Market>(market_entity).expect("market");
+        market.inventory.insert(good.clone(), market_stock);
+        market.currency.0 = market_currency;
         let trader_id = self
             .world
             .get::<StableId>(trader_entity)
@@ -766,10 +789,10 @@ impl GameSession {
             .0
             .clone();
         let mut trader = self.world.get_mut::<Trader>(trader_entity).expect("trader");
-        trader.currency.0 -= total;
-        *trader.cargo.entry(good.clone()).or_default() += quantity;
-        trader.ledger.purchase_cost += total;
-        trader.ledger.completed_transactions += 1;
+        trader.currency.0 = trader_currency;
+        trader.cargo.insert(good.clone(), cargo_quantity);
+        trader.ledger.purchase_cost = purchase_cost;
+        trader.ledger.completed_transactions = transactions;
         self.world
             .resource_mut::<EventBuffer>()
             .0
@@ -801,16 +824,56 @@ impl GameSession {
             .0
             .checked_mul(i64::from(quantity))
             .ok_or(CoreError::Overflow)?;
-        {
+        let (
+            market_currency,
+            market_stock,
+            trader_currency,
+            cargo_quantity,
+            sales_revenue,
+            units_moved,
+            transactions,
+        ) = {
             let market = self.world.get::<Market>(market_entity).expect("market");
             if market.currency.0 < total {
                 return Err(CoreError::InsufficientFunds);
             }
             let trader = self.world.get::<Trader>(trader_entity).expect("trader");
-            if trader.cargo.get(good).copied().unwrap_or(0) < quantity {
+            let cargo = trader.cargo.get(good).copied().unwrap_or(0);
+            if cargo < quantity {
                 return Err(CoreError::InsufficientStock);
             }
-        }
+            (
+                market.currency.0 - total,
+                market
+                    .inventory
+                    .get(good)
+                    .copied()
+                    .unwrap_or(0)
+                    .checked_add(quantity)
+                    .ok_or(CoreError::Overflow)?,
+                trader
+                    .currency
+                    .0
+                    .checked_add(total)
+                    .ok_or(CoreError::Overflow)?,
+                cargo - quantity,
+                trader
+                    .ledger
+                    .sales_revenue
+                    .checked_add(total)
+                    .ok_or(CoreError::Overflow)?,
+                trader
+                    .ledger
+                    .cargo_units_moved
+                    .checked_add(u64::from(quantity))
+                    .ok_or(CoreError::Overflow)?,
+                trader
+                    .ledger
+                    .completed_transactions
+                    .checked_add(1)
+                    .ok_or(CoreError::Overflow)?,
+            )
+        };
         let trader_id = self
             .world
             .get::<StableId>(trader_entity)
@@ -818,22 +881,18 @@ impl GameSession {
             .0
             .clone();
         let mut trader = self.world.get_mut::<Trader>(trader_entity).expect("trader");
-        trader.currency.0 = trader
-            .currency
-            .0
-            .checked_add(total)
-            .ok_or(CoreError::Overflow)?;
-        let cargo = trader.cargo.get_mut(good).expect("validated cargo");
-        *cargo -= quantity;
-        if *cargo == 0 {
+        trader.currency.0 = trader_currency;
+        if cargo_quantity == 0 {
             trader.cargo.remove(good);
+        } else {
+            trader.cargo.insert(good.clone(), cargo_quantity);
         }
-        trader.ledger.sales_revenue += total;
-        trader.ledger.cargo_units_moved += u64::from(quantity);
-        trader.ledger.completed_transactions += 1;
+        trader.ledger.sales_revenue = sales_revenue;
+        trader.ledger.cargo_units_moved = units_moved;
+        trader.ledger.completed_transactions = transactions;
         let mut market = self.world.get_mut::<Market>(market_entity).expect("market");
-        market.currency.0 -= total;
-        *market.inventory.entry(good.clone()).or_default() += quantity;
+        market.currency.0 = market_currency;
+        market.inventory.insert(good.clone(), market_stock);
         self.world
             .resource_mut::<EventBuffer>()
             .0
@@ -966,14 +1025,26 @@ impl GameSession {
     }
 
     fn replenish_sources(&mut self) -> Result<(), CoreError> {
-        let mut query = self.world.query::<&mut Market>();
-        for mut market in query.iter_mut(&mut self.world) {
-            for source in market.sources.clone() {
-                let stock = market.inventory.entry(source.good).or_default();
-                *stock = stock
-                    .checked_add(source.quantity_per_tick)
-                    .ok_or(CoreError::Overflow)?;
-            }
+        let updates = self
+            .world
+            .query::<(Entity, &Market)>()
+            .iter(&self.world)
+            .map(|(entity, market)| {
+                let mut inventory = market.inventory.clone();
+                for source in &market.sources {
+                    let stock = inventory.entry(source.good.clone()).or_default();
+                    *stock = stock
+                        .checked_add(source.quantity_per_tick)
+                        .ok_or(CoreError::Overflow)?;
+                }
+                Ok((entity, inventory))
+            })
+            .collect::<Result<Vec<_>, CoreError>>()?;
+        for (entity, inventory) in updates {
+            self.world
+                .get_mut::<Market>(entity)
+                .expect("market")
+                .inventory = inventory;
         }
         Ok(())
     }
@@ -995,21 +1066,19 @@ impl GameSession {
                 {
                     continue;
                 }
+                let mut next_inventory = market.inventory.clone();
                 for input in &recipe.inputs {
-                    *market
-                        .inventory
+                    *next_inventory
                         .get_mut(&input.good)
                         .expect("validated input") -= input.quantity;
                 }
                 for output in &recipe.outputs {
-                    *market.inventory.entry(output.good.clone()).or_default() = market
-                        .inventory
-                        .get(&output.good)
-                        .copied()
-                        .unwrap_or(0)
+                    let stock = next_inventory.entry(output.good.clone()).or_default();
+                    *stock = stock
                         .checked_add(output.quantity)
                         .ok_or(CoreError::Overflow)?;
                 }
+                market.inventory = next_inventory;
                 produced.push((system_id.0.clone(), recipe.id.clone(), layer));
             }
         }
@@ -1169,6 +1238,56 @@ mod tests {
         };
         assert_eq!(a.distance(b), 13.0);
         assert_eq!(ticks_for_distance(13.0, 5.0), 3);
+    }
+
+    #[test]
+    fn rejected_overflow_does_not_mutate_transaction_state() {
+        let ore = id("core:ore");
+        let systems = (0..2)
+            .map(|i| SystemDefinition {
+                id: id(&format!("core:s{i}")),
+                name: format!("S{i}"),
+                position: Position3 {
+                    x: f64::from(i),
+                    y: 0.0,
+                    z: 0.0,
+                },
+                inventory: BTreeMap::from([(ore.clone(), 10)]),
+                targets: BTreeMap::from([(ore.clone(), 10)]),
+                currency: if i == 0 { Money(i64::MAX) } else { Money(100) },
+                recipes: vec![],
+                sources: vec![],
+            })
+            .collect();
+        let definition = GameDefinition {
+            goods: vec![GoodDefinition {
+                id: ore.clone(),
+                name: "Ore".into(),
+                category: GoodCategory::Raw,
+                base_price: Money(10),
+            }],
+            recipes: vec![],
+            systems,
+            traders: vec![TraderDefinition {
+                id: id("core:player"),
+                name: "Player".into(),
+                system: id("core:s0"),
+                currency: Money(100),
+                cargo_capacity: 10,
+                speed: 1.0,
+                player: true,
+            }],
+        };
+        let mut session = GameSession::new(definition).unwrap();
+        let before = format!("{:?}", session.snapshot());
+        assert_eq!(
+            session.submit(GameCommand::Buy {
+                good: ore,
+                quantity: 1
+            }),
+            Err(CoreError::Overflow)
+        );
+        assert_eq!(format!("{:?}", session.snapshot()), before);
     }
 
     #[test]
