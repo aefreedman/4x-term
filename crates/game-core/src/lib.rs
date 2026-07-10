@@ -1291,6 +1291,101 @@ mod tests {
     }
 
     #[test]
+    fn recipe_overflow_preserves_inputs() {
+        let input = id("core:input");
+        let output = id("core:output");
+        let recipe_id = id("core:recipe");
+        let mut definition = minimal_definition(vec![
+            GoodDefinition {
+                id: input.clone(),
+                name: "Input".into(),
+                category: GoodCategory::Raw,
+                base_price: Money(1),
+            },
+            GoodDefinition {
+                id: output.clone(),
+                name: "Output".into(),
+                category: GoodCategory::Primary,
+                base_price: Money(1),
+            },
+        ]);
+        definition.recipes.push(RecipeDefinition {
+            id: recipe_id.clone(),
+            name: "Recipe".into(),
+            layer: RecipeLayer::Primary,
+            inputs: vec![GoodAmount {
+                good: input.clone(),
+                quantity: 1,
+            }],
+            outputs: vec![GoodAmount {
+                good: output.clone(),
+                quantity: 1,
+            }],
+        });
+        definition.systems[0].inventory = BTreeMap::from([(input, 1), (output, u32::MAX)]);
+        definition.systems[0].recipes.push(recipe_id);
+        let mut session = GameSession::new(definition).unwrap();
+        let before = format!("{:?}", session.snapshot());
+        assert_eq!(session.step(), Err(CoreError::Overflow));
+        assert_eq!(format!("{:?}", session.snapshot()), before);
+    }
+
+    #[test]
+    fn source_overflow_preserves_all_markets() {
+        let ore = id("core:ore");
+        let mut definition = minimal_definition(vec![GoodDefinition {
+            id: ore.clone(),
+            name: "Ore".into(),
+            category: GoodCategory::Raw,
+            base_price: Money(1),
+        }]);
+        definition.systems[0]
+            .inventory
+            .insert(ore.clone(), u32::MAX);
+        definition.systems[0].sources.push(SourceDefinition {
+            good: ore,
+            quantity_per_tick: 1,
+        });
+        let mut session = GameSession::new(definition).unwrap();
+        let before = format!("{:?}", session.snapshot());
+        assert_eq!(session.step(), Err(CoreError::Overflow));
+        assert_eq!(format!("{:?}", session.snapshot()), before);
+    }
+
+    fn minimal_definition(goods: Vec<GoodDefinition>) -> GameDefinition {
+        let systems = (0..2)
+            .map(|i| SystemDefinition {
+                id: id(&format!("core:s{i}")),
+                name: format!("S{i}"),
+                position: Position3 {
+                    x: f64::from(i),
+                    y: 0.0,
+                    z: 0.0,
+                },
+                inventory: BTreeMap::new(),
+                targets: BTreeMap::new(),
+                currency: Money(100),
+                recipes: vec![],
+                sources: vec![],
+            })
+            .collect();
+        GameDefinition {
+            goods,
+            recipes: vec![],
+            systems,
+            traders: vec![TraderDefinition {
+                id: id("core:player"),
+                name: "Player".into(),
+                system: id("core:s0"),
+                currency: Money(100),
+                cargo_capacity: 10,
+                speed: 1.0,
+                player: true,
+            }],
+        }
+    }
+
+    #[test]
     fn graph_finds_multi_hop_path() {
         let systems = (0..5)
             .map(|i| SystemDefinition {
