@@ -16,7 +16,7 @@ cargo run -p game-cli -- --validate-content
 cargo run -p game-cli -- --headless
 ```
 
-GitHub Actions run [29130253505](https://github.com/aefreedman/4x-term/actions/runs/29130253505) passed format, check, Clippy, all workspace tests, content validation, and headless acceptance after the final implementation and coverage pass.
+GitHub Actions run [29130410741](https://github.com/aefreedman/4x-term/actions/runs/29130410741) passed format, check, Clippy, all workspace tests, content validation, and headless acceptance after the final implementation, coverage, documentation, and workflow-warning cleanup pass.
 
 ## Pseudo-TTY interaction smoke test
 
