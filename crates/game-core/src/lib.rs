@@ -1291,6 +1291,35 @@ mod tests {
     }
 
     #[test]
+    fn rejected_sell_overflow_does_not_mutate_transaction_state() {
+        let ore = id("core:ore");
+        let mut definition = minimal_definition(vec![GoodDefinition {
+            id: ore.clone(),
+            name: "Ore".into(),
+            category: GoodCategory::Raw,
+            base_price: Money(10),
+        }]);
+        definition.systems[0]
+            .inventory
+            .insert(ore.clone(), u32::MAX);
+        let mut session = GameSession::new(definition).unwrap();
+        let player = session.player_entity().unwrap();
+        let mut trader = session.world.get_mut::<Trader>(player).unwrap();
+        trader.currency = Money(i64::MAX);
+        trader.cargo.insert(ore.clone(), 1);
+        drop(trader);
+        let before = format!("{:?}", session.snapshot());
+        assert_eq!(
+            session.submit(GameCommand::Sell {
+                good: ore,
+                quantity: 1
+            }),
+            Err(CoreError::Overflow)
+        );
+        assert_eq!(format!("{:?}", session.snapshot()), before);
+    }
+
+    #[test]
     fn recipe_overflow_preserves_inputs() {
         let input = id("core:input");
         let output = id("core:output");
