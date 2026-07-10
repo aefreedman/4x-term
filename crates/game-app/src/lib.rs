@@ -69,6 +69,7 @@ pub struct SystemListItem {
     pub id: ContentId,
     pub name: String,
     pub coordinates: (f64, f64, f64),
+    pub connections: Vec<(ContentId, f64)>,
 }
 
 #[derive(Clone, Debug)]
@@ -191,8 +192,7 @@ async fn run_owner(
 ) -> Result<(), CoreError> {
     let mut state = RunState::Paused;
     let mut rate = TickRate::Normal;
-    let mut interval = tokio::time::interval(rate.duration());
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut interval = tick_interval(rate);
     let mut history = VecDeque::new();
     loop {
         tokio::select! {
@@ -203,7 +203,7 @@ async fn run_owner(
                     AppRequest::SetRunState(next) => { state = next; Ok(()) },
                     AppRequest::Step if state == RunState::Paused => session.step(),
                     AppRequest::Step => Ok(()),
-                    AppRequest::SetTickRate(next) => { rate = next; interval = tokio::time::interval(rate.duration()); Ok(()) },
+                    AppRequest::SetTickRate(next) => { rate = next; interval = tick_interval(rate); Ok(()) },
                     AppRequest::SelectSystem(id) => { selected = id; Ok(()) },
                     AppRequest::Buy { good, quantity } => session.submit(GameCommand::Buy { good, quantity }),
                     AppRequest::Sell { good, quantity } => session.submit(GameCommand::Sell { good, quantity }),
@@ -223,6 +223,13 @@ async fn run_owner(
         }
     }
     Ok(())
+}
+
+fn tick_interval(rate: TickRate) -> tokio::time::Interval {
+    let duration = rate.duration();
+    let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + duration, duration);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    interval
 }
 
 fn collect_events(session: &mut GameSession, history: &mut VecDeque<String>) {
@@ -294,6 +301,7 @@ fn build_view(
             id: market.system_id.clone(),
             name: market.name.clone(),
             coordinates: (market.position.x, market.position.y, market.position.z),
+            connections: session.graph().neighbors(&market.system_id).to_vec(),
         })
         .collect();
     let selected_market = snapshot
@@ -463,6 +471,147 @@ mod tests {
         let view = handle.views.borrow().clone();
         assert_eq!(view.tick, 1);
         handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn paused_and_running_timers_follow_selected_rates() {
+        for rate in [TickRate::Slow, TickRate::Normal, TickRate::Fast] {
+            let session = GameSession::new(definition()).unwrap();
+            let mut handle = spawn(session);
+            tokio::time::advance(rate.duration() * 2).await;
+            tokio::task::yield_now().await;
+            assert_eq!(
+                handle.views.borrow().tick,
+                0,
+                "paused sessions must not tick"
+            );
+
+            handle.request(AppRequest::SetTickRate(rate)).await.unwrap();
+            handle
+                .request(AppRequest::SetRunState(RunState::Running))
+                .await
+                .unwrap();
+            handle.views.borrow_and_update();
+            tokio::time::advance(rate.duration()).await;
+            handle.views.changed().await.unwrap();
+            assert_eq!(handle.views.borrow_and_update().tick, 1, "rate {rate:?}");
+            handle.shutdown().await.unwrap();
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn changing_rate_does_not_emit_an_immediate_duplicate_tick() {
+        let session = GameSession::new(definition()).unwrap();
+        let mut handle = spawn(session);
+        handle
+            .request(AppRequest::SetRunState(RunState::Running))
+            .await
+            .unwrap();
+        handle
+            .request(AppRequest::SetTickRate(TickRate::Fast))
+            .await
+            .unwrap();
+        handle.views.borrow_and_update();
+        tokio::time::advance(TickRate::Fast.duration() - Duration::from_millis(1)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(handle.views.borrow().tick, 0);
+        tokio::time::advance(Duration::from_millis(1)).await;
+        handle.views.changed().await.unwrap();
+        assert_eq!(handle.views.borrow_and_update().tick, 1);
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn views_project_market_route_and_player_statistics() {
+        let session = GameSession::new(definition()).unwrap();
+        let handle = spawn(session);
+        let initial = handle.views.borrow().clone();
+        assert_eq!(initial.systems.len(), 2);
+        assert!(!initial.systems[0].connections.is_empty());
+        assert_eq!(initial.market.len(), 1);
+        assert_eq!(initial.player.net_worth_rank, 1);
+        assert_eq!(initial.player.net_worth_share_percent, 100.0);
+
+        handle
+            .request(AppRequest::Buy {
+                good: id("core:ore"),
+                quantity: 1,
+            })
+            .await
+            .unwrap();
+        let bought = handle.views.borrow().clone();
+        assert_eq!(bought.player.cargo_used, 1);
+        assert_eq!(bought.player.transactions, 1);
+        assert!(bought.player.net_worth.0 > 0);
+        handle
+            .request(AppRequest::SelectSystem(id("core:s1")))
+            .await
+            .unwrap();
+        assert!(handle.views.borrow().selected_route.is_some());
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_finishes_within_a_timeout() {
+        let session = GameSession::new(definition()).unwrap();
+        let handle = spawn(session);
+        tokio::time::timeout(Duration::from_secs(1), handle.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_requests_are_acknowledged_in_channel_order() {
+        let session = GameSession::new(definition()).unwrap();
+        let handle = spawn(session);
+        let (first, second) = tokio::join!(
+            handle.request(AppRequest::SelectSystem(id("core:s1"))),
+            handle.request(AppRequest::SelectSystem(id("core:s0")))
+        );
+        first.unwrap();
+        second.unwrap();
+        assert_eq!(handle.views.borrow().selected_system, id("core:s0"));
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dropping_all_request_senders_stops_the_owner() {
+        let session = GameSession::new(definition()).unwrap();
+        let AppHandle {
+            requests,
+            views,
+            task,
+        } = spawn(session);
+        drop(requests);
+        drop(views);
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn request_queue_is_bounded() {
+        let (sender, _receiver) = mpsc::channel(REQUEST_CAPACITY);
+        for _ in 0..REQUEST_CAPACITY {
+            let (reply, _response) = oneshot::channel();
+            sender
+                .try_send(Envelope {
+                    request: AppRequest::Step,
+                    reply,
+                })
+                .unwrap();
+        }
+        let (reply, _response) = oneshot::channel();
+        assert!(matches!(
+            sender.try_send(Envelope {
+                request: AppRequest::Step,
+                reply
+            }),
+            Err(mpsc::error::TrySendError::Full(_))
+        ));
     }
 
     #[tokio::test]

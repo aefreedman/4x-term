@@ -385,6 +385,18 @@ fn compile(
             "economy.ron: market references unknown system {extra}"
         ));
     }
+    let distinct_distances = compiled_systems
+        .iter()
+        .enumerate()
+        .flat_map(|(index, system)| {
+            compiled_systems[index + 1..]
+                .iter()
+                .map(move |other| system.position.distance(other.position).to_bits())
+        })
+        .collect::<BTreeSet<_>>();
+    if compiled_systems.len() > 2 && distinct_distances.len() < 2 {
+        errors.push("systems.ron: system distances must not be uniform".into());
+    }
     let system_ids: BTreeSet<_> = compiled_systems
         .iter()
         .map(|system| system.id.clone())
@@ -486,6 +498,44 @@ mod tests {
     }
 
     #[test]
+    fn semantic_validation_rejects_invalid_authored_content() {
+        assert_invalid(|systems, _, _, _| systems[1].id = systems[0].id.clone());
+        assert_invalid(|systems, _, _, _| systems[0].id = "Malformed ID".into());
+        assert_invalid(|_, _, recipes, _| recipes[0].inputs[0].good = "frontier:missing".into());
+        assert_invalid(|systems, _, _, _| systems[0].position.x = f64::INFINITY);
+        assert_invalid(|systems, _, _, _| {
+            let (x, y, z) = (
+                systems[0].position.x,
+                systems[0].position.y,
+                systems[0].position.z,
+            );
+            systems[1].position = PositionSource { x, y, z };
+        });
+        assert_invalid(|_, goods, _, _| goods[0].base_price = 0);
+        assert_invalid(|_, _, _, economy| economy.markets[0].targets[0].quantity = 0);
+        assert_invalid(|_, _, recipes, _| {
+            recipes[0].inputs[0].good = "frontier:structural_alloy".into()
+        });
+        assert_invalid(|_, _, _, economy| {
+            economy
+                .traders
+                .iter_mut()
+                .for_each(|trader| trader.player = false)
+        });
+        assert_invalid(|_, _, _, economy| economy.traders[1].player = true);
+        assert_invalid(|systems, _, _, _| {
+            for (index, system) in systems.iter_mut().enumerate() {
+                let cluster = if index < 10 { 0.0 } else { 10_000.0 };
+                system.position = PositionSource {
+                    x: cluster + (index % 10) as f64,
+                    y: (index % 3) as f64,
+                    z: 0.0,
+                };
+            }
+        });
+    }
+
+    #[test]
     fn repository_economy_is_deterministic_and_active() {
         let definition = repository_definition();
         let mut first = game_core::GameSession::new(definition.clone()).unwrap();
@@ -493,6 +543,7 @@ mod tests {
         for _ in 0..50 {
             first.step().unwrap();
             second.step().unwrap();
+            assert_eq!(first.drain_events(), second.drain_events());
         }
         let first = first.snapshot();
         let second = second.snapshot();
@@ -512,5 +563,25 @@ mod tests {
     fn repository_definition() -> GameDefinition {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
         load_directory(root).expect("repository content should validate")
+    }
+
+    fn assert_invalid(
+        mutate: impl FnOnce(
+            &mut Vec<SystemSource>,
+            &mut Vec<GoodSource>,
+            &mut Vec<RecipeSource>,
+            &mut EconomySource,
+        ),
+    ) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let mut systems = load(root.join("systems.ron")).unwrap();
+        let mut goods = load(root.join("goods.ron")).unwrap();
+        let mut recipes = load(root.join("recipes.ron")).unwrap();
+        let mut economy = load(root.join("economy.ron")).unwrap();
+        mutate(&mut systems, &mut goods, &mut recipes, &mut economy);
+        assert!(matches!(
+            compile(systems, goods, recipes, economy),
+            Err(ContentError::Validation(_))
+        ));
     }
 }

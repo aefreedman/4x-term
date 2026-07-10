@@ -422,6 +422,8 @@ pub enum CoreError {
     ZeroQuantity,
     #[error("trader is in transit")]
     InTransit,
+    #[error("trader is not located at this market")]
+    WrongLocation,
     #[error("insufficient stock")]
     InsufficientStock,
     #[error("insufficient funds")]
@@ -718,6 +720,13 @@ impl GameSession {
         if quantity == 0 {
             return Err(CoreError::ZeroQuantity);
         }
+        let trader = self.world.get::<Trader>(trader_entity).expect("trader");
+        if trader.travel.is_some() {
+            return Err(CoreError::InTransit);
+        }
+        if &trader.system != system {
+            return Err(CoreError::WrongLocation);
+        }
         let market_entity = self.market_entity(system)?;
         let price = {
             let market = self.world.get::<Market>(market_entity).expect("market");
@@ -814,6 +823,13 @@ impl GameSession {
     ) -> Result<(), CoreError> {
         if quantity == 0 {
             return Err(CoreError::ZeroQuantity);
+        }
+        let trader = self.world.get::<Trader>(trader_entity).expect("trader");
+        if trader.travel.is_some() {
+            return Err(CoreError::InTransit);
+        }
+        if &trader.system != system {
+            return Err(CoreError::WrongLocation);
         }
         let market_entity = self.market_entity(system)?;
         let price = {
@@ -1241,6 +1257,108 @@ mod tests {
     }
 
     #[test]
+    fn graph_edges_are_symmetric_unique_and_support_ties_and_unreachable_nodes() {
+        let systems = (0..5)
+            .map(|i| SystemDefinition {
+                id: id(&format!("core:s{i}")),
+                name: format!("S{i}"),
+                position: Position3 {
+                    x: f64::from(i) * (f64::from(i) + 1.0),
+                    y: f64::from(i % 2),
+                    z: 0.0,
+                },
+                inventory: BTreeMap::new(),
+                targets: BTreeMap::new(),
+                currency: Money(0),
+                recipes: vec![],
+                sources: vec![],
+            })
+            .collect::<Vec<_>>();
+        let graph = SystemGraph::build(&systems).unwrap();
+        let mut distances = BTreeSet::new();
+        for system in &systems {
+            let neighbors = graph.neighbors(&system.id);
+            assert_eq!(
+                neighbors
+                    .iter()
+                    .map(|(id, _)| id)
+                    .collect::<BTreeSet<_>>()
+                    .len(),
+                neighbors.len()
+            );
+            for (neighbor, distance) in neighbors {
+                distances.insert(distance.to_bits());
+                assert!(
+                    graph
+                        .neighbors(neighbor)
+                        .iter()
+                        .any(|(other, other_distance)| other == &system.id
+                            && other_distance.to_bits() == distance.to_bits())
+                );
+            }
+        }
+        assert!(distances.len() > 1);
+        assert_eq!(
+            graph
+                .shortest_path(&id("core:s0"), &id("core:s1"))
+                .unwrap()
+                .0,
+            vec![id("core:s0"), id("core:s1")]
+        );
+
+        let start = id("core:start");
+        let a = id("core:a");
+        let b = id("core:b");
+        let goal = id("core:goal");
+        let isolated = id("core:isolated");
+        let manual = SystemGraph {
+            positions: BTreeMap::new(),
+            edges: BTreeMap::from([
+                (start.clone(), vec![(a.clone(), 1.0), (b.clone(), 1.0)]),
+                (a.clone(), vec![(start.clone(), 1.0), (goal.clone(), 1.0)]),
+                (b.clone(), vec![(start.clone(), 1.0), (goal.clone(), 1.0)]),
+                (goal.clone(), vec![(a.clone(), 1.0), (b.clone(), 1.0)]),
+                (isolated.clone(), vec![]),
+            ]),
+        };
+        assert_eq!(
+            manual.shortest_path(&start, &goal).unwrap().0,
+            vec![start.clone(), a, goal.clone()]
+        );
+        assert!(manual.shortest_path(&start, &isolated).is_none());
+    }
+
+    #[test]
+    fn prices_are_bounded_and_monotonic_with_inventory() {
+        let ore = id("core:ore");
+        let mut definition = minimal_definition(vec![GoodDefinition {
+            id: ore.clone(),
+            name: "Ore".into(),
+            category: GoodCategory::Raw,
+            base_price: Money(10),
+        }]);
+        definition.systems[0].targets.insert(ore.clone(), 10);
+        let mut session = GameSession::new(definition).unwrap();
+        let market = session.market_entity(&id("core:s0")).unwrap();
+        let mut previous = i64::MAX;
+        for stock in [0, 1, 5, 10, 20, 100, u32::MAX] {
+            session
+                .world
+                .get_mut::<Market>(market)
+                .unwrap()
+                .inventory
+                .insert(ore.clone(), stock);
+            let (buy, sell) = session.quotes(&id("core:s0"), &ore).unwrap();
+            assert!(buy.0 >= 1 && sell.0 >= buy.0);
+            assert!(
+                buy.0 <= previous,
+                "quote rose when stock increased to {stock}"
+            );
+            previous = buy.0;
+        }
+    }
+
+    #[test]
     fn rejected_overflow_does_not_mutate_transaction_state() {
         let ore = id("core:ore");
         let systems = (0..2)
@@ -1380,6 +1498,294 @@ mod tests {
         let before = format!("{:?}", session.snapshot());
         assert_eq!(session.step(), Err(CoreError::Overflow));
         assert_eq!(format!("{:?}", session.snapshot()), before);
+    }
+
+    #[test]
+    fn transactions_conserve_state_and_reject_invalid_requests_atomically() {
+        let ore = id("core:ore");
+        let mut definition = minimal_definition(vec![GoodDefinition {
+            id: ore.clone(),
+            name: "Ore".into(),
+            category: GoodCategory::Raw,
+            base_price: Money(10),
+        }]);
+        definition.systems[0].inventory.insert(ore.clone(), 5);
+        definition.systems[0].targets.insert(ore.clone(), 10);
+        definition.systems[0].currency = Money(1_000);
+        definition.traders[0].cargo_capacity = 2;
+        let mut session = GameSession::new(definition).unwrap();
+        let before = session.snapshot();
+        let currency_before = before.markets.iter().map(|m| m.currency.0).sum::<i64>()
+            + before.traders.iter().map(|t| t.currency.0).sum::<i64>();
+        let goods_before = before
+            .markets
+            .iter()
+            .map(|m| m.inventory.get(&ore).copied().unwrap_or(0))
+            .sum::<u32>();
+        session
+            .submit(GameCommand::Buy {
+                good: ore.clone(),
+                quantity: 2,
+            })
+            .unwrap();
+        let after = session.snapshot();
+        assert_eq!(
+            after.markets.iter().map(|m| m.currency.0).sum::<i64>()
+                + after.traders.iter().map(|t| t.currency.0).sum::<i64>(),
+            currency_before
+        );
+        assert_eq!(
+            after
+                .markets
+                .iter()
+                .map(|m| m.inventory.get(&ore).copied().unwrap_or(0))
+                .sum::<u32>()
+                + after
+                    .traders
+                    .iter()
+                    .flat_map(|t| t.cargo.get(&ore))
+                    .copied()
+                    .sum::<u32>(),
+            goods_before
+        );
+
+        for command in [
+            GameCommand::Buy {
+                good: ore.clone(),
+                quantity: 0,
+            },
+            GameCommand::Buy {
+                good: ore.clone(),
+                quantity: 1,
+            },
+        ] {
+            let before = format!("{:?}", session.snapshot());
+            assert!(session.submit(command).is_err());
+            assert_eq!(format!("{:?}", session.snapshot()), before);
+        }
+        let player = session.player_entity().unwrap();
+        assert_eq!(
+            session.buy(player, &id("core:s1"), &ore, 1),
+            Err(CoreError::WrongLocation)
+        );
+        session
+            .submit(GameCommand::BeginTravel {
+                destination: id("core:s1"),
+            })
+            .unwrap();
+        assert_eq!(
+            session.buy(player, &id("core:s0"), &ore, 1),
+            Err(CoreError::InTransit)
+        );
+    }
+
+    #[test]
+    fn stock_and_funds_failures_leave_transactions_unchanged() {
+        let ore = id("core:ore");
+        let mut definition = minimal_definition(vec![GoodDefinition {
+            id: ore.clone(),
+            name: "Ore".into(),
+            category: GoodCategory::Raw,
+            base_price: Money(10),
+        }]);
+        definition.systems[0].inventory.insert(ore.clone(), 1);
+        definition.systems[0].targets.insert(ore.clone(), 10);
+        definition.traders[0].currency = Money(0);
+        let mut session = GameSession::new(definition).unwrap();
+        for (quantity, expected) in [
+            (2, CoreError::InsufficientStock),
+            (1, CoreError::InsufficientFunds),
+        ] {
+            let before = format!("{:?}", session.snapshot());
+            assert_eq!(
+                session.submit(GameCommand::Buy {
+                    good: ore.clone(),
+                    quantity
+                }),
+                Err(expected)
+            );
+            assert_eq!(format!("{:?}", session.snapshot()), before);
+        }
+
+        let player = session.player_entity().unwrap();
+        session
+            .world
+            .get_mut::<Trader>(player)
+            .unwrap()
+            .cargo
+            .insert(ore.clone(), 1);
+        let market = session.market_entity(&id("core:s0")).unwrap();
+        session.world.get_mut::<Market>(market).unwrap().currency = Money(0);
+        let before = format!("{:?}", session.snapshot());
+        assert_eq!(
+            session.submit(GameCommand::Sell {
+                good: ore,
+                quantity: 1
+            }),
+            Err(CoreError::InsufficientFunds)
+        );
+        assert_eq!(format!("{:?}", session.snapshot()), before);
+    }
+
+    #[test]
+    fn production_layers_and_sources_account_for_goods_in_schedule_order() {
+        let raw = id("core:raw");
+        let primary = id("core:primary");
+        let secondary = id("core:secondary");
+        let mut definition = minimal_definition(vec![
+            GoodDefinition {
+                id: raw.clone(),
+                name: "Raw".into(),
+                category: GoodCategory::Raw,
+                base_price: Money(1),
+            },
+            GoodDefinition {
+                id: primary.clone(),
+                name: "Primary".into(),
+                category: GoodCategory::Primary,
+                base_price: Money(2),
+            },
+            GoodDefinition {
+                id: secondary.clone(),
+                name: "Secondary".into(),
+                category: GoodCategory::Secondary,
+                base_price: Money(3),
+            },
+        ]);
+        let recipe_ids = [id("core:r1"), id("core:r2"), id("core:r3")];
+        definition.recipes = vec![
+            RecipeDefinition {
+                id: recipe_ids[0].clone(),
+                name: "Primary".into(),
+                layer: RecipeLayer::Primary,
+                inputs: vec![GoodAmount {
+                    good: raw.clone(),
+                    quantity: 1,
+                }],
+                outputs: vec![GoodAmount {
+                    good: primary.clone(),
+                    quantity: 1,
+                }],
+            },
+            RecipeDefinition {
+                id: recipe_ids[1].clone(),
+                name: "Secondary".into(),
+                layer: RecipeLayer::Secondary,
+                inputs: vec![
+                    GoodAmount {
+                        good: primary.clone(),
+                        quantity: 1,
+                    },
+                    GoodAmount {
+                        good: raw.clone(),
+                        quantity: 1,
+                    },
+                ],
+                outputs: vec![GoodAmount {
+                    good: secondary.clone(),
+                    quantity: 1,
+                }],
+            },
+            RecipeDefinition {
+                id: recipe_ids[2].clone(),
+                name: "Sink".into(),
+                layer: RecipeLayer::Tertiary,
+                inputs: vec![GoodAmount {
+                    good: secondary.clone(),
+                    quantity: 1,
+                }],
+                outputs: vec![],
+            },
+        ];
+        definition.systems[0].inventory.insert(raw.clone(), 1);
+        definition.systems[0].sources.push(SourceDefinition {
+            good: raw.clone(),
+            quantity_per_tick: 1,
+        });
+        definition.systems[0].recipes = recipe_ids.to_vec();
+        let mut session = GameSession::new(definition).unwrap();
+        session.step().unwrap();
+        let market = &session.snapshot().markets[0];
+        assert_eq!(market.inventory.get(&raw).copied().unwrap_or(0), 0);
+        assert_eq!(market.inventory.get(&primary).copied().unwrap_or(0), 0);
+        assert_eq!(market.inventory.get(&secondary).copied().unwrap_or(0), 0);
+        assert!(
+            session
+                .drain_events()
+                .iter()
+                .any(|event| matches!(event, GameEvent::Consumed { .. }))
+        );
+    }
+
+    #[test]
+    fn automated_trader_selects_a_profitable_nonadjacent_market() {
+        let ore = id("core:ore");
+        let goods = vec![GoodDefinition {
+            id: ore.clone(),
+            name: "Ore".into(),
+            category: GoodCategory::Raw,
+            base_price: Money(10),
+        }];
+        let systems = (0..5)
+            .map(|i| SystemDefinition {
+                id: id(&format!("core:s{i}")),
+                name: format!("S{i}"),
+                position: Position3 {
+                    x: f64::from(i) * 10.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                inventory: BTreeMap::from([(ore.clone(), if i < 4 { 100 } else { 0 })]),
+                targets: BTreeMap::from([(ore.clone(), 10)]),
+                currency: Money(10_000),
+                recipes: vec![],
+                sources: vec![],
+            })
+            .collect();
+        let traders = vec![
+            TraderDefinition {
+                id: id("core:player"),
+                name: "Player".into(),
+                system: id("core:s1"),
+                currency: Money(100),
+                cargo_capacity: 1,
+                speed: 1.0,
+                player: true,
+            },
+            TraderDefinition {
+                id: id("core:ai"),
+                name: "AI".into(),
+                system: id("core:s0"),
+                currency: Money(100),
+                cargo_capacity: 1,
+                speed: 10.0,
+                player: false,
+            },
+        ];
+        let mut session = GameSession::new(GameDefinition {
+            goods,
+            recipes: vec![],
+            systems,
+            traders,
+        })
+        .unwrap();
+        assert!(
+            !session
+                .graph()
+                .neighbors(&id("core:s0"))
+                .iter()
+                .any(|(neighbor, _)| neighbor == &id("core:s4"))
+        );
+        session.step().unwrap();
+        let ai = session
+            .snapshot()
+            .traders
+            .into_iter()
+            .find(|trader| trader.id == id("core:ai"))
+            .unwrap();
+        let travel = ai.travel.expect("AI should begin travel");
+        assert_eq!(travel.destination, id("core:s4"));
+        assert!(travel.route.len() > 2);
     }
 
     fn minimal_definition(goods: Vec<GoodDefinition>) -> GameDefinition {

@@ -13,7 +13,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use std::io::stdout;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +41,9 @@ pub struct UiState {
     pub system_index: usize,
     pub market_index: usize,
     pub event_scroll: u16,
+    pub trade_quantity: u32,
+    pub quantity_input: Option<String>,
+    pub help_visible: bool,
     pub message: String,
 }
 
@@ -51,6 +54,9 @@ impl Default for UiState {
             system_index: 0,
             market_index: 0,
             event_scroll: 0,
+            trade_quantity: 1,
+            quantity_input: None,
+            help_visible: false,
             message: String::new(),
         }
     }
@@ -188,9 +194,26 @@ async fn handle_key(
     view: &ApplicationView,
     app: &AppHandle,
 ) -> Result<bool> {
+    if let Some(input) = &mut ui.quantity_input {
+        match code {
+            KeyCode::Char(digit) if digit.is_ascii_digit() && input.len() < 9 => input.push(digit),
+            KeyCode::Backspace => {
+                input.pop();
+            }
+            KeyCode::Enter => {
+                ui.trade_quantity = input.parse::<u32>().unwrap_or(1).max(1);
+                ui.quantity_input = None;
+            }
+            KeyCode::Esc => ui.quantity_input = None,
+            _ => {}
+        }
+        return Ok(false);
+    }
     match code {
         KeyCode::Char('q') => return Ok(true),
         KeyCode::Tab => ui.focus = ui.focus.next(),
+        KeyCode::Char('?') => ui.help_visible = !ui.help_visible,
+        KeyCode::Char('n') => ui.quantity_input = Some(String::new()),
         KeyCode::Up | KeyCode::Char('k') => move_selection(ui, view, -1),
         KeyCode::Down | KeyCode::Char('j') => move_selection(ui, view, 1),
         KeyCode::Char(' ') => {
@@ -210,13 +233,25 @@ async fn handle_key(
         }
         KeyCode::Char('b') if !view.market.is_empty() => {
             let good = view.market[ui.market_index].good_id.clone();
-            if let Err(error) = app.request(AppRequest::Buy { good, quantity: 1 }).await {
+            if let Err(error) = app
+                .request(AppRequest::Buy {
+                    good,
+                    quantity: ui.trade_quantity,
+                })
+                .await
+            {
                 ui.message = error.to_string();
             }
         }
         KeyCode::Char('x') if !view.market.is_empty() => {
             let good = view.market[ui.market_index].good_id.clone();
-            if let Err(error) = app.request(AppRequest::Sell { good, quantity: 1 }).await {
+            if let Err(error) = app
+                .request(AppRequest::Sell {
+                    good,
+                    quantity: ui.trade_quantity,
+                })
+                .await
+            {
                 ui.message = error.to_string();
             }
         }
@@ -296,13 +331,14 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
     render_player(frame, bottom[0], view, ui);
     render_events(frame, bottom[1], view, ui);
     let controls = format!(
-        "{} tick {} | Space pause/run | s step | r rate | b buy | x sell | Enter travel | Tab focus | q quit {}",
+        "{} tick {} | Qty {} (n edit) | Space pause/run | s step | r rate | b buy | x sell | Enter travel | ? help | Tab focus | q quit {}",
         if view.run_state == RunState::Paused {
             "PAUSED"
         } else {
             "RUNNING"
         },
         view.tick,
+        ui.trade_quantity,
         if ui.message.is_empty() {
             String::new()
         } else {
@@ -315,6 +351,33 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
             .block(Block::bordered().title(format!("Controls [{}]", view.tick_rate.label()))),
         vertical[2],
     );
+    if let Some(input) = &ui.quantity_input {
+        let popup = centered_rect(38, 5, area);
+        frame.render_widget(Clear, popup);
+        frame.render_widget(
+            Paragraph::new(format!("Quantity: {input}_\nEnter confirm · Esc cancel"))
+                .block(Block::bordered().title("Trade Quantity")),
+            popup,
+        );
+    } else if ui.help_visible {
+        let popup = centered_rect(62, 12, area);
+        frame.render_widget(Clear, popup);
+        frame.render_widget(
+            Paragraph::new("Tab: focus panes\n↑/↓ or j/k: selection\nSpace: pause/run   s: single step   r: rate\nn: enter trade quantity   b: buy   x: sell\nEnter: travel to selected system\n?: close help   q: quit")
+                .wrap(Wrap { trim: true })
+                .block(Block::bordered().title("Help")),
+            popup,
+        );
+    }
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width.min(area.width),
+        height.min(area.height),
+    )
 }
 
 fn focused(ui: &UiState, focus: Focus) -> Style {
@@ -358,10 +421,21 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
         .iter()
         .find(|system| system.id == view.selected_system);
     let mut lines = system.map_or_else(Vec::new, |system| {
-        vec![Line::from(format!(
-            "{} ({:.1}, {:.1}, {:.1})",
-            system.name, system.coordinates.0, system.coordinates.1, system.coordinates.2
-        ))]
+        vec![
+            Line::from(format!(
+                "{} ({:.1}, {:.1}, {:.1})",
+                system.name, system.coordinates.0, system.coordinates.1, system.coordinates.2
+            )),
+            Line::from(format!(
+                "Direct: {}",
+                system
+                    .connections
+                    .iter()
+                    .map(|(id, distance)| format!("{id} ({distance:.1})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        ]
     });
     if let Some(route) = &view.selected_route {
         lines.push(Line::from(format!(
@@ -492,8 +566,11 @@ fn render_events(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use game_app::{PlayerStatusView, SystemListItem, TickRate};
-    use game_core::{ContentId, Money};
+    use game_app::{MarketRow, PlayerStatusView, RouteView, SystemListItem, TickRate};
+    use game_core::{
+        ContentId, GameDefinition, GameSession, GoodCategory, GoodDefinition, Money, Position3,
+        SystemDefinition, TraderDefinition,
+    };
     use ratatui::backend::TestBackend;
     use std::cell::RefCell;
     use std::collections::BTreeMap;
@@ -537,6 +614,89 @@ mod tests {
 
     fn id(value: &str) -> ContentId {
         ContentId::new(value).unwrap()
+    }
+
+    fn test_session() -> GameSession {
+        let ore = id("core:ore");
+        let systems = (0..2)
+            .map(|index| SystemDefinition {
+                id: id(&format!("core:s{index}")),
+                name: format!("System {index}"),
+                position: Position3 {
+                    x: f64::from(index),
+                    y: 0.0,
+                    z: 0.0,
+                },
+                inventory: BTreeMap::from([(ore.clone(), 10)]),
+                targets: BTreeMap::from([(ore.clone(), 10)]),
+                currency: Money(1_000),
+                recipes: vec![],
+                sources: vec![],
+            })
+            .collect();
+        GameSession::new(GameDefinition {
+            goods: vec![GoodDefinition {
+                id: ore,
+                name: "Ore".into(),
+                category: GoodCategory::Raw,
+                base_price: Money(10),
+            }],
+            recipes: vec![],
+            systems,
+            traders: vec![TraderDefinition {
+                id: id("core:player"),
+                name: "Player".into(),
+                system: id("core:s0"),
+                currency: Money(100),
+                cargo_capacity: 10,
+                speed: 1.0,
+                player: true,
+            }],
+        })
+        .unwrap()
+    }
+
+    fn test_view() -> ApplicationView {
+        ApplicationView {
+            tick: 0,
+            run_state: RunState::Paused,
+            tick_rate: TickRate::Normal,
+            systems: vec![SystemListItem {
+                id: id("core:s0"),
+                name: "Aster".into(),
+                coordinates: (0.0, 0.0, 0.0),
+                connections: vec![(id("core:s1"), 3.5)],
+            }],
+            selected_system: id("core:s0"),
+            selected_route: None,
+            market: vec![MarketRow {
+                good_id: id("core:ore"),
+                name: "Ore".into(),
+                inventory: 10,
+                target: 10,
+                buy_quote: Money(9),
+                sell_quote: Money(11),
+            }],
+            player: PlayerStatusView {
+                location: id("core:s0"),
+                currency: Money(100),
+                cargo: BTreeMap::new(),
+                cargo_used: 0,
+                cargo_capacity: 10,
+                cargo_value: Money(0),
+                net_worth: Money(100),
+                purchase_cost: 0,
+                sales_revenue: 0,
+                realized_profit: 0,
+                units_moved: 0,
+                transactions: 0,
+                net_worth_rank: 1,
+                net_worth_share_percent: 100.0,
+                sales_share_percent: 0.0,
+                traveling: false,
+            },
+            events: vec![],
+        }
     }
 
     #[test]
@@ -590,45 +750,118 @@ mod tests {
     }
 
     #[test]
-    fn renders_full_and_small_layouts() {
-        let view = ApplicationView {
-            tick: 0,
-            run_state: RunState::Paused,
-            tick_rate: TickRate::Normal,
-            systems: vec![SystemListItem {
-                id: id("core:s0"),
-                name: "Aster".into(),
-                coordinates: (0.0, 0.0, 0.0),
-            }],
-            selected_system: id("core:s0"),
-            selected_route: None,
-            market: vec![],
-            player: PlayerStatusView {
-                location: id("core:s0"),
-                currency: Money(100),
-                cargo: BTreeMap::new(),
-                cargo_used: 0,
-                cargo_capacity: 10,
-                cargo_value: Money(0),
-                net_worth: Money(100),
-                purchase_cost: 0,
-                sales_revenue: 0,
-                realized_profit: 0,
-                units_moved: 0,
-                transactions: 0,
-                net_worth_rank: 1,
-                net_worth_share_percent: 100.0,
-                sales_share_percent: 0.0,
-                traveling: false,
-            },
-            events: vec![],
+    fn renders_normal_constrained_and_edge_case_views() {
+        let base = test_view();
+        let mut edge = base.clone();
+        edge.systems[0].name =
+            "A very long frontier system name that must be clipped safely".into();
+        edge.player.currency = Money(i64::MAX);
+        edge.player.net_worth = Money(i64::MAX);
+        edge.player.traveling = true;
+        edge.selected_route = Some(RouteView {
+            systems: vec![id("core:s0"), id("core:s1")],
+            distance: 42.5,
+            remaining_ticks: Some(7),
+        });
+        edge.events = vec!["Rejected: insufficient cargo capacity".into(); 20];
+
+        let help = UiState {
+            help_visible: true,
+            ..UiState::default()
         };
-        for (width, height) in [(100, 35), (40, 10)] {
+        let quantity = UiState {
+            quantity_input: Some("123".into()),
+            ..UiState::default()
+        };
+        for (width, height, view, ui) in [
+            (100, 35, &base, UiState::default()),
+            (70, 24, &edge, UiState::default()),
+            (100, 35, &edge, help),
+            (100, 35, &edge, quantity),
+            (40, 10, &base, UiState::default()),
+            (100, 12, &base, UiState::default()),
+        ] {
             let backend = TestBackend::new(width, height);
             let mut terminal = ratatui::Terminal::new(backend).unwrap();
-            terminal
-                .draw(|frame| render(frame, &view, &UiState::default()))
-                .unwrap();
+            terminal.draw(|frame| render(frame, view, &ui)).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn required_keys_map_to_local_state_and_application_requests() {
+        let app = game_app::spawn(test_session());
+        let mut ui = UiState::default();
+        let mut view = app.views.borrow().clone();
+
+        handle_key(KeyCode::Char('s'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(view.tick, 1);
+
+        handle_key(KeyCode::Char('r'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(view.tick_rate, TickRate::Fast);
+        handle_key(KeyCode::Char(' '), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(view.run_state, RunState::Running);
+        handle_key(KeyCode::Char(' '), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(view.run_state, RunState::Paused);
+
+        handle_key(KeyCode::Char('n'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Char('2'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Enter, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.trade_quantity, 2);
+        handle_key(KeyCode::Char('b'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(view.player.cargo_used, 2);
+        handle_key(KeyCode::Char('x'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(view.player.cargo_used, 0);
+
+        handle_key(KeyCode::Char('?'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert!(ui.help_visible);
+        handle_key(KeyCode::Down, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(view.selected_system, id("core:s1"));
+        assert_eq!(view.tick, 1, "UI navigation must not advance simulation");
+        handle_key(KeyCode::Enter, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert!(view.player.traveling);
+
+        handle_key(KeyCode::Tab, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.focus, Focus::Market);
+        handle_key(KeyCode::Up, &mut ui, &view, &app).await.unwrap();
+        assert!(
+            handle_key(KeyCode::Char('q'), &mut ui, &view, &app)
+                .await
+                .unwrap()
+        );
+        app.shutdown().await.unwrap();
     }
 }
