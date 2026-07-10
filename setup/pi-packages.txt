@@ -1,0 +1,4 @@
+git:git@github.com:aefreedman/pi-compound-game-dev.git
+git:git@github.com:aefreedman/pi-extras.git
+git:git@github.com:aefreedman/pi-markdown-utility.git
+git:git@github.com:aefreedman/pi-onepassword.git
