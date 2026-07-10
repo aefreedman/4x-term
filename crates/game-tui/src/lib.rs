@@ -431,26 +431,44 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
                 system
                     .connections
                     .iter()
-                    .map(|(id, distance)| format!("{id} ({distance:.1})"))
+                    .map(|connection| format!(
+                        "{} ({:.1} · {}t)",
+                        connection.system_name, connection.distance, connection.travel_ticks
+                    ))
                     .collect::<Vec<_>>()
                     .join(", ")
             )),
         ]
     });
     if let Some(route) = &view.selected_route {
+        let mode = if route.current_leg.is_some() {
+            format!("Traveling to {}", route.destination_name)
+        } else {
+            format!("Proposed route to {}", route.destination_name)
+        };
+        lines.push(Line::from(mode));
         lines.push(Line::from(format!(
-            "Route: {} | {:.1} units{}",
-            route
-                .systems
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(" → "),
-            route.distance,
+            "{} jumps · {:.1} distance · {} ticks{}",
+            route.legs.len(),
+            route.total_distance,
+            route.total_ticks,
             route
                 .remaining_ticks
-                .map_or(String::new(), |ticks| format!(" | {ticks} ticks on leg"))
+                .map_or(String::new(), |ticks| format!(" · {ticks} remaining"))
         )));
+        if let Some(index) = route.current_leg {
+            if let Some(leg) = route.legs.get(index) {
+                lines.push(Line::from(format!(
+                    "Leg {}/{}: {} → {}",
+                    index + 1,
+                    route.legs.len(),
+                    leg.from_name,
+                    leg.to_name
+                )));
+            }
+        } else {
+            lines.push(Line::from(format_route_chain(route)));
+        }
     }
     frame.render_widget(
         Paragraph::new(lines)
@@ -458,6 +476,26 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
             .block(Block::bordered().title("System / Route")),
         area,
     );
+}
+
+fn format_route_chain(route: &game_app::RouteView) -> String {
+    let mut names = route
+        .legs
+        .first()
+        .map(|leg| vec![leg.from_name.clone()])
+        .unwrap_or_default();
+    names.extend(route.legs.iter().map(|leg| leg.to_name.clone()));
+    if names.len() > 6 {
+        format!(
+            "{} → {} → … → {} → {}",
+            names[0],
+            names[1],
+            names[names.len() - 2],
+            names[names.len() - 1]
+        )
+    } else {
+        names.join(" → ")
+    }
 }
 
 fn render_market(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: &UiState) {
@@ -512,7 +550,7 @@ fn render_player(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
         Line::from(vec![
             Span::raw(format!(
                 "Location: {}{}  ",
-                p.location,
+                p.location_name,
                 if p.traveling { " (traveling)" } else { "" }
             )),
             Span::raw(format!(
@@ -566,7 +604,10 @@ fn render_events(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use game_app::{MarketRow, PlayerStatusView, RouteView, SystemListItem, TickRate};
+    use game_app::{
+        ConnectionView, MarketRow, PlayerStatusView, RouteLegView, RouteView, SystemListItem,
+        TickRate,
+    };
     use game_core::{
         ContentId, GameDefinition, GameSession, GoodCategory, GoodDefinition, Money, Position3,
         SystemDefinition, TraderDefinition,
@@ -665,7 +706,12 @@ mod tests {
                 id: id("core:s0"),
                 name: "Aster".into(),
                 coordinates: (0.0, 0.0, 0.0),
-                connections: vec![(id("core:s1"), 3.5)],
+                connections: vec![ConnectionView {
+                    system_id: id("core:s1"),
+                    system_name: "Brasshaven".into(),
+                    distance: 3.5,
+                    travel_ticks: 4,
+                }],
             }],
             selected_system: id("core:s0"),
             selected_route: None,
@@ -679,6 +725,7 @@ mod tests {
             }],
             player: PlayerStatusView {
                 location: id("core:s0"),
+                location_name: "Aster Reach".into(),
                 currency: Money(100),
                 cargo: BTreeMap::new(),
                 cargo_used: 0,
@@ -759,8 +806,19 @@ mod tests {
         edge.player.net_worth = Money(i64::MAX);
         edge.player.traveling = true;
         edge.selected_route = Some(RouteView {
-            systems: vec![id("core:s0"), id("core:s1")],
-            distance: 42.5,
+            destination_id: id("core:s1"),
+            destination_name: "Brasshaven".into(),
+            legs: vec![RouteLegView {
+                from_id: id("core:s0"),
+                from_name: "Aster Reach".into(),
+                to_id: id("core:s1"),
+                to_name: "Brasshaven".into(),
+                distance: 42.5,
+                travel_ticks: 8,
+            }],
+            current_leg: Some(0),
+            total_distance: 42.5,
+            total_ticks: 8,
             remaining_ticks: Some(7),
         });
         edge.events = vec!["Rejected: insufficient cargo capacity".into(); 20];
@@ -804,6 +862,10 @@ mod tests {
                 ] {
                     assert!(rendered.contains(label), "missing {label}");
                 }
+                assert!(
+                    !rendered.contains("core:"),
+                    "internal content IDs leaked into the rendered interface"
+                );
                 if ui.help_visible {
                     assert!(rendered.contains("Help"));
                 }

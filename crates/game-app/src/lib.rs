@@ -1,6 +1,8 @@
 //! Async owner and immutable view boundary for the headless simulation.
 
-use game_core::{ContentId, CoreError, GameCommand, GameEvent, GameSession, Money};
+use game_core::{
+    ContentId, CoreError, GameCommand, GameEvent, GameSession, Money, ticks_for_distance,
+};
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 use thiserror::Error;
@@ -69,13 +71,35 @@ pub struct SystemListItem {
     pub id: ContentId,
     pub name: String,
     pub coordinates: (f64, f64, f64),
-    pub connections: Vec<(ContentId, f64)>,
+    pub connections: Vec<ConnectionView>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConnectionView {
+    pub system_id: ContentId,
+    pub system_name: String,
+    pub distance: f64,
+    pub travel_ticks: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct RouteLegView {
+    pub from_id: ContentId,
+    pub from_name: String,
+    pub to_id: ContentId,
+    pub to_name: String,
+    pub distance: f64,
+    pub travel_ticks: u32,
 }
 
 #[derive(Clone, Debug)]
 pub struct RouteView {
-    pub systems: Vec<ContentId>,
-    pub distance: f64,
+    pub destination_id: ContentId,
+    pub destination_name: String,
+    pub legs: Vec<RouteLegView>,
+    pub current_leg: Option<usize>,
+    pub total_distance: f64,
+    pub total_ticks: u32,
     pub remaining_ticks: Option<u32>,
 }
 
@@ -92,6 +116,7 @@ pub struct MarketRow {
 #[derive(Clone, Debug)]
 pub struct PlayerStatusView {
     pub location: ContentId,
+    pub location_name: String,
     pub currency: Money,
     pub cargo: BTreeMap<ContentId, u32>,
     pub cargo_used: u32,
@@ -294,6 +319,11 @@ fn build_view(
         .iter()
         .map(|trader| trader.ledger.sales_revenue)
         .sum();
+    let system_names = snapshot
+        .markets
+        .iter()
+        .map(|market| (market.system_id.clone(), market.name.clone()))
+        .collect::<BTreeMap<_, _>>();
     let systems = snapshot
         .markets
         .iter()
@@ -301,7 +331,20 @@ fn build_view(
             id: market.system_id.clone(),
             name: market.name.clone(),
             coordinates: (market.position.x, market.position.y, market.position.z),
-            connections: session.graph().neighbors(&market.system_id).to_vec(),
+            connections: session
+                .graph()
+                .neighbors(&market.system_id)
+                .iter()
+                .map(|(system_id, distance)| ConnectionView {
+                    system_id: system_id.clone(),
+                    system_name: system_names
+                        .get(system_id)
+                        .cloned()
+                        .unwrap_or_else(|| "Unknown system".into()),
+                    distance: *distance,
+                    travel_ticks: ticks_for_distance(*distance, player.speed),
+                })
+                .collect(),
         })
         .collect();
     let selected_market = snapshot
@@ -332,18 +375,19 @@ fn build_view(
         })
         .collect();
     let route = if let Some(travel) = &player.travel {
-        Some(RouteView {
-            systems: travel.route.clone(),
-            distance: session.graph().route_distance(&travel.route),
-            remaining_ticks: Some(travel.remaining_ticks),
-        })
+        Some(build_route_view(
+            session,
+            &system_names,
+            &travel.route,
+            player.speed,
+            Some(travel.next_leg.saturating_sub(1)),
+            Some(travel.remaining_ticks),
+        ))
     } else if selected != player.system {
         session
             .shortest_path(&player.system, &selected)
-            .map(|(systems, distance)| RouteView {
-                systems,
-                distance,
-                remaining_ticks: None,
+            .map(|(route, _)| {
+                build_route_view(session, &system_names, &route, player.speed, None, None)
             })
     } else {
         None
@@ -357,6 +401,10 @@ fn build_view(
         selected_route: route,
         market,
         player: PlayerStatusView {
+            location_name: system_names
+                .get(&player.system)
+                .cloned()
+                .unwrap_or_else(|| "Unknown system".into()),
             location: player.system,
             currency: player.currency,
             cargo: player.cargo.clone(),
@@ -383,6 +431,63 @@ fn build_view(
             traveling: player.travel.is_some(),
         },
         events: events.iter().cloned().collect(),
+    }
+}
+
+fn build_route_view(
+    session: &GameSession,
+    system_names: &BTreeMap<ContentId, String>,
+    route: &[ContentId],
+    speed: f64,
+    current_leg: Option<usize>,
+    current_leg_remaining: Option<u32>,
+) -> RouteView {
+    let legs = route
+        .windows(2)
+        .map(|pair| {
+            let distance = session
+                .graph()
+                .neighbors(&pair[0])
+                .iter()
+                .find(|(id, _)| id == &pair[1])
+                .map_or(0.0, |(_, distance)| *distance);
+            RouteLegView {
+                from_id: pair[0].clone(),
+                from_name: system_names
+                    .get(&pair[0])
+                    .cloned()
+                    .unwrap_or_else(|| "Unknown system".into()),
+                to_id: pair[1].clone(),
+                to_name: system_names
+                    .get(&pair[1])
+                    .cloned()
+                    .unwrap_or_else(|| "Unknown system".into()),
+                distance,
+                travel_ticks: ticks_for_distance(distance, speed),
+            }
+        })
+        .collect::<Vec<_>>();
+    let total_ticks = legs.iter().map(|leg| leg.travel_ticks).sum();
+    let remaining_ticks = current_leg.map(|index| {
+        current_leg_remaining.unwrap_or(0)
+            + legs
+                .iter()
+                .skip(index + 1)
+                .map(|leg| leg.travel_ticks)
+                .sum::<u32>()
+    });
+    let destination_id = route.last().cloned().expect("routes contain a destination");
+    RouteView {
+        destination_name: system_names
+            .get(&destination_id)
+            .cloned()
+            .unwrap_or_else(|| "Unknown system".into()),
+        destination_id,
+        total_distance: legs.iter().map(|leg| leg.distance).sum(),
+        total_ticks,
+        remaining_ticks,
+        current_leg,
+        legs,
     }
 }
 
@@ -527,7 +632,7 @@ mod tests {
         let handle = spawn(session);
         let initial = handle.views.borrow().clone();
         assert_eq!(initial.systems.len(), 2);
-        assert!(!initial.systems[0].connections.is_empty());
+        assert_eq!(initial.systems[0].connections[0].system_name, "S1");
         assert_eq!(initial.market.len(), 1);
         assert_eq!(initial.player.net_worth_rank, 1);
         assert_eq!(initial.player.net_worth_share_percent, 100.0);
@@ -547,7 +652,12 @@ mod tests {
             .request(AppRequest::SelectSystem(id("core:s1")))
             .await
             .unwrap();
-        assert!(handle.views.borrow().selected_route.is_some());
+        let selected = handle.views.borrow().clone();
+        let route = selected.selected_route.expect("route preview");
+        assert_eq!(route.destination_name, "S1");
+        assert_eq!(route.legs[0].from_name, "S0");
+        assert_eq!(route.legs[0].to_name, "S1");
+        assert_eq!(route.current_leg, None);
         handle.shutdown().await.unwrap();
     }
 

@@ -430,7 +430,7 @@ ApplicationView
 └── recent EventView entries
 ```
 
-The system list includes ID, display name, coordinates, and summary economic data. The selected-system view includes direct connections as well as the shortest route from the player's current system, total route distance, and estimated travel duration. The market view includes inventory, target inventory, and current buy/sell quotes. The player-status view includes location, cargo, finances, trade-history totals, and economy-wide comparative statistics.
+The system list includes ID, display name, coordinates, and summary economic data. The selected-system view includes named direct connections as well as a named, leg-by-leg shortest route from the player's current system, total route distance, total travel duration, and active-leg progress. Stable IDs remain available for commands but are never used as player-facing route or location labels. The market view includes inventory, target inventory, and current buy/sell quotes. The player-status view includes named location, cargo, finances, trade-history totals, and economy-wide comparative statistics.
 
 View models must not expose `bevy_ecs::Entity`, ECS queries, Ratatui types, or mutable references.
 
