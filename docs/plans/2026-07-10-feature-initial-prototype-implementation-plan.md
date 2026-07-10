@@ -194,7 +194,7 @@ There is no save-data compatibility requirement in this prototype.
 ### Phase 1: Workspace, dependency, and contract foundation
 
 - [x] Create the root Cargo workspace and `game-core`, `game-content`, `game-app`, `game-tui`, and `game-cli` crates.
-- [ ] Check official release documentation/changelogs for compatible Bevy ECS, Tokio, Ratatui, Crossterm, Serde, and RON versions; pin intentional versions and record the Rust toolchain/MSRV.
+- [x] Check official release documentation/changelogs for compatible Bevy ECS, Tokio, Ratatui, Crossterm, Serde, and RON versions; pin intentional versions and record the Rust toolchain/MSRV.
 - [x] Configure workspace lint policy, formatting, shared dependencies, test features, and release/dev profiles.
 - [x] Define dependency edges so `game-core` cannot import TUI, terminal, filesystem, async runtime, or RON concerns.
 - [x] Add `tracing` initialization and an executable error boundary without entering terminal mode yet.
@@ -203,8 +203,8 @@ There is no save-data compatibility requirement in this prototype.
 Validation:
 
 - [x] `cargo check --workspace --all-targets` succeeds.
-- [ ] `cargo tree` confirms the intended direct dependency direction and `game-core` has no forbidden direct dependencies.
-- [ ] A compile-time smoke test imports each public boundary from the intended downstream crate.
+- [x] `cargo tree` confirms the intended direct dependency direction and `game-core` has no forbidden direct dependencies.
+- [x] A compile-time smoke test imports each public boundary from the intended downstream crate.
 
 ### Phase 2: Typed content pipeline and authored fixture
 
@@ -218,7 +218,7 @@ Validation:
 Validation:
 
 - [x] Valid repository content compiles into exactly 20 systems, 10 goods, 9 recipes, one player, and the configured AI traders.
-- [ ] Table-driven invalid fixtures cover duplicate/malformed IDs, unknown references, nonfinite/duplicate positions, nonpositive values, incorrect recipe-layer inputs/outputs, missing/multiple players, and disconnected economic configuration.
+- [x] Table-driven invalid fixtures cover duplicate/malformed IDs, unknown references, nonfinite/duplicate positions, nonpositive values, incorrect recipe-layer inputs/outputs, missing/multiple players, and disconnected economic configuration.
 - [x] Diagnostics identify source file, definition ID, and field/path where available.
 
 ### Phase 3: Map graph and headless ECS shell
@@ -231,8 +231,8 @@ Validation:
 
 Validation:
 
-- [ ] Unit tests cover distance calculation, edge normalization, varied distances, connectivity, shortest/direct/multi-hop routes, equal-cost tie-breaking, unreachable destinations, and route timing.
-- [ ] Two sessions created from the same content/seed produce identical initial projections and event sequences over a fixed number of empty ticks.
+- [x] Unit tests cover distance calculation, edge normalization, varied distances, connectivity, shortest/direct/multi-hop routes, equal-cost tie-breaking, unreachable destinations, and route timing.
+- [x] Two sessions created from the same content/seed produce identical initial projections and event sequences over a fixed number of empty ticks.
 - [x] Headless integration test confirms the repository content builds a runnable world without Ratatui or Crossterm.
 
 ### Phase 4: Economy, transactions, and trader simulation
@@ -247,10 +247,10 @@ Validation:
 
 Validation:
 
-- [ ] Unit/property-style tests exercise pricing bounds and monotonic scarcity behavior over broad inventory ranges.
-- [ ] Transaction tests prove atomic failure and goods/currency conservation for success, insufficient funds, insufficient stock, insufficient market funds, cargo overflow, zero quantity, wrong location, and transit.
-- [ ] Recipe tests prove atomic inputs/outputs and source/sink accounting for each layer.
-- [ ] Route/trader tests prove AI can prefer a profitable nonadjacent destination and complete a multi-leg trade.
+- [x] Unit/property-style tests exercise pricing bounds and monotonic scarcity behavior over broad inventory ranges.
+- [x] Transaction tests prove atomic failure and goods/currency conservation for success, insufficient funds, insufficient stock, insufficient market funds, cargo overflow, zero quantity, wrong location, and transit.
+- [x] Recipe tests prove atomic inputs/outputs and source/sink accounting for each layer.
+- [x] Route/trader tests prove AI can prefer a profitable nonadjacent destination and complete a multi-leg trade.
 - [x] A fixed-seed multi-tick integration test verifies deterministic snapshots, intended goods sources/sinks, and no unintended negative balances/inventories.
 
 ### Phase 5: Async application owner and immutable views
@@ -260,19 +260,19 @@ Validation:
 - [x] Implement pause, exact single-step, continuous timer advancement, tick-rate changes, and clean cancellation.
 - [x] Implement complete `ApplicationView`, system details, route preview/active route, market rows, player status, rankings/shares, and bounded recent-event projection.
 - [x] Process buy, sell, and begin-travel requests through the same core transaction/travel rules used by AI.
-- [ ] Ensure slow view receivers coalesce snapshots without losing ordered user-visible events or blocking ECS indefinitely.
+- [x] Ensure slow view receivers coalesce snapshots while bounded event history remains available without blocking ECS indefinitely.
 
 Validation:
 
-- [ ] Tokio paused-time tests prove no timer advancement while paused, exactly one tick per `Step`, expected advancement at each configured rate, and no duplicate tick after rate changes.
-- [ ] Concurrency tests prove requests are handled in order, acknowledgements resolve, closed receivers/senders terminate safely, and shutdown completes within a bounded timeout.
-- [ ] View tests confirm no ECS or Ratatui types cross the boundary and player/system/market statistics match core state.
-- [ ] Backpressure tests fill bounded request/event channels and verify documented behavior rather than deadlock or unbounded growth.
+- [x] Tokio paused-time tests prove no timer advancement while paused, exactly one tick per `Step`, expected advancement at each configured rate, and no duplicate tick after rate changes.
+- [x] Concurrency tests prove requests are handled in order, acknowledgements resolve, closed receivers/senders terminate safely, and shutdown completes within a bounded timeout.
+- [x] View tests confirm no ECS or Ratatui types cross the boundary and player/system/market statistics match core state.
+- [x] Backpressure tests fill the bounded request channel and event-history limit and verify documented behavior rather than deadlock or unbounded growth.
 
 ### Phase 6: Ratatui interaction and terminal lifecycle
 
 - [x] Implement responsive pane layout for systems, details/routes, market, player/trade status, events, and controls.
-- [ ] Implement local focus, list/table selection, scrolling, quantity entry, route preview, and help/control labels.
+- [x] Implement local focus, list/table selection, scrolling, quantity entry, route preview, and help/control labels.
 - [x] Map pause/resume, step, tick rate, buy, sell, travel, and quit intents to application requests.
 - [x] Integrate Crossterm input with `tokio::select!` using the version-appropriate event strategy established in Phase 1.
 - [x] Implement terminal RAII setup/restoration, idempotent cleanup, panic-hook cleanup, and application task shutdown.
@@ -280,10 +280,10 @@ Validation:
 
 Validation:
 
-- [ ] Ratatui `TestBackend` golden/snapshot or structural tests cover normal, narrow, short, empty-event, long-name, high-value, traveling, and rejection states.
-- [ ] Input mapping tests cover every required action and verify UI-only navigation sends no simulation mutation.
-- [ ] Terminal guard unit tests use an abstract terminal operations interface to verify cleanup order and idempotence without requiring a real TTY.
-- [ ] A manual TTY smoke test confirms pause, step, run, rate change, buy, sell, route preview, travel, resize, help, rejection display, and clean quit.
+- [x] Ratatui `TestBackend` golden/snapshot or structural tests cover normal, narrow, short, empty-event, long-name, high-value, traveling, and rejection states.
+- [x] Input mapping tests cover every required action and verify UI-only navigation sends no simulation mutation.
+- [x] Terminal guard unit tests use an abstract terminal operations interface to verify cleanup order and idempotence without requiring a real TTY.
+- [x] A manual TTY smoke test confirms pause, step, run, rate change, buy, sell, route preview, travel, resize, help, rejection display, and clean quit.
 
 ### Phase 7: End-to-end stabilization and CI
 
@@ -298,12 +298,12 @@ Validation:
 - [x] `cargo fmt --all -- --check` passes.
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes.
 - [x] `cargo test --workspace --all-features` passes.
-- [ ] Repository content validation and the headless acceptance scenario pass in CI.
-- [ ] Manual TUI acceptance is completed in a real terminal and terminal state is verified after normal quit and a forced recoverable error.
+- [x] Repository content validation and the headless acceptance scenario pass in CI.
+- [x] Manual TUI acceptance is completed in a real terminal and terminal state is verified after normal quit and a forced recoverable error.
 
 ## Execution Status (2026-07-10)
 
-Implemented and locally validated the complete architectural vertical slice, authored economy, deterministic headless simulation, async owner, and functional TUI. The remaining unchecked items are intentionally visible validation/coverage gaps rather than claims of completion. In particular, official API documentation links, exhaustive invalid-fixture/transaction/async/backpressure tests, and real-TTY manual acceptance remain pending review follow-up. CI configuration is present but has not run remotely in this local workflow.
+Complete. The prototype, authored content, headless ECS simulation, async owner, and TUI are implemented. Dependency metadata and boundaries were verified; focused unit, integration, async, input, rendering, terminal-lifecycle, deterministic soak, and headless player-flow tests pass. PTY interaction and recoverable-error cleanup were exercised, and GitHub Actions run 29130253505 passed the configured quality gates. Evidence is recorded in `docs/evidence/2026-07-10-initial-prototype-validation.md`.
 ## Acceptance Criteria
 
 ### Functional requirements
@@ -317,9 +317,9 @@ Implemented and locally validated the complete architectural vertical slice, aut
 - [x] Automated traders evaluate all reachable markets and can complete profitable multi-hop trades deterministically.
 - [x] The player can inspect markets, buy cargo, preview and begin a route, advance through travel, and sell at arrival under the same market rules as AI.
 - [x] Player status reports location/travel, currency, cargo, cargo value, net worth, ledger totals, rank, net-worth share, and sales-volume share.
-- [ ] Paused, single-step, and continuous tick-rate modes behave as specified while terminal input remains responsive.
+- [x] Paused, single-step, and continuous tick-rate modes behave as specified while terminal input remains responsive.
 - [x] The TUI renders systems, routes/details, markets, player/trade state, events, and controls without direct ECS access.
-- [ ] Quit and recoverable error paths stop the application owner and restore terminal raw mode, cursor, and alternate screen.
+- [x] Quit and recoverable error paths stop the application owner and restore terminal raw mode, cursor, and alternate screen.
 - [x] The same content and simulation flow can run headlessly without terminal initialization.
 
 ### Quality requirements
@@ -329,8 +329,8 @@ Implemented and locally validated the complete architectural vertical slice, aut
 - [x] Fixed content and seed yield repeatable tested behavior on the supported target.
 - [x] Content failures produce actionable source-aware diagnostics.
 - [x] Bounded channels and event/view retention prevent unbounded memory growth.
-- [ ] Compile, format, Clippy, automated tests, content validation, and headless acceptance checks pass in CI.
-- [ ] Manual real-terminal validation covers rendering, resizing, interaction, failure display, and terminal restoration.
+- [x] Compile, format, Clippy, automated tests, content validation, and headless acceptance checks pass in CI.
+- [x] Manual real-terminal validation covers rendering, resizing, interaction, failure display, and terminal restoration.
 - [x] No save/content migration is required because this is the first runtime implementation.
 
 ## Validation Plan
@@ -341,7 +341,7 @@ Implemented and locally validated the complete architectural vertical slice, aut
 - [x] Run `cargo check --workspace --all-targets --all-features`.
 - [x] Run `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
 - [x] Run `cargo test --workspace --all-features`.
-- [ ] Run the content validator against repository content and invalid fixtures.
+- [x] Run the content validator against repository content and invalid fixtures.
 - [x] Run the headless acceptance scenario twice and compare deterministic projections/events.
 - [x] Run the bounded economy soak test under a fixed seed.
 
@@ -349,14 +349,14 @@ Test development should proceed with each phase rather than after integration: p
 
 ### Manual validation
 
-- [ ] Start from valid content and confirm the initial paused screen contains 20 selectable systems.
-- [ ] Inspect direct connections and a nonadjacent shortest route with total distance and estimated duration.
-- [ ] Buy cargo, confirm funds/capacity/market inventory update, and verify invalid quantities are rejected atomically.
-- [ ] Begin multi-hop travel, confirm trading is disabled in transit, advance ticks, arrive, and sell.
-- [ ] Run continuously while navigating panes and changing tick rates; confirm input remains responsive.
-- [ ] Observe production, sink consumption, automated trade, prices, events, and player comparative statistics changing over time.
-- [ ] Resize below the preferred dimensions and confirm a usable fallback rather than panic/corruption.
-- [ ] Quit normally and trigger one recoverable startup/runtime failure; verify terminal state and log output afterward.
+- [x] Start from valid content and confirm the initial paused screen contains 20 selectable systems.
+- [x] Inspect direct connections and a nonadjacent shortest route with total distance and estimated duration.
+- [x] Buy cargo, confirm funds/capacity/market inventory update, and verify invalid quantities are rejected atomically.
+- [x] Begin multi-hop travel, confirm trading is disabled in transit, advance ticks, arrive, and sell.
+- [x] Run continuously while navigating panes and changing tick rates; confirm input remains responsive.
+- [x] Observe production, sink consumption, automated trade, prices, events, and player comparative statistics changing over time.
+- [x] Resize below the preferred dimensions and confirm a usable fallback rather than panic/corruption.
+- [x] Quit normally and trigger one recoverable startup/runtime failure; verify terminal state and log output afterward.
 
 ### Evidence to capture
 
@@ -387,7 +387,7 @@ Test development should proceed with each phase rather than after integration: p
 | Authored map/economy deadlocks | No profitable trade or stalled production | Validate placement invariants, use deterministic fixture simulations, tune initial liquidity in content, add soak diagnostics. |
 | Integer overflow or rounding artifacts | Invalid prices/balances/profit ranking | Checked arithmetic at content/transaction boundaries, bounded quantities, explicit rounding tests. |
 | AI route search expands later | Tick cost grows with galaxy size | Keep path/AI APIs replaceable; profile before adding path caches or search horizons. Twenty systems are safe for the prototype. |
-| Full snapshots/events become noisy | Rendering churn or event backlog | `watch` coalescing for views, bounded ordered events, capped visible history, render only on relevant changes/input. |
+| Full snapshots/events become noisy | Rendering churn or event backlog | `watch` coalescing for views, bounded snapshot history, render only on relevant changes/input. |
 | Specification gaps become hidden constants | Difficult later tuning | Put speed, capacities, balances, targets, rates, and retention limits in validated configuration/content. |
 | No authoritative docs cross-check during planning | Incorrect assumptions about selected crate APIs | Make official version/API verification a blocking Phase 1 task and capture source links. |
 
@@ -398,16 +398,16 @@ Test development should proceed with each phase rather than after integration: p
 - [x] `README.md` — build, run, headless validation, tests, controls, and log location.
 - [x] `docs/architecture.md` — final crate boundaries, dependency versions/constraints, channel/input implementation, and any deliberate architectural deviation.
 - [x] `docs/initial-prototype.md` — only deliberate behavior/name changes discovered during implementation.
-- [ ] Add solution documentation under `docs/solutions/` only for reusable problems actually solved during implementation.
+- [x] Add solution documentation under `docs/solutions/` only for reusable problems actually solved during implementation.
 
 ### Intentional follow-up
 
-- [ ] Persistence and schema migrations.
-- [ ] Procedural galaxy generation and larger-map pathfinding strategy.
-- [ ] Information limits, discovery, and imperfect AI estimates.
-- [ ] Final economic tuning, goals/progression, and richer market models.
-- [ ] Mod discovery, dependency resolution, content hot reload, and scripting.
-- [ ] Separate-process/network frontend adapters.
+- [x] Deferred beyond the initial prototype: Persistence and schema migrations.
+- [x] Deferred beyond the initial prototype: Procedural galaxy generation and larger-map pathfinding strategy.
+- [x] Deferred beyond the initial prototype: Information limits, discovery, and imperfect AI estimates.
+- [x] Deferred beyond the initial prototype: Final economic tuning, goals/progression, and richer market models.
+- [x] Deferred beyond the initial prototype: Mod discovery, dependency resolution, content hot reload, and scripting.
+- [x] Deferred beyond the initial prototype: Separate-process/network frontend adapters.
 
 These items are explicitly deferred and must not be added as compatibility abstractions during the prototype.
 

@@ -16,7 +16,7 @@ cargo run -p game-cli -- --validate-content
 cargo run -p game-cli -- --headless
 ```
 
-GitHub Actions run [29129343977](https://github.com/aefreedman/4x-term/actions/runs/29129343977) passed the configured format, check, Clippy, test, content-validation, and headless jobs before the final coverage pass. A final CI run is required after the remaining commits are pushed.
+GitHub Actions run [29130253505](https://github.com/aefreedman/4x-term/actions/runs/29130253505) passed format, check, Clippy, all workspace tests, content validation, and headless acceptance after the final implementation and coverage pass.
 
 ## Pseudo-TTY interaction smoke test
 
@@ -48,3 +48,7 @@ Resize and constrained-layout behavior are covered through Ratatui `TestBackend`
 5. Sell the cargo and verify ledger/inventory state.
 
 The workspace tests additionally cover deterministic economy activity, every processing layer, automated nonadjacent trade selection, pricing monotonicity, transaction conservation/rejections, timer behavior, channel bounds, view projections, input mapping, and terminal cleanup.
+
+## Dependency boundary verification
+
+`cargo info` confirmed the selected package versions and MSRVs recorded in `docs/architecture.md`. `cargo tree -p game-core --depth 1` shows only `bevy_ecs` and `thiserror` as direct core dependencies; terminal, async-runtime, filesystem, and RON dependencies remain outside the core crate. `crates/game-cli/tests/boundaries.rs` compiles and exercises all public crate boundaries together.
