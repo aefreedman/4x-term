@@ -12,3 +12,4 @@
 ### Changed
 
 - Route previews, active travel, direct connections, and player location now use readable system names with jump, distance, and timing summaries instead of exposing internal content IDs.
+- Event log entries now resolve system, trader, good, and production-process IDs to readable display names.

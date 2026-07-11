@@ -258,11 +258,40 @@ fn tick_interval(rate: TickRate) -> tokio::time::Interval {
 }
 
 fn collect_events(session: &mut GameSession, history: &mut VecDeque<String>) {
-    for event in session.drain_events() {
+    let events = session.drain_events();
+    if events.is_empty() {
+        return;
+    }
+    let snapshot = session.snapshot();
+    let labels = EventLabels {
+        systems: snapshot
+            .markets
+            .into_iter()
+            .map(|market| (market.system_id, market.name))
+            .collect(),
+        traders: snapshot
+            .traders
+            .into_iter()
+            .map(|trader| (trader.id, trader.name))
+            .collect(),
+        goods: session
+            .catalog()
+            .goods
+            .iter()
+            .map(|(id, good)| (id.clone(), good.name.clone()))
+            .collect(),
+        recipes: session
+            .catalog()
+            .recipes
+            .iter()
+            .map(|(id, recipe)| (id.clone(), recipe.name.clone()))
+            .collect(),
+    };
+    for event in events {
         if history.len() == EVENT_HISTORY {
             history.pop_front();
         }
-        history.push_back(format_event(&event));
+        history.push_back(format_event(&event, &labels));
     }
 }
 
@@ -491,28 +520,85 @@ fn build_route_view(
     }
 }
 
-fn format_event(event: &GameEvent) -> String {
+struct EventLabels {
+    systems: BTreeMap<ContentId, String>,
+    traders: BTreeMap<ContentId, String>,
+    goods: BTreeMap<ContentId, String>,
+    recipes: BTreeMap<ContentId, String>,
+}
+
+impl EventLabels {
+    fn system(&self, id: &ContentId) -> &str {
+        self.systems
+            .get(id)
+            .map_or("Unknown system", String::as_str)
+    }
+
+    fn trader(&self, id: &ContentId) -> &str {
+        self.traders
+            .get(id)
+            .map_or("Unknown trader", String::as_str)
+    }
+
+    fn good(&self, id: &ContentId) -> &str {
+        self.goods.get(id).map_or("Unknown good", String::as_str)
+    }
+
+    fn recipe(&self, id: &ContentId) -> &str {
+        self.recipes
+            .get(id)
+            .map_or("Unknown process", String::as_str)
+    }
+}
+
+fn format_event(event: &GameEvent, labels: &EventLabels) -> String {
     match event {
         GameEvent::TickAdvanced(tick) => format!("Tick {tick}"),
-        GameEvent::Produced { system, recipe } => format!("{system}: completed {recipe}"),
-        GameEvent::Consumed { system, recipe } => format!("{system}: consumed goods at {recipe}"),
+        GameEvent::Produced { system, recipe } => format!(
+            "{}: completed {}",
+            labels.system(system),
+            labels.recipe(recipe)
+        ),
+        GameEvent::Consumed { system, recipe } => format!(
+            "{}: consumed goods at {}",
+            labels.system(system),
+            labels.recipe(recipe)
+        ),
         GameEvent::Bought {
             trader,
             good,
             quantity,
             total,
-        } => format!("{trader} bought {quantity} {good} for ¤{}", total.0),
+        } => format!(
+            "{} bought {quantity} {} for ¤{}",
+            labels.trader(trader),
+            labels.good(good),
+            total.0
+        ),
         GameEvent::Sold {
             trader,
             good,
             quantity,
             total,
-        } => format!("{trader} sold {quantity} {good} for ¤{}", total.0),
+        } => format!(
+            "{} sold {quantity} {} for ¤{}",
+            labels.trader(trader),
+            labels.good(good),
+            total.0
+        ),
         GameEvent::Departed {
             trader,
             destination,
-        } => format!("{trader} departed for {destination}"),
-        GameEvent::Arrived { trader, system } => format!("{trader} arrived at {system}"),
+        } => format!(
+            "{} departed for {}",
+            labels.trader(trader),
+            labels.system(destination)
+        ),
+        GameEvent::Arrived { trader, system } => format!(
+            "{} arrived at {}",
+            labels.trader(trader),
+            labels.system(system)
+        ),
         GameEvent::Rejected(reason) => format!("Rejected: {reason}"),
     }
 }
@@ -566,6 +652,66 @@ mod tests {
             systems,
             traders,
         }
+    }
+
+    #[test]
+    fn event_formatter_resolves_all_player_facing_labels() {
+        let labels = EventLabels {
+            systems: BTreeMap::from([(id("core:s0"), "Aster Reach".into())]),
+            traders: BTreeMap::from([(id("core:player"), "Free Trader".into())]),
+            goods: BTreeMap::from([(id("core:ore"), "Ferrite Ore".into())]),
+            recipes: BTreeMap::from([(id("core:smelt"), "Alloy Smelting".into())]),
+        };
+        let events = [
+            GameEvent::Produced {
+                system: id("core:s0"),
+                recipe: id("core:smelt"),
+            },
+            GameEvent::Consumed {
+                system: id("core:s0"),
+                recipe: id("core:smelt"),
+            },
+            GameEvent::Bought {
+                trader: id("core:player"),
+                good: id("core:ore"),
+                quantity: 2,
+                total: Money(10),
+            },
+            GameEvent::Sold {
+                trader: id("core:player"),
+                good: id("core:ore"),
+                quantity: 2,
+                total: Money(12),
+            },
+            GameEvent::Departed {
+                trader: id("core:player"),
+                destination: id("core:s0"),
+            },
+            GameEvent::Arrived {
+                trader: id("core:player"),
+                system: id("core:s0"),
+            },
+        ];
+        let rendered = events
+            .iter()
+            .map(|event| format_event(event, &labels))
+            .collect::<Vec<_>>();
+        assert!(
+            rendered
+                .iter()
+                .any(|event| event.contains("Aster Reach: completed Alloy Smelting"))
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|event| event.contains("Free Trader bought 2 Ferrite Ore"))
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|event| event == "Free Trader arrived at Aster Reach")
+        );
+        assert!(rendered.iter().all(|event| !event.contains("core:")));
     }
 
     #[tokio::test]
@@ -648,6 +794,13 @@ mod tests {
         assert_eq!(bought.player.cargo_used, 1);
         assert_eq!(bought.player.transactions, 1);
         assert!(bought.player.net_worth.0 > 0);
+        assert!(
+            bought
+                .events
+                .iter()
+                .any(|event| event.contains("Player bought 1 Ore"))
+        );
+        assert!(bought.events.iter().all(|event| !event.contains("core:")));
         handle
             .request(AppRequest::SelectSystem(id("core:s1")))
             .await
@@ -658,6 +811,25 @@ mod tests {
         assert_eq!(route.legs[0].from_name, "S0");
         assert_eq!(route.legs[0].to_name, "S1");
         assert_eq!(route.current_leg, None);
+        handle
+            .request(AppRequest::BeginTravel {
+                destination: id("core:s1"),
+            })
+            .await
+            .unwrap();
+        let traveling = handle.views.borrow().clone();
+        assert!(
+            traveling
+                .events
+                .iter()
+                .any(|event| event == "Player departed for S1")
+        );
+        assert!(
+            traveling
+                .events
+                .iter()
+                .all(|event| !event.contains("core:"))
+        );
         handle.shutdown().await.unwrap();
     }
 
