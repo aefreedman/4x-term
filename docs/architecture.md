@@ -13,16 +13,18 @@
 | Concern | Choice |
 | --- | --- |
 | Language | Rust |
-| ECS | `bevy_ecs` without the full Bevy engine |
-| TUI | `ratatui` |
-| Terminal backend | `crossterm` |
-| Async runtime | `tokio` |
-| Serialization | `serde` |
+| ECS | `bevy_ecs` 0.19 without the full Bevy engine |
+| TUI | `ratatui` 0.30 |
+| Terminal backend | `crossterm` 0.29 |
+| Async runtime | `tokio` 1.52 |
+| Serialization | `serde` 1.0 |
 | Initial content format | RON through a format-specific adapter |
 | Error handling | `thiserror` in libraries; `anyhow` at executable boundaries |
 | Logging and diagnostics | `tracing` and `tracing-subscriber` |
 
 RON is the initial human-authored content format. Runtime code must not depend on that choice; deserialized source definitions are validated and compiled into format-independent typed definitions.
+
+The workspace MSRV is Rust 1.97. Dependency metadata was verified against the selected releases on 2026-07-10: [bevy_ecs 0.19](https://docs.rs/bevy_ecs/0.19.0), [Tokio 1.52](https://docs.rs/tokio/1.52.3), [Ratatui 0.30](https://docs.rs/ratatui/0.30.2), [Crossterm 0.29](https://docs.rs/crossterm/0.29.0), [Serde 1.0](https://docs.rs/serde/1.0.228), and [RON 0.12](https://docs.rs/ron/0.12.2). The highest dependency MSRV is `bevy_ecs` at Rust 1.95, below the workspace MSRV.
 
 ## High-level structure
 
@@ -99,7 +101,7 @@ tests/
 content/
 ```
 
-This is the intended separation, not a requirement to create every crate immediately. We can begin with `game-core`, `game-app`, `game-tui`, and `game-cli`, then extract content and persistence when their APIs become concrete.
+The initial prototype includes `game-core`, `game-content`, `game-app`, `game-tui`, and `game-cli`. `game-persistence` remains deferred until save APIs become concrete.
 
 ## Dependency rules
 
@@ -197,7 +199,7 @@ pub trait GameSession {
 }
 ```
 
-The TUI consumes complete immutable view-model snapshots from `game-app`. View models are designed for presentation but contain no `ratatui` types. This keeps the same interface usable by tests, a graphical client, or a remote protocol adapter. Incremental view diffs are deferred until profiling demonstrates a need.
+The TUI consumes complete immutable view-model snapshots from `game-app`. View models are designed for presentation but contain no `ratatui` types. They retain stable IDs for commands while also resolving all player-facing names—including locations, cargo goods, route legs, and event-log labels—so frontends never need to display or look up internal content IDs. This keeps the same interface usable by tests, a graphical client, or a remote protocol adapter. Incremental view diffs are deferred until profiling demonstrates a need.
 
 Structurally invalid requests fail immediately at the application boundary. Commands that are structurally valid but rejected by simulation rules produce typed rejection events.
 
@@ -332,7 +334,7 @@ Use an actor-style owner for the simulation:
 ```text
 TUI task
   ├── sends typed requests over a bounded Tokio channel
-  └── receives events/view snapshots over a bounded Tokio channel or watch channel
+  └── receives the latest bounded-history view snapshot over a watch channel
 
 simulation task
   ├── exclusively owns GameSession and the ECS World
@@ -346,9 +348,9 @@ Rules:
 - Exactly one task owns and mutates the ECS world.
 - Never place the world behind a broadly shared `Arc<Mutex<_>>`.
 - Use bounded channels to make backpressure explicit.
-- Use Tokio `mpsc` for ordered requests and events and `watch` for the latest replaceable view snapshot.
+- Use Tokio `mpsc` for ordered requests and `watch` for the latest replaceable view snapshot, which includes bounded recent event history.
+- Add a separate ordered event stream only when a concrete consumer requires lossless independent delivery.
 - Commands that need acknowledgement use a request envelope with a Tokio `oneshot` sender.
-- Use a `watch` channel for the latest replaceable view snapshot; use an `mpsc` channel for ordered events that must not be silently coalesced.
 - Blocking filesystem operations belong in `spawn_blocking` or dedicated adapter tasks.
 - Systems do not spawn tasks or await futures. Async work completes outside the core and returns through typed commands.
 - Cancellation and shutdown are explicit messages/signals, not dropped-task side effects.

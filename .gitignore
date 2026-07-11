@@ -3,5 +3,9 @@
 # Pi project configuration and installed packages are machine-local.
 .pi/
 
-# Rust build output.
+# Rust build output and runtime diagnostics.
 target/
+*.log
+
+# Generated Compound Game Dev artifact index.
+.compound-game-dev/

@@ -1,0 +1,12 @@
+[
+  (id: "frontier:ferrite_ore", name: "Ferrite Ore", category: Raw, base_price: 8),
+  (id: "frontier:silicate_crystals", name: "Silicate Crystals", category: Raw, base_price: 10),
+  (id: "frontier:hydrocarbon_feedstock", name: "Hydrocarbon Feedstock", category: Raw, base_price: 12),
+  (id: "frontier:biomass", name: "Cultured Biomass", category: Raw, base_price: 9),
+  (id: "frontier:structural_alloy", name: "Structural Alloy", category: Primary, base_price: 24),
+  (id: "frontier:ceramic_composite", name: "Ceramic Composite", category: Primary, base_price: 30),
+  (id: "frontier:biopolymer", name: "Industrial Biopolymer", category: Primary, base_price: 28),
+  (id: "frontier:industrial_machinery", name: "Industrial Machinery", category: Secondary, base_price: 65),
+  (id: "frontier:habitat_modules", name: "Habitat Modules", category: Secondary, base_price: 78),
+  (id: "frontier:reactor_assemblies", name: "Reactor Assemblies", category: Secondary, base_price: 85),
+]
