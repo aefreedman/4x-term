@@ -251,7 +251,7 @@ Requirements:
 - Content definitions are immutable after compilation unless explicit hot-reload support is added.
 - Format-specific parsing is isolated behind loader adapters.
 
-A registry resource in the ECS world can hold compiled definitions and map stable content IDs to runtime templates.
+A registry resource in the ECS world can hold compiled definitions and map stable content IDs to runtime templates. Population-level parameters that designers tune together—such as NPC trader count, common speed, starting funds/capacity, naming, and distribution—belong in dedicated validated configuration files such as `content/traders.ron`, rather than being duplicated across individual entity definitions.
 
 ## Persistence
 
