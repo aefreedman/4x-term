@@ -94,6 +94,6 @@ Refactor `TerminalGuard::enter` into staged acquisition and add setup-failure cl
 - Ran the application in an Expect-controlled PTY through step, quantity, buy, selection, travel, run/pause, help, and quit inputs.
 - Confirmed successful exit emitted cursor-show and alternate-screen-leave sequences.
 - Forced Crossterm cursor-query timeout and confirmed the error path emitted the same restoration sequences.
-- Recorded evidence in `docs/evidence/2026-07-10-initial-prototype-validation.md`.
+- Recorded the PTY validation result in this todo's work log.
 
 **Disposition:** Resolved. Real terminal state transitions were exercised through a PTY; constrained resize behavior remains covered by `TestBackend` because the host could not resize the child PTY reliably.

@@ -303,7 +303,7 @@ Validation:
 
 ## Execution Status (2026-07-10)
 
-Complete. The prototype, authored content, headless ECS simulation, async owner, and TUI are implemented. Dependency metadata and boundaries were verified; focused unit, integration, async, input, rendering, terminal-lifecycle, deterministic soak, and headless player-flow tests pass. PTY interaction and recoverable-error cleanup were exercised, and GitHub Actions run 29130410741 passed the configured quality gates. Evidence is recorded in `docs/evidence/2026-07-10-initial-prototype-validation.md`.
+Complete. The prototype, authored content, headless ECS simulation, async owner, and TUI are implemented. Dependency metadata and boundaries were verified; focused unit, integration, async, input, rendering, terminal-lifecycle, deterministic soak, and headless player-flow tests pass. PTY interaction and recoverable-error cleanup were exercised, and GitHub Actions run 29130410741 passed the configured quality gates.
 ## Acceptance Criteria
 
 ### Functional requirements
