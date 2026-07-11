@@ -542,7 +542,7 @@ fn render_player(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
     } else {
         p.cargo
             .iter()
-            .map(|(id, q)| format!("{id} x{q}"))
+            .map(|item| format!("{} x{}", item.good_name, item.quantity))
             .collect::<Vec<_>>()
             .join(", ")
     };
@@ -605,8 +605,8 @@ fn render_events(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
 mod tests {
     use super::*;
     use game_app::{
-        ConnectionView, MarketRow, PlayerStatusView, RouteLegView, RouteView, SystemListItem,
-        TickRate,
+        CargoItemView, ConnectionView, MarketRow, PlayerStatusView, RouteLegView, RouteView,
+        SystemListItem, TickRate,
     };
     use game_core::{
         ContentId, GameDefinition, GameSession, GoodCategory, GoodDefinition, Money, Position3,
@@ -727,8 +727,12 @@ mod tests {
                 location: id("core:s0"),
                 location_name: "Aster Reach".into(),
                 currency: Money(100),
-                cargo: BTreeMap::new(),
-                cargo_used: 0,
+                cargo: vec![CargoItemView {
+                    good_id: id("core:ore"),
+                    good_name: "Ferrite Ore".into(),
+                    quantity: 2,
+                }],
+                cargo_used: 2,
                 cargo_capacity: 10,
                 cargo_value: Money(0),
                 net_worth: Money(100),

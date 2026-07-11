@@ -114,11 +114,18 @@ pub struct MarketRow {
 }
 
 #[derive(Clone, Debug)]
+pub struct CargoItemView {
+    pub good_id: ContentId,
+    pub good_name: String,
+    pub quantity: u32,
+}
+
+#[derive(Clone, Debug)]
 pub struct PlayerStatusView {
     pub location: ContentId,
     pub location_name: String,
     pub currency: Money,
-    pub cargo: BTreeMap<ContentId, u32>,
+    pub cargo: Vec<CargoItemView>,
     pub cargo_used: u32,
     pub cargo_capacity: u32,
     pub cargo_value: Money,
@@ -436,7 +443,19 @@ fn build_view(
                 .unwrap_or_else(|| "Unknown system".into()),
             location: player.system,
             currency: player.currency,
-            cargo: player.cargo.clone(),
+            cargo: player
+                .cargo
+                .iter()
+                .map(|(good_id, quantity)| CargoItemView {
+                    good_id: good_id.clone(),
+                    good_name: session
+                        .catalog()
+                        .goods
+                        .get(good_id)
+                        .map_or_else(|| "Unknown good".into(), |good| good.name.clone()),
+                    quantity: *quantity,
+                })
+                .collect(),
             cargo_used: player.cargo.values().sum(),
             cargo_capacity: player.cargo_capacity,
             cargo_value: Money(cargo_value),
@@ -792,6 +811,7 @@ mod tests {
             .unwrap();
         let bought = handle.views.borrow().clone();
         assert_eq!(bought.player.cargo_used, 1);
+        assert_eq!(bought.player.cargo[0].good_name, "Ore");
         assert_eq!(bought.player.transactions, 1);
         assert!(bought.player.net_worth.0 > 0);
         assert!(

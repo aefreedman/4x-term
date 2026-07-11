@@ -199,7 +199,7 @@ pub trait GameSession {
 }
 ```
 
-The TUI consumes complete immutable view-model snapshots from `game-app`. View models are designed for presentation but contain no `ratatui` types. They retain stable IDs for commands while also resolving player-facing names, formatted route-leg data, and event-log labels so frontends never need to display or look up internal content IDs. This keeps the same interface usable by tests, a graphical client, or a remote protocol adapter. Incremental view diffs are deferred until profiling demonstrates a need.
+The TUI consumes complete immutable view-model snapshots from `game-app`. View models are designed for presentation but contain no `ratatui` types. They retain stable IDs for commands while also resolving all player-facing names—including locations, cargo goods, route legs, and event-log labels—so frontends never need to display or look up internal content IDs. This keeps the same interface usable by tests, a graphical client, or a remote protocol adapter. Incremental view diffs are deferred until profiling demonstrates a need.
 
 Structurally invalid requests fail immediately at the application boundary. Commands that are structurally valid but rejected by simulation rules produce typed rejection events.
 
