@@ -299,7 +299,7 @@ The deterministic selection algorithm is:
 
 The algorithm has full market information in the prototype. Information limits and imperfect estimates are deferred.
 
-Initial market targets are role-specific: resource systems primarily export, production systems target their recipe inputs, and tertiary systems target the goods they consume. Raw source rates are deliberately below aggregate recipe demand, secondary processors begin with small input buffers, and higher-tier base prices preserve value through transformation.
+Initial market targets are role-specific: resource systems primarily export, production systems target their recipe inputs, and tertiary systems target the goods they consume. Raw source rates are deliberately below aggregate recipe demand, secondary processors begin with small input buffers, and higher-tier base prices preserve value through transformation. Designers can tune global quote percentages, untargeted demand, raw-source output, and idle trader repositioning in `content/economy_config.ron`; per-system targets and inventories remain in `content/economy.ron`.
 
 The initial content creates nine automated traders. Their count, ID/name prefixes, starting currency, cargo capacity, common speed, and distribution strategy are authored in `content/traders.ron`. `EvenlySpaced` assigns them across the ordered 20-system list using centered intervals, placing them at Systems 02, 04, 06, 08, 11, 13, 15, 17, and 19 rather than clustering them near the player.
 
@@ -491,6 +491,7 @@ content/
   goods.ron
   recipes.ron
   economy.ron
+  economy_config.ron
   traders.ron
 ```
 

@@ -35,6 +35,7 @@ content/
   goods.ron
   recipes.ron
   economy.ron
+  economy_config.ron
   traders.ron
 crates/
   game-core/       # typed simulation state, ECS systems, routes, economy
@@ -309,7 +310,7 @@ Complete. The prototype, authored content, headless ECS simulation, async owner,
 
 ### Functional requirements
 
-- [x] Startup validates and compiles the five RON content files before creating the interactive terminal session.
+- [x] Startup validates and compiles the six RON content files before creating the interactive terminal session.
 - [x] The world contains exactly 20 uniquely identified systems with finite, nonduplicate 3D positions and varied derived distances.
 - [x] Three-nearest-neighbor graph construction produces one connected undirected map, and deterministic shortest paths support multi-hop travel.
 - [x] The documented 10 frontier goods and 9 recipes execute through raw, primary, secondary, and tertiary/sink layers.

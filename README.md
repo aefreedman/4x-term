@@ -40,7 +40,14 @@ The terminal should be at least 70 columns by 24 rows. The prototype exposes cur
 
 ## Designer configuration
 
-Runtime content is stored under `content/`. Trader population parameters are centralized in `content/traders.ron`, including NPC count, common speed, starting currency, cargo capacity, naming, and distribution strategy. The initial nine NPC traders use `EvenlySpaced` distribution across the 20 systems.
+Runtime content is stored under `content/`.
+
+- `economy_config.ron` controls global market buy/sell percentages, the untargeted-good discount, overall raw-source output, and idle NPC repositioning.
+- `economy.ron` controls per-system inventories, demand targets, recipes, and raw sources.
+- `goods.ron` controls individual base prices.
+- `traders.ron` controls trader count, speed, starting funds, cargo capacity, naming, and distribution.
+
+The initial nine NPC traders use `EvenlySpaced` distribution across the 20 systems.
 
 ## Validation
 

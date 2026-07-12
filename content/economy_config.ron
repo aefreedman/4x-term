@@ -1,0 +1,12 @@
+(
+  // Percentage of scarcity-adjusted midpoint paid by a market buying a targeted good.
+  market_buy_percent: 90,
+  // Percentage of scarcity-adjusted midpoint charged when a market sells a good.
+  market_sell_percent: 110,
+  // Percentage of base price paid for goods the market does not explicitly target.
+  untargeted_buy_percent: 45,
+  // Global multiplier for each system's authored per-tick raw-resource output.
+  source_output_percent: 100,
+  // Let empty NPC traders travel from demand sinks back to profitable supply markets.
+  idle_trader_repositioning: true,
+)

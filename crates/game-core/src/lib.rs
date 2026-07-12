@@ -133,6 +133,28 @@ pub struct GameDefinition {
     pub recipes: Vec<RecipeDefinition>,
     pub systems: Vec<SystemDefinition>,
     pub traders: Vec<TraderDefinition>,
+    pub economy: EconomyConfig,
+}
+
+#[derive(Resource, Clone, Debug)]
+pub struct EconomyConfig {
+    pub market_buy_percent: u32,
+    pub market_sell_percent: u32,
+    pub untargeted_buy_percent: u32,
+    pub source_output_percent: u32,
+    pub idle_trader_repositioning: bool,
+}
+
+impl Default for EconomyConfig {
+    fn default() -> Self {
+        Self {
+            market_buy_percent: 90,
+            market_sell_percent: 110,
+            untargeted_buy_percent: 45,
+            source_output_percent: 100,
+            idle_trader_repositioning: true,
+        }
+    }
 }
 
 #[derive(Component, Clone, Debug)]
@@ -501,6 +523,7 @@ impl GameSession {
         let mut world = World::new();
         world.insert_resource(graph);
         world.insert_resource(catalog);
+        world.insert_resource(definition.economy);
         world.insert_resource(Clock::default());
         world.insert_resource(EventBuffer::default());
         for system in definition.systems {
@@ -946,7 +969,10 @@ impl GameSession {
     }
 
     fn buy_quote(&self, market: &Market, good: &ContentId) -> Result<Money, CoreError> {
-        if !market.targets.contains_key(good) {
+        let economy = self.world.resource::<EconomyConfig>();
+        let (price, percent) = if market.targets.contains_key(good) {
+            (self.midpoint(market, good)?.0, economy.market_buy_percent)
+        } else {
             let base_price = self
                 .world
                 .resource::<Catalog>()
@@ -958,15 +984,26 @@ impl GameSession {
                 })?
                 .base_price
                 .0;
-            return Ok(Money(
-                (base_price.checked_mul(45).ok_or(CoreError::Overflow)? / 100).max(1),
-            ));
-        }
-        Ok(Money((self.midpoint(market, good)?.0 * 90 / 100).max(1)))
+            (base_price, economy.untargeted_buy_percent)
+        };
+        Self::percentage_price(price, percent)
     }
 
     fn sell_quote(&self, market: &Market, good: &ContentId) -> Result<Money, CoreError> {
-        Ok(Money((self.midpoint(market, good)?.0 * 110 / 100).max(1)))
+        Self::percentage_price(
+            self.midpoint(market, good)?.0,
+            self.world.resource::<EconomyConfig>().market_sell_percent,
+        )
+    }
+
+    fn percentage_price(price: i64, percent: u32) -> Result<Money, CoreError> {
+        Ok(Money(
+            (price
+                .checked_mul(i64::from(percent))
+                .ok_or(CoreError::Overflow)?
+                / 100)
+                .max(1),
+        ))
     }
 
     fn begin_travel(
@@ -1059,6 +1096,7 @@ impl GameSession {
     }
 
     fn replenish_sources(&mut self) -> Result<(), CoreError> {
+        let source_output_percent = self.world.resource::<EconomyConfig>().source_output_percent;
         let updates = self
             .world
             .query::<(Entity, &Market)>()
@@ -1067,9 +1105,12 @@ impl GameSession {
                 let mut inventory = market.inventory.clone();
                 for source in &market.sources {
                     let stock = inventory.entry(source.good.clone()).or_default();
-                    *stock = stock
-                        .checked_add(source.quantity_per_tick)
-                        .ok_or(CoreError::Overflow)?;
+                    let output = source
+                        .quantity_per_tick
+                        .checked_mul(source_output_percent)
+                        .ok_or(CoreError::Overflow)?
+                        / 100;
+                    *stock = stock.checked_add(output).ok_or(CoreError::Overflow)?;
                 }
                 Ok((entity, inventory))
             })
@@ -1179,7 +1220,12 @@ impl GameSession {
                 if quantity > 0 && self.buy(entity, &system, &good, quantity).is_ok() {
                     self.begin_travel(entity, &destination)?;
                 }
-            } else if let Some(source) = self.best_reposition(&system)? {
+            } else if self
+                .world
+                .resource::<EconomyConfig>()
+                .idle_trader_repositioning
+                && let Some(source) = self.best_reposition(&system)?
+            {
                 self.begin_travel(entity, &source)?;
             }
         }
@@ -1446,6 +1492,48 @@ mod tests {
     }
 
     #[test]
+    fn economy_config_controls_quotes_and_source_output() {
+        let ore = id("core:ore");
+        let mut definition = minimal_definition(vec![GoodDefinition {
+            id: ore.clone(),
+            name: "Ore".into(),
+            category: GoodCategory::Raw,
+            base_price: Money(10),
+        }]);
+        definition.systems[0].targets.insert(ore.clone(), 10);
+        definition.systems[0].sources.push(SourceDefinition {
+            good: ore.clone(),
+            quantity_per_tick: 4,
+        });
+        definition.economy = EconomyConfig {
+            market_buy_percent: 50,
+            market_sell_percent: 150,
+            untargeted_buy_percent: 25,
+            source_output_percent: 50,
+            idle_trader_repositioning: false,
+        };
+        let mut session = GameSession::new(definition).unwrap();
+        assert_eq!(
+            session.quotes(&id("core:s0"), &ore).unwrap(),
+            (Money(7), Money(22))
+        );
+        session.step().unwrap();
+        assert_eq!(
+            session.snapshot().markets[0].inventory.get(&ore).copied(),
+            Some(2)
+        );
+
+        let market = session.market_entity(&id("core:s0")).unwrap();
+        session
+            .world
+            .get_mut::<Market>(market)
+            .unwrap()
+            .targets
+            .remove(&ore);
+        assert_eq!(session.quotes(&id("core:s0"), &ore).unwrap().0, Money(2));
+    }
+
+    #[test]
     fn rejected_overflow_does_not_mutate_transaction_state() {
         let ore = id("core:ore");
         let systems = (0..2)
@@ -1482,6 +1570,7 @@ mod tests {
                 speed: 1.0,
                 player: true,
             }],
+            economy: EconomyConfig::default(),
         };
         let mut session = GameSession::new(definition).unwrap();
         let before = format!("{:?}", session.snapshot());
@@ -1863,6 +1952,7 @@ mod tests {
             recipes: vec![],
             systems,
             traders,
+            economy: EconomyConfig::default(),
         })
         .unwrap();
         assert!(
@@ -1926,6 +2016,7 @@ mod tests {
                 speed: 1.0,
                 player: true,
             }],
+            economy: EconomyConfig::default(),
         }
     }
 
