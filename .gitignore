@@ -1,5 +1,8 @@
 .DS_Store
 
+# Local Obsidian workspace settings.
+.obsidian/
+
 # Pi project configuration and installed packages are machine-local.
 .pi/
 
