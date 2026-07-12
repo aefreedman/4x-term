@@ -623,6 +623,43 @@ mod tests {
     }
 
     #[test]
+    fn repository_economy_activates_secondary_and_tertiary_flows() {
+        let mut session = game_core::GameSession::new(repository_definition()).unwrap();
+        let mut produced = BTreeSet::new();
+        let mut consumed = BTreeSet::new();
+        for _ in 0..500 {
+            session.step().unwrap();
+            for event in session.drain_events() {
+                match event {
+                    game_core::GameEvent::Produced { recipe, .. } => {
+                        produced.insert(recipe);
+                    }
+                    game_core::GameEvent::Consumed { recipe, .. } => {
+                        consumed.insert(recipe);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for recipe in [
+            "frontier:machinery_fabrication",
+            "frontier:habitat_fabrication",
+            "frontier:reactor_fabrication",
+        ] {
+            assert!(
+                produced.contains(&ContentId::new(recipe).unwrap()),
+                "secondary recipe {recipe} should produce"
+            );
+        }
+        for recipe in ["frontier:settlement_expansion", "frontier:research_enclave"] {
+            assert!(
+                consumed.contains(&ContentId::new(recipe).unwrap()),
+                "tertiary recipe {recipe} should consume inputs; observed {consumed:?}"
+            );
+        }
+    }
+
+    #[test]
     fn repository_economy_is_deterministic_and_active() {
         let definition = repository_definition();
         let mut first = game_core::GameSession::new(definition.clone()).unwrap();

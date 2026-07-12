@@ -946,6 +946,22 @@ impl GameSession {
     }
 
     fn buy_quote(&self, market: &Market, good: &ContentId) -> Result<Money, CoreError> {
+        if !market.targets.contains_key(good) {
+            let base_price = self
+                .world
+                .resource::<Catalog>()
+                .goods
+                .get(good)
+                .ok_or_else(|| CoreError::Unknown {
+                    kind: "good",
+                    id: good.to_string(),
+                })?
+                .base_price
+                .0;
+            return Ok(Money(
+                (base_price.checked_mul(45).ok_or(CoreError::Overflow)? / 100).max(1),
+            ));
+        }
         Ok(Money((self.midpoint(market, good)?.0 * 90 / 100).max(1)))
     }
 
@@ -1163,6 +1179,8 @@ impl GameSession {
                 if quantity > 0 && self.buy(entity, &system, &good, quantity).is_ok() {
                     self.begin_travel(entity, &destination)?;
                 }
+            } else if let Some(source) = self.best_reposition(&system)? {
+                self.begin_travel(entity, &source)?;
             }
         }
         Ok(())
@@ -1220,6 +1238,58 @@ impl GameSession {
         Ok(candidates
             .first()
             .map(|(_, good, destination, _)| (good.clone(), destination.clone())))
+    }
+
+    fn best_reposition(&mut self, current: &ContentId) -> Result<Option<ContentId>, CoreError> {
+        let graph = self.world.resource::<SystemGraph>().clone();
+        let markets: Vec<(ContentId, Market)> = self
+            .world
+            .query_filtered::<(&StableId, &Market), With<SystemMarker>>()
+            .iter(&self.world)
+            .map(|(id, market)| (id.0.clone(), market.clone()))
+            .collect();
+        let mut candidates = Vec::new();
+        for (source, source_market) in &markets {
+            if source == current {
+                continue;
+            }
+            let Some((empty_route, _)) = graph.shortest_path(current, source) else {
+                continue;
+            };
+            let empty_ticks = graph.route_distance(&empty_route).ceil().max(1.0);
+            for (good, stock) in &source_market.inventory {
+                if *stock == 0 {
+                    continue;
+                }
+                let source_price = self.sell_quote(source_market, good)?.0;
+                for (destination, destination_market) in &markets {
+                    if destination == source {
+                        continue;
+                    }
+                    let Some((loaded_route, _)) = graph.shortest_path(source, destination) else {
+                        continue;
+                    };
+                    let destination_price = self.buy_quote(destination_market, good)?.0;
+                    let profit = destination_price - source_price;
+                    if profit > 0 {
+                        let loaded_ticks = graph.route_distance(&loaded_route).ceil().max(1.0);
+                        candidates.push((
+                            profit as f64 / (empty_ticks + loaded_ticks),
+                            source.clone(),
+                            good.clone(),
+                            destination.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        candidates.sort_by(|a, b| {
+            b.0.total_cmp(&a.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+                .then_with(|| a.3.cmp(&b.3))
+        });
+        Ok(candidates.first().map(|(_, source, _, _)| source.clone()))
     }
 }
 
@@ -1358,6 +1428,21 @@ mod tests {
             );
             previous = buy.0;
         }
+
+        session
+            .world
+            .get_mut::<Market>(market)
+            .unwrap()
+            .targets
+            .remove(&ore);
+        session
+            .world
+            .get_mut::<Market>(market)
+            .unwrap()
+            .inventory
+            .remove(&ore);
+        let (untargeted_buy, _) = session.quotes(&id("core:s0"), &ore).unwrap();
+        assert_eq!(untargeted_buy, Money(4));
     }
 
     #[test]
@@ -1763,6 +1848,15 @@ mod tests {
                 speed: 10.0,
                 player: false,
             },
+            TraderDefinition {
+                id: id("core:repositioner"),
+                name: "Repositioner".into(),
+                system: id("core:s4"),
+                currency: Money(100),
+                cargo_capacity: 1,
+                speed: 10.0,
+                player: false,
+            },
         ];
         let mut session = GameSession::new(GameDefinition {
             goods,
@@ -1788,6 +1882,18 @@ mod tests {
         let travel = ai.travel.expect("AI should begin travel");
         assert_eq!(travel.destination, id("core:s4"));
         assert!(travel.route.len() > 2);
+
+        let repositioner = session
+            .snapshot()
+            .traders
+            .into_iter()
+            .find(|trader| trader.id == id("core:repositioner"))
+            .unwrap();
+        let repositioning = repositioner
+            .travel
+            .expect("empty AI at a demand market should reposition to supply");
+        assert_eq!(repositioning.destination, id("core:s3"));
+        assert!(repositioner.cargo.is_empty());
     }
 
     fn minimal_definition(goods: Vec<GoodDefinition>) -> GameDefinition {

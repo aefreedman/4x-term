@@ -159,9 +159,9 @@ Every good has a stable content ID, display name, category, and base price in mi
 | Primary | `frontier:structural_alloy` | Structural Alloy | ¤24 |
 | Primary | `frontier:ceramic_composite` | Ceramic Composite | ¤30 |
 | Primary | `frontier:biopolymer` | Industrial Biopolymer | ¤28 |
-| Secondary | `frontier:industrial_machinery` | Industrial Machinery | ¤65 |
-| Secondary | `frontier:habitat_modules` | Habitat Modules | ¤78 |
-| Secondary | `frontier:reactor_assemblies` | Reactor Assemblies | ¤85 |
+| Secondary | `frontier:industrial_machinery` | Industrial Machinery | ¤85 |
+| Secondary | `frontier:habitat_modules` | Habitat Modules | ¤100 |
+| Secondary | `frontier:reactor_assemblies` | Reactor Assemblies | ¤110 |
 
 Prices are provisional test data. They exist to exercise quotes and trading and are not balance targets.
 
@@ -263,7 +263,7 @@ market buy quote = max(1, mid price × 90 / 100)
 market sell quote = max(1, mid price × 110 / 100)
 ```
 
-The market buys from a trader at its buy quote and sells to a trader at its sell quote. Integer division rounds down, and target inventory must be positive. The formula is isolated behind a pricing system and covered by tests so it can be replaced without changing the TUI or content model.
+The market buys from a trader at its buy quote and sells to a trader at its sell quote. Integer division rounds down, and target inventory must be positive. A market that does not target a good offers only 45% of its base price when buying it, preventing unrelated empty markets from competing with actual production demand. The formula is isolated behind a pricing system and covered by tests so it can be replaced without changing the TUI or content model.
 
 ### Markets and transactions
 
@@ -295,8 +295,11 @@ The deterministic selection algorithm is:
 5. Break ties by good ID and then destination system ID.
 6. Buy the maximum permitted by stock, cargo capacity, and available currency.
 7. Follow the selected route, sell on arrival, and repeat.
+8. If the arrival market has no profitable local cargo, reposition empty to the source of the best known trade instead of remaining stranded at a demand sink.
 
 The algorithm has full market information in the prototype. Information limits and imperfect estimates are deferred.
+
+Initial market targets are role-specific: resource systems primarily export, production systems target their recipe inputs, and tertiary systems target the goods they consume. Raw source rates are deliberately below aggregate recipe demand, secondary processors begin with small input buffers, and higher-tier base prices preserve value through transformation.
 
 The initial content creates nine automated traders. Their count, ID/name prefixes, starting currency, cargo capacity, common speed, and distribution strategy are authored in `content/traders.ron`. `EvenlySpaced` assigns them across the ordered 20-system list using centered intervals, placing them at Systems 02, 04, 06, 08, 11, 13, 15, 17, and 19 rather than clustering them near the player.
 
