@@ -15,3 +15,7 @@
 - Event log entries now resolve system, trader, good, and production-process IDs to readable display names.
 - Player cargo now displays readable good names instead of internal content IDs.
 - NPC trader setup now uses nine evenly distributed traders with a shared speed and designer-editable parameters in `content/traders.ron`.
+- Markets now express role-specific demand, use lower raw-source rates and production buffers, and preserve stronger value growth through secondary goods.
+- Automated traders now reposition to supply markets after unloading at demand-only destinations.
+- Global market spreads, untargeted demand, raw-source output, and idle trader repositioning are now designer-configurable in `content/economy_config.ron`.
+- Added cumulative market cash-flow and production diagnostics plus a long-run `--economy-diagnostics` CLI report for investigating liquidity and trader stalls.

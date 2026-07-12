@@ -693,6 +693,7 @@ mod tests {
                 speed: 1.0,
                 player: true,
             }],
+            economy: game_core::EconomyConfig::default(),
         })
         .unwrap()
     }

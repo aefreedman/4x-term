@@ -1,8 +1,8 @@
 //! RON loading, validation, and compilation into format-independent core definitions.
 
 use game_core::{
-    ContentId, GameDefinition, GoodAmount, GoodCategory, GoodDefinition, Money, Position3,
-    RecipeDefinition, RecipeLayer, SourceDefinition, SystemDefinition, TraderDefinition,
+    ContentId, EconomyConfig, GameDefinition, GoodAmount, GoodCategory, GoodDefinition, Money,
+    Position3, RecipeDefinition, RecipeLayer, SourceDefinition, SystemDefinition, TraderDefinition,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -83,6 +83,15 @@ struct EconomySource {
 }
 
 #[derive(Deserialize)]
+struct EconomyConfigSource {
+    market_buy_percent: u32,
+    market_sell_percent: u32,
+    untargeted_buy_percent: u32,
+    source_output_percent: u32,
+    idle_trader_repositioning: bool,
+}
+
+#[derive(Deserialize)]
 struct MarketSource {
     system: String,
     currency: i64,
@@ -130,8 +139,9 @@ pub fn load_directory(root: impl AsRef<Path>) -> Result<GameDefinition, ContentE
     let goods: Vec<GoodSource> = load(root.join("goods.ron"))?;
     let recipes: Vec<RecipeSource> = load(root.join("recipes.ron"))?;
     let economy: EconomySource = load(root.join("economy.ron"))?;
+    let economy_config: EconomyConfigSource = load(root.join("economy_config.ron"))?;
     let traders: TraderConfigSource = load(root.join("traders.ron"))?;
-    compile(systems, goods, recipes, economy, traders)
+    compile(systems, goods, recipes, economy, economy_config, traders)
 }
 
 fn load<T: for<'de> Deserialize<'de>>(path: PathBuf) -> Result<T, ContentError> {
@@ -160,6 +170,7 @@ fn compile(
     goods: Vec<GoodSource>,
     recipes: Vec<RecipeSource>,
     economy: EconomySource,
+    economy_config: EconomyConfigSource,
     traders: TraderConfigSource,
 ) -> Result<GameDefinition, ContentError> {
     let mut errors = Vec::new();
@@ -495,6 +506,25 @@ fn compile(
             }
         }
     }
+    if economy_config.market_buy_percent == 0
+        || economy_config.market_sell_percent == 0
+        || economy_config.untargeted_buy_percent == 0
+        || economy_config.market_buy_percent > 500
+        || economy_config.market_sell_percent > 500
+        || economy_config.untargeted_buy_percent > economy_config.market_buy_percent
+        || economy_config.market_buy_percent >= economy_config.market_sell_percent
+        || economy_config.source_output_percent > 1_000
+    {
+        errors.push("economy_config.ron: invalid percentage configuration".into());
+    }
+    let compiled_economy_config = EconomyConfig {
+        market_buy_percent: economy_config.market_buy_percent,
+        market_sell_percent: economy_config.market_sell_percent,
+        untargeted_buy_percent: economy_config.untargeted_buy_percent,
+        source_output_percent: economy_config.source_output_percent,
+        idle_trader_repositioning: economy_config.idle_trader_repositioning,
+    };
+
     let unique_trader_ids = compiled_traders
         .iter()
         .map(|trader| trader.id.clone())
@@ -510,6 +540,7 @@ fn compile(
         recipes: compiled_recipes,
         systems: compiled_systems,
         traders: compiled_traders,
+        economy: compiled_economy_config,
     };
     game_core::SystemGraph::build(&definition.systems)
         .map_err(|error| ContentError::Validation(vec![format!("system graph: {error}")]))?;
@@ -610,6 +641,9 @@ mod tests {
         assert_invalid_traders(|traders| {
             traders.player.starting_system = "frontier:missing".into()
         });
+        assert_invalid_economy_config(|config| config.market_buy_percent = 0);
+        assert_invalid_economy_config(|config| config.market_sell_percent = 90);
+        assert_invalid_economy_config(|config| config.untargeted_buy_percent = 100);
         assert_invalid(|systems, _, _, _| {
             for (index, system) in systems.iter_mut().enumerate() {
                 let cluster = if index < 10 { 0.0 } else { 10_000.0 };
@@ -620,6 +654,43 @@ mod tests {
                 };
             }
         });
+    }
+
+    #[test]
+    fn repository_economy_activates_secondary_and_tertiary_flows() {
+        let mut session = game_core::GameSession::new(repository_definition()).unwrap();
+        let mut produced = BTreeSet::new();
+        let mut consumed = BTreeSet::new();
+        for _ in 0..500 {
+            session.step().unwrap();
+            for event in session.drain_events() {
+                match event {
+                    game_core::GameEvent::Produced { recipe, .. } => {
+                        produced.insert(recipe);
+                    }
+                    game_core::GameEvent::Consumed { recipe, .. } => {
+                        consumed.insert(recipe);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for recipe in [
+            "frontier:machinery_fabrication",
+            "frontier:habitat_fabrication",
+            "frontier:reactor_fabrication",
+        ] {
+            assert!(
+                produced.contains(&ContentId::new(recipe).unwrap()),
+                "secondary recipe {recipe} should produce"
+            );
+        }
+        for recipe in ["frontier:settlement_expansion", "frontier:research_enclave"] {
+            assert!(
+                consumed.contains(&ContentId::new(recipe).unwrap()),
+                "tertiary recipe {recipe} should consume inputs; observed {consumed:?}"
+            );
+        }
     }
 
     #[test]
@@ -665,10 +736,11 @@ mod tests {
         let mut goods = load(root.join("goods.ron")).unwrap();
         let mut recipes = load(root.join("recipes.ron")).unwrap();
         let mut economy = load(root.join("economy.ron")).unwrap();
+        let economy_config = load(root.join("economy_config.ron")).unwrap();
         let traders = load(root.join("traders.ron")).unwrap();
         mutate(&mut systems, &mut goods, &mut recipes, &mut economy);
         assert!(matches!(
-            compile(systems, goods, recipes, economy, traders),
+            compile(systems, goods, recipes, economy, economy_config, traders),
             Err(ContentError::Validation(_))
         ));
     }
@@ -679,10 +751,26 @@ mod tests {
         let goods = load(root.join("goods.ron")).unwrap();
         let recipes = load(root.join("recipes.ron")).unwrap();
         let economy = load(root.join("economy.ron")).unwrap();
+        let economy_config = load(root.join("economy_config.ron")).unwrap();
         let mut traders = load(root.join("traders.ron")).unwrap();
         mutate(&mut traders);
         assert!(matches!(
-            compile(systems, goods, recipes, economy, traders),
+            compile(systems, goods, recipes, economy, economy_config, traders),
+            Err(ContentError::Validation(_))
+        ));
+    }
+
+    fn assert_invalid_economy_config(mutate: impl FnOnce(&mut EconomyConfigSource)) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let systems = load(root.join("systems.ron")).unwrap();
+        let goods = load(root.join("goods.ron")).unwrap();
+        let recipes = load(root.join("recipes.ron")).unwrap();
+        let economy = load(root.join("economy.ron")).unwrap();
+        let mut economy_config = load(root.join("economy_config.ron")).unwrap();
+        let traders = load(root.join("traders.ron")).unwrap();
+        mutate(&mut economy_config);
+        assert!(matches!(
+            compile(systems, goods, recipes, economy, economy_config, traders),
             Err(ContentError::Validation(_))
         ));
     }

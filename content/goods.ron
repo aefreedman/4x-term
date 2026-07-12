@@ -6,7 +6,7 @@
   (id: "frontier:structural_alloy", name: "Structural Alloy", category: Primary, base_price: 24),
   (id: "frontier:ceramic_composite", name: "Ceramic Composite", category: Primary, base_price: 30),
   (id: "frontier:biopolymer", name: "Industrial Biopolymer", category: Primary, base_price: 28),
-  (id: "frontier:industrial_machinery", name: "Industrial Machinery", category: Secondary, base_price: 65),
-  (id: "frontier:habitat_modules", name: "Habitat Modules", category: Secondary, base_price: 78),
-  (id: "frontier:reactor_assemblies", name: "Reactor Assemblies", category: Secondary, base_price: 85),
+  (id: "frontier:industrial_machinery", name: "Industrial Machinery", category: Secondary, base_price: 85),
+  (id: "frontier:habitat_modules", name: "Habitat Modules", category: Secondary, base_price: 100),
+  (id: "frontier:reactor_assemblies", name: "Reactor Assemblies", category: Secondary, base_price: 110),
 ]

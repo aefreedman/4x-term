@@ -670,6 +670,7 @@ mod tests {
             recipes: vec![],
             systems,
             traders,
+            economy: game_core::EconomyConfig::default(),
         }
     }
 

@@ -133,6 +133,28 @@ pub struct GameDefinition {
     pub recipes: Vec<RecipeDefinition>,
     pub systems: Vec<SystemDefinition>,
     pub traders: Vec<TraderDefinition>,
+    pub economy: EconomyConfig,
+}
+
+#[derive(Resource, Clone, Debug)]
+pub struct EconomyConfig {
+    pub market_buy_percent: u32,
+    pub market_sell_percent: u32,
+    pub untargeted_buy_percent: u32,
+    pub source_output_percent: u32,
+    pub idle_trader_repositioning: bool,
+}
+
+impl Default for EconomyConfig {
+    fn default() -> Self {
+        Self {
+            market_buy_percent: 90,
+            market_sell_percent: 110,
+            untargeted_buy_percent: 45,
+            source_output_percent: 100,
+            idle_trader_repositioning: true,
+        }
+    }
 }
 
 #[derive(Component, Clone, Debug)]
@@ -147,6 +169,25 @@ pub struct SystemMarker;
 #[derive(Component, Clone, Copy, Debug)]
 pub struct SpatialPosition(pub Position3);
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MarketLedger {
+    pub currency_paid_to_traders: i64,
+    pub currency_received_from_traders: i64,
+    pub units_bought_from_traders: u64,
+    pub units_sold_to_traders: u64,
+    pub source_units_generated: u64,
+    pub recipe_input_units_consumed: u64,
+    pub recipe_output_units_produced: u64,
+    pub tertiary_input_units_consumed: u64,
+}
+
+impl MarketLedger {
+    #[must_use]
+    pub fn net_trade_cash_flow(self) -> i128 {
+        i128::from(self.currency_received_from_traders) - i128::from(self.currency_paid_to_traders)
+    }
+}
+
 #[derive(Component, Clone, Debug)]
 pub struct Market {
     pub inventory: BTreeMap<ContentId, u32>,
@@ -154,6 +195,7 @@ pub struct Market {
     pub currency: Money,
     pub recipes: Vec<ContentId>,
     pub sources: Vec<SourceDefinition>,
+    pub ledger: MarketLedger,
 }
 
 #[derive(Clone, Debug)]
@@ -448,6 +490,7 @@ pub struct MarketSnapshot {
     pub inventory: BTreeMap<ContentId, u32>,
     pub targets: BTreeMap<ContentId, u32>,
     pub currency: Money,
+    pub ledger: MarketLedger,
 }
 
 #[derive(Clone, Debug)]
@@ -501,6 +544,7 @@ impl GameSession {
         let mut world = World::new();
         world.insert_resource(graph);
         world.insert_resource(catalog);
+        world.insert_resource(definition.economy);
         world.insert_resource(Clock::default());
         world.insert_resource(EventBuffer::default());
         for system in definition.systems {
@@ -515,6 +559,7 @@ impl GameSession {
                     currency: system.currency,
                     recipes: system.recipes,
                     sources: system.sources,
+                    ledger: MarketLedger::default(),
                 },
             ));
         }
@@ -595,6 +640,7 @@ impl GameSession {
                 inventory: market.inventory.clone(),
                 targets: market.targets.clone(),
                 currency: market.currency,
+                ledger: market.ledger,
             })
             .collect::<Vec<_>>();
         markets.sort_by(|a, b| a.system_id.cmp(&b.system_id));
@@ -745,6 +791,8 @@ impl GameSession {
             cargo_quantity,
             purchase_cost,
             transactions,
+            market_revenue,
+            market_units_sold,
         ) = {
             let market = self.world.get::<Market>(market_entity).expect("market");
             let stock = market.inventory.get(good).copied().unwrap_or(0);
@@ -788,11 +836,23 @@ impl GameSession {
                     .completed_transactions
                     .checked_add(1)
                     .ok_or(CoreError::Overflow)?,
+                market
+                    .ledger
+                    .currency_received_from_traders
+                    .checked_add(total)
+                    .ok_or(CoreError::Overflow)?,
+                market
+                    .ledger
+                    .units_sold_to_traders
+                    .checked_add(u64::from(quantity))
+                    .ok_or(CoreError::Overflow)?,
             )
         };
         let mut market = self.world.get_mut::<Market>(market_entity).expect("market");
         market.inventory.insert(good.clone(), market_stock);
         market.currency.0 = market_currency;
+        market.ledger.currency_received_from_traders = market_revenue;
+        market.ledger.units_sold_to_traders = market_units_sold;
         let trader_id = self
             .world
             .get::<StableId>(trader_entity)
@@ -850,6 +910,8 @@ impl GameSession {
             sales_revenue,
             units_moved,
             transactions,
+            market_expenditure,
+            market_units_bought,
         ) = {
             let market = self.world.get::<Market>(market_entity).expect("market");
             if market.currency.0 < total {
@@ -890,6 +952,16 @@ impl GameSession {
                     .completed_transactions
                     .checked_add(1)
                     .ok_or(CoreError::Overflow)?,
+                market
+                    .ledger
+                    .currency_paid_to_traders
+                    .checked_add(total)
+                    .ok_or(CoreError::Overflow)?,
+                market
+                    .ledger
+                    .units_bought_from_traders
+                    .checked_add(u64::from(quantity))
+                    .ok_or(CoreError::Overflow)?,
             )
         };
         let trader_id = self
@@ -911,6 +983,8 @@ impl GameSession {
         let mut market = self.world.get_mut::<Market>(market_entity).expect("market");
         market.currency.0 = market_currency;
         market.inventory.insert(good.clone(), market_stock);
+        market.ledger.currency_paid_to_traders = market_expenditure;
+        market.ledger.units_bought_from_traders = market_units_bought;
         self.world
             .resource_mut::<EventBuffer>()
             .0
@@ -946,11 +1020,41 @@ impl GameSession {
     }
 
     fn buy_quote(&self, market: &Market, good: &ContentId) -> Result<Money, CoreError> {
-        Ok(Money((self.midpoint(market, good)?.0 * 90 / 100).max(1)))
+        let economy = self.world.resource::<EconomyConfig>();
+        let (price, percent) = if market.targets.contains_key(good) {
+            (self.midpoint(market, good)?.0, economy.market_buy_percent)
+        } else {
+            let base_price = self
+                .world
+                .resource::<Catalog>()
+                .goods
+                .get(good)
+                .ok_or_else(|| CoreError::Unknown {
+                    kind: "good",
+                    id: good.to_string(),
+                })?
+                .base_price
+                .0;
+            (base_price, economy.untargeted_buy_percent)
+        };
+        Self::percentage_price(price, percent)
     }
 
     fn sell_quote(&self, market: &Market, good: &ContentId) -> Result<Money, CoreError> {
-        Ok(Money((self.midpoint(market, good)?.0 * 110 / 100).max(1)))
+        Self::percentage_price(
+            self.midpoint(market, good)?.0,
+            self.world.resource::<EconomyConfig>().market_sell_percent,
+        )
+    }
+
+    fn percentage_price(price: i64, percent: u32) -> Result<Money, CoreError> {
+        Ok(Money(
+            (price
+                .checked_mul(i64::from(percent))
+                .ok_or(CoreError::Overflow)?
+                / 100)
+                .max(1),
+        ))
     }
 
     fn begin_travel(
@@ -1043,26 +1147,34 @@ impl GameSession {
     }
 
     fn replenish_sources(&mut self) -> Result<(), CoreError> {
+        let source_output_percent = self.world.resource::<EconomyConfig>().source_output_percent;
         let updates = self
             .world
             .query::<(Entity, &Market)>()
             .iter(&self.world)
             .map(|(entity, market)| {
                 let mut inventory = market.inventory.clone();
+                let mut ledger = market.ledger;
                 for source in &market.sources {
                     let stock = inventory.entry(source.good.clone()).or_default();
-                    *stock = stock
-                        .checked_add(source.quantity_per_tick)
+                    let output = source
+                        .quantity_per_tick
+                        .checked_mul(source_output_percent)
+                        .ok_or(CoreError::Overflow)?
+                        / 100;
+                    *stock = stock.checked_add(output).ok_or(CoreError::Overflow)?;
+                    ledger.source_units_generated = ledger
+                        .source_units_generated
+                        .checked_add(u64::from(output))
                         .ok_or(CoreError::Overflow)?;
                 }
-                Ok((entity, inventory))
+                Ok((entity, inventory, ledger))
             })
             .collect::<Result<Vec<_>, CoreError>>()?;
-        for (entity, inventory) in updates {
-            self.world
-                .get_mut::<Market>(entity)
-                .expect("market")
-                .inventory = inventory;
+        for (entity, inventory, ledger) in updates {
+            let mut market = self.world.get_mut::<Market>(entity).expect("market");
+            market.inventory = inventory;
+            market.ledger = ledger;
         }
         Ok(())
     }
@@ -1084,6 +1196,29 @@ impl GameSession {
                 {
                     continue;
                 }
+                let input_units = recipe.inputs.iter().try_fold(0_u64, |sum, input| {
+                    sum.checked_add(u64::from(input.quantity))
+                        .ok_or(CoreError::Overflow)
+                })?;
+                let output_units = recipe.outputs.iter().try_fold(0_u64, |sum, output| {
+                    sum.checked_add(u64::from(output.quantity))
+                        .ok_or(CoreError::Overflow)
+                })?;
+                let mut next_ledger = market.ledger;
+                next_ledger.recipe_input_units_consumed = next_ledger
+                    .recipe_input_units_consumed
+                    .checked_add(input_units)
+                    .ok_or(CoreError::Overflow)?;
+                next_ledger.recipe_output_units_produced = next_ledger
+                    .recipe_output_units_produced
+                    .checked_add(output_units)
+                    .ok_or(CoreError::Overflow)?;
+                if layer == RecipeLayer::Tertiary {
+                    next_ledger.tertiary_input_units_consumed = next_ledger
+                        .tertiary_input_units_consumed
+                        .checked_add(input_units)
+                        .ok_or(CoreError::Overflow)?;
+                }
                 let mut next_inventory = market.inventory.clone();
                 for input in &recipe.inputs {
                     *next_inventory
@@ -1097,6 +1232,7 @@ impl GameSession {
                         .ok_or(CoreError::Overflow)?;
                 }
                 market.inventory = next_inventory;
+                market.ledger = next_ledger;
                 produced.push((system_id.0.clone(), recipe.id.clone(), layer));
             }
         }
@@ -1163,6 +1299,13 @@ impl GameSession {
                 if quantity > 0 && self.buy(entity, &system, &good, quantity).is_ok() {
                     self.begin_travel(entity, &destination)?;
                 }
+            } else if self
+                .world
+                .resource::<EconomyConfig>()
+                .idle_trader_repositioning
+                && let Some(source) = self.best_reposition(&system)?
+            {
+                self.begin_travel(entity, &source)?;
             }
         }
         Ok(())
@@ -1220,6 +1363,58 @@ impl GameSession {
         Ok(candidates
             .first()
             .map(|(_, good, destination, _)| (good.clone(), destination.clone())))
+    }
+
+    fn best_reposition(&mut self, current: &ContentId) -> Result<Option<ContentId>, CoreError> {
+        let graph = self.world.resource::<SystemGraph>().clone();
+        let markets: Vec<(ContentId, Market)> = self
+            .world
+            .query_filtered::<(&StableId, &Market), With<SystemMarker>>()
+            .iter(&self.world)
+            .map(|(id, market)| (id.0.clone(), market.clone()))
+            .collect();
+        let mut candidates = Vec::new();
+        for (source, source_market) in &markets {
+            if source == current {
+                continue;
+            }
+            let Some((empty_route, _)) = graph.shortest_path(current, source) else {
+                continue;
+            };
+            let empty_ticks = graph.route_distance(&empty_route).ceil().max(1.0);
+            for (good, stock) in &source_market.inventory {
+                if *stock == 0 {
+                    continue;
+                }
+                let source_price = self.sell_quote(source_market, good)?.0;
+                for (destination, destination_market) in &markets {
+                    if destination == source {
+                        continue;
+                    }
+                    let Some((loaded_route, _)) = graph.shortest_path(source, destination) else {
+                        continue;
+                    };
+                    let destination_price = self.buy_quote(destination_market, good)?.0;
+                    let profit = destination_price - source_price;
+                    if profit > 0 {
+                        let loaded_ticks = graph.route_distance(&loaded_route).ceil().max(1.0);
+                        candidates.push((
+                            profit as f64 / (empty_ticks + loaded_ticks),
+                            source.clone(),
+                            good.clone(),
+                            destination.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        candidates.sort_by(|a, b| {
+            b.0.total_cmp(&a.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+                .then_with(|| a.3.cmp(&b.3))
+        });
+        Ok(candidates.first().map(|(_, source, _, _)| source.clone()))
     }
 }
 
@@ -1358,6 +1553,63 @@ mod tests {
             );
             previous = buy.0;
         }
+
+        session
+            .world
+            .get_mut::<Market>(market)
+            .unwrap()
+            .targets
+            .remove(&ore);
+        session
+            .world
+            .get_mut::<Market>(market)
+            .unwrap()
+            .inventory
+            .remove(&ore);
+        let (untargeted_buy, _) = session.quotes(&id("core:s0"), &ore).unwrap();
+        assert_eq!(untargeted_buy, Money(4));
+    }
+
+    #[test]
+    fn economy_config_controls_quotes_and_source_output() {
+        let ore = id("core:ore");
+        let mut definition = minimal_definition(vec![GoodDefinition {
+            id: ore.clone(),
+            name: "Ore".into(),
+            category: GoodCategory::Raw,
+            base_price: Money(10),
+        }]);
+        definition.systems[0].targets.insert(ore.clone(), 10);
+        definition.systems[0].sources.push(SourceDefinition {
+            good: ore.clone(),
+            quantity_per_tick: 4,
+        });
+        definition.economy = EconomyConfig {
+            market_buy_percent: 50,
+            market_sell_percent: 150,
+            untargeted_buy_percent: 25,
+            source_output_percent: 50,
+            idle_trader_repositioning: false,
+        };
+        let mut session = GameSession::new(definition).unwrap();
+        assert_eq!(
+            session.quotes(&id("core:s0"), &ore).unwrap(),
+            (Money(7), Money(22))
+        );
+        session.step().unwrap();
+        assert_eq!(
+            session.snapshot().markets[0].inventory.get(&ore).copied(),
+            Some(2)
+        );
+
+        let market = session.market_entity(&id("core:s0")).unwrap();
+        session
+            .world
+            .get_mut::<Market>(market)
+            .unwrap()
+            .targets
+            .remove(&ore);
+        assert_eq!(session.quotes(&id("core:s0"), &ore).unwrap().0, Money(2));
     }
 
     #[test]
@@ -1397,6 +1649,7 @@ mod tests {
                 speed: 1.0,
                 player: true,
             }],
+            economy: EconomyConfig::default(),
         };
         let mut session = GameSession::new(definition).unwrap();
         let before = format!("{:?}", session.snapshot());
@@ -1536,6 +1789,9 @@ mod tests {
                 + after.traders.iter().map(|t| t.currency.0).sum::<i64>(),
             currency_before
         );
+        assert_eq!(after.markets[0].ledger.currency_received_from_traders, 26);
+        assert_eq!(after.markets[0].ledger.units_sold_to_traders, 2);
+        assert_eq!(after.markets[0].ledger.net_trade_cash_flow(), 26);
         assert_eq!(
             after
                 .markets
@@ -1621,12 +1877,24 @@ mod tests {
         let before = format!("{:?}", session.snapshot());
         assert_eq!(
             session.submit(GameCommand::Sell {
-                good: ore,
+                good: ore.clone(),
                 quantity: 1
             }),
             Err(CoreError::InsufficientFunds)
         );
         assert_eq!(format!("{:?}", session.snapshot()), before);
+
+        session.world.get_mut::<Market>(market).unwrap().currency = Money(100);
+        session
+            .submit(GameCommand::Sell {
+                good: ore,
+                quantity: 1,
+            })
+            .unwrap();
+        let ledger = session.snapshot().markets[0].ledger;
+        assert_eq!(ledger.currency_paid_to_traders, 12);
+        assert_eq!(ledger.units_bought_from_traders, 1);
+        assert_eq!(ledger.net_trade_cash_flow(), -12);
     }
 
     #[test]
@@ -1711,6 +1979,10 @@ mod tests {
         assert_eq!(market.inventory.get(&raw).copied().unwrap_or(0), 0);
         assert_eq!(market.inventory.get(&primary).copied().unwrap_or(0), 0);
         assert_eq!(market.inventory.get(&secondary).copied().unwrap_or(0), 0);
+        assert_eq!(market.ledger.source_units_generated, 1);
+        assert_eq!(market.ledger.recipe_input_units_consumed, 4);
+        assert_eq!(market.ledger.recipe_output_units_produced, 2);
+        assert_eq!(market.ledger.tertiary_input_units_consumed, 1);
         assert!(
             session
                 .drain_events()
@@ -1763,12 +2035,22 @@ mod tests {
                 speed: 10.0,
                 player: false,
             },
+            TraderDefinition {
+                id: id("core:repositioner"),
+                name: "Repositioner".into(),
+                system: id("core:s4"),
+                currency: Money(100),
+                cargo_capacity: 1,
+                speed: 10.0,
+                player: false,
+            },
         ];
         let mut session = GameSession::new(GameDefinition {
             goods,
             recipes: vec![],
             systems,
             traders,
+            economy: EconomyConfig::default(),
         })
         .unwrap();
         assert!(
@@ -1788,6 +2070,18 @@ mod tests {
         let travel = ai.travel.expect("AI should begin travel");
         assert_eq!(travel.destination, id("core:s4"));
         assert!(travel.route.len() > 2);
+
+        let repositioner = session
+            .snapshot()
+            .traders
+            .into_iter()
+            .find(|trader| trader.id == id("core:repositioner"))
+            .unwrap();
+        let repositioning = repositioner
+            .travel
+            .expect("empty AI at a demand market should reposition to supply");
+        assert_eq!(repositioning.destination, id("core:s3"));
+        assert!(repositioner.cargo.is_empty());
     }
 
     fn minimal_definition(goods: Vec<GoodDefinition>) -> GameDefinition {
@@ -1820,6 +2114,7 @@ mod tests {
                 speed: 1.0,
                 player: true,
             }],
+            economy: EconomyConfig::default(),
         }
     }
 
