@@ -537,6 +537,8 @@ Each market keeps cumulative diagnostic accounting for currency paid to and rece
 
 `crates/game-core/tests/economy_loop_mock.rs` is a deliberately simplified stock-flow test, not a production gameplay rule. It compares baseline, trader operating-cost only, tertiary-support only, and combined scenarios over 1,000 cycles. Under its documented fixed-price assumptions, the baseline remains solvent for 166 cycles, operating costs alone for 200, tertiary extraction support alone for 333, and the combined loop for all 1,000 while conserving currency. The mock supports further design work but does not resolve trader contention, contracts, dynamic pricing, or ECS integration.
 
+`crates/game-core/tests/pricing_model_mock.rs` isolates price equations without changing ECS quotes. It records the exact loss-making margins produced by the current scarcity model, checks a 15% acquisition-cost floor across immediate and backlogged output, and verifies that cash-backed demand reservations cannot advertise more quantity than a market can afford. Its 1,000-cycle processor check assumes every output sells at the candidate floor and therefore tests accounting solvency only—not buyer liquidity, inventory clearing, routing, or contention.
+
 ### Application boundary
 
 - Requests are processed in order.
