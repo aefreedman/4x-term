@@ -1,7 +1,8 @@
 //! Async owner and immutable view boundary for the headless simulation.
 
 use game_core::{
-    ContentId, CoreError, GameCommand, GameEvent, GameSession, Money, ticks_for_distance,
+    ContentId, CoreError, ENERGY_ID, Energy, GameCommand, GameEvent, GameSession, MarketPolicy,
+    ReservationStatus, route_travel_energy, ticks_for_distance, travel_energy,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
@@ -60,9 +61,34 @@ pub enum AppRequest {
     Step,
     SetTickRate(TickRate),
     SelectSystem(ContentId),
-    Buy { good: ContentId, quantity: u32 },
-    Sell { good: ContentId, quantity: u32 },
-    BeginTravel { destination: ContentId },
+    Buy {
+        good: ContentId,
+        quantity: u32,
+    },
+    Sell {
+        good: ContentId,
+        quantity: u32,
+    },
+    BeginTravel {
+        destination: ContentId,
+    },
+    CommitTrade {
+        origin: ContentId,
+        destination: ContentId,
+        good: ContentId,
+        quantity: u32,
+    },
+    DepositTank {
+        amount: Energy,
+    },
+    WithdrawTank {
+        amount: Energy,
+    },
+    SetMarketPolicy {
+        system: ContentId,
+        policy: MarketPolicy,
+    },
+    CancelReservation,
     Shutdown,
 }
 
@@ -71,7 +97,46 @@ pub struct SystemListItem {
     pub id: ContentId,
     pub name: String,
     pub coordinates: (f64, f64, f64),
+    pub energy_stock: Energy,
+    pub energy_capacity: Energy,
+    pub health: EnergyHealth,
     pub connections: Vec<ConnectionView>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EnergyHealth {
+    Healthy,
+    Full,
+    Low,
+    Deficit,
+}
+
+impl EnergyHealth {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::Full => "full",
+            Self::Low => "low",
+            Self::Deficit => "deficit",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MarketEnergyView {
+    pub stock: Energy,
+    pub capacity: Energy,
+    pub reserved_claims: Energy,
+    pub operating_reserve: Energy,
+    pub protected_liquidation_budget: Energy,
+    pub unreserved_purchasing_energy: Energy,
+    pub generated: Energy,
+    pub burned: Energy,
+    pub curtailed: Energy,
+    pub unsupplied_life_support: Energy,
+    pub bootstrap_risk_acknowledged: bool,
+    pub health: EnergyHealth,
 }
 
 #[derive(Clone, Debug)]
@@ -107,37 +172,43 @@ pub struct RouteView {
 pub struct MarketRow {
     pub good_id: ContentId,
     pub name: String,
-    pub inventory: u32,
+    pub inventory: u64,
     pub target: u32,
-    pub buy_quote: Money,
-    pub sell_quote: Money,
+    pub buy_quote: Energy,
+    pub sell_quote: Energy,
+    pub unit_cost: Energy,
+    pub funded_demand: u64,
 }
 
 #[derive(Clone, Debug)]
 pub struct CargoItemView {
     pub good_id: ContentId,
     pub good_name: String,
-    pub quantity: u32,
+    pub quantity: u64,
 }
 
 #[derive(Clone, Debug)]
 pub struct PlayerStatusView {
     pub location: ContentId,
     pub location_name: String,
-    pub currency: Money,
+    pub tank_energy: Energy,
+    pub tank_capacity: Energy,
+    pub bay_energy: u64,
     pub cargo: Vec<CargoItemView>,
-    pub cargo_used: u32,
+    pub cargo_used: u64,
     pub cargo_capacity: u32,
-    pub cargo_value: Money,
-    pub net_worth: Money,
-    pub purchase_cost: i64,
-    pub sales_revenue: i64,
-    pub realized_profit: i64,
+    pub cargo_energy_value: Energy,
+    pub total_energy_value: Energy,
+    pub purchase_energy: Energy,
+    pub sales_energy: Energy,
+    pub realized_energy_gain: Energy,
     pub units_moved: u64,
     pub transactions: u64,
-    pub net_worth_rank: usize,
-    pub net_worth_share_percent: f64,
+    pub energy_value_rank: usize,
+    pub energy_value_share_percent: f64,
     pub sales_share_percent: f64,
+    pub route_energy_required: Option<Energy>,
+    pub runway_jumps: Option<u64>,
     pub traveling: bool,
 }
 
@@ -149,6 +220,7 @@ pub struct ApplicationView {
     pub systems: Vec<SystemListItem>,
     pub selected_system: ContentId,
     pub selected_route: Option<RouteView>,
+    pub market_energy: MarketEnergyView,
     pub market: Vec<MarketRow>,
     pub player: PlayerStatusView,
     pub events: Vec<String>,
@@ -240,6 +312,11 @@ async fn run_owner(
                     AppRequest::Buy { good, quantity } => session.submit(GameCommand::Buy { good, quantity }),
                     AppRequest::Sell { good, quantity } => session.submit(GameCommand::Sell { good, quantity }),
                     AppRequest::BeginTravel { destination } => session.submit(GameCommand::BeginTravel { destination }),
+                    AppRequest::CommitTrade { origin, destination, good, quantity } => session.submit(GameCommand::CommitTrade { origin, destination, good, quantity }),
+                    AppRequest::DepositTank { amount } => session.submit(GameCommand::DepositTank { amount }),
+                    AppRequest::WithdrawTank { amount } => session.submit(GameCommand::WithdrawTank { amount }),
+                    AppRequest::SetMarketPolicy { system, policy } => session.submit(GameCommand::SetMarketPolicy { system, policy }),
+                    AppRequest::CancelReservation => session.submit(GameCommand::CancelReservation),
                     AppRequest::Shutdown => { let _ = envelope.reply.send(Ok(())); break; }
                 };
                 if result.is_err() { publish = true; }
@@ -320,40 +397,55 @@ fn build_view(
         .markets
         .iter()
         .find(|market| market.system_id == player.system);
-    let cargo_value = player
+    let cargo_energy_value = player
         .cargo
         .iter()
         .map(|(good, quantity)| {
             player_market
                 .and_then(|market| session.quotes(&market.system_id, good).ok())
-                .map_or(0, |(buy, _)| buy.0 * i64::from(*quantity))
+                .and_then(|(buy, _)| {
+                    i64::try_from(*quantity)
+                        .ok()
+                        .and_then(|q| buy.0.checked_mul(q))
+                })
+                .unwrap_or(0)
         })
         .sum::<i64>();
-    let net_worths = snapshot
+    let energy_values = snapshot
         .traders
         .iter()
         .map(|trader| {
+            let cargo = trader
+                .cargo
+                .iter()
+                .filter_map(|(good, quantity)| {
+                    player_market
+                        .and_then(|market| session.quotes(&market.system_id, good).ok())
+                        .and_then(|(buy, _)| {
+                            i64::try_from(*quantity)
+                                .ok()
+                                .and_then(|q| buy.0.checked_mul(q))
+                        })
+                })
+                .sum::<i64>();
             (
                 trader.id.clone(),
-                trader.currency.0
-                    + trader
-                        .cargo
-                        .values()
-                        .map(|quantity| i64::from(*quantity) * 10)
-                        .sum::<i64>(),
+                trader.energy_tank.0.saturating_add(cargo),
             )
         })
         .collect::<Vec<_>>();
-    let total_net: i64 = net_worths.iter().map(|(_, worth)| *worth).sum();
-    let player_net = player.currency.0 + cargo_value;
-    let rank = 1 + net_worths
+    let total_energy_value: i64 = energy_values.iter().map(|(_, worth)| *worth).sum();
+    let player_energy_value = player.energy_tank.0.saturating_add(cargo_energy_value);
+    let rank = 1 + energy_values
         .iter()
-        .filter(|(id, worth)| *worth > player_net || (*worth == player_net && id < &player.id))
+        .filter(|(id, worth)| {
+            *worth > player_energy_value || (*worth == player_energy_value && id < &player.id)
+        })
         .count();
     let total_sales: i64 = snapshot
         .traders
         .iter()
-        .map(|trader| trader.ledger.sales_revenue)
+        .map(|trader| trader.ledger.sales_revenue.0)
         .sum();
     let system_names = snapshot
         .markets
@@ -367,6 +459,9 @@ fn build_view(
             id: market.system_id.clone(),
             name: market.name.clone(),
             coordinates: (market.position.x, market.position.y, market.position.z),
+            energy_stock: market.energy_stock,
+            energy_capacity: market.energy_storage_cap,
+            health: energy_health(market),
             connections: session
                 .graph()
                 .neighbors(&market.system_id)
@@ -399,10 +494,25 @@ fn build_view(
         .map(|(id, name)| {
             let (buy, sell) = session
                 .quotes(&selected_market.system_id, &id)
-                .unwrap_or((Money(0), Money(0)));
+                .unwrap_or((Energy(0), Energy(0)));
+            let inventory = selected_market.inventory.get(&id).copied().unwrap_or(0);
+            let target = selected_market.targets.get(&id).copied().unwrap_or(0);
+            let funded_demand = if buy.0 > 0 {
+                u64::try_from(selected_market.unreserved_energy_for_purchases.0 / buy.0)
+                    .unwrap_or(0)
+                    .min(u64::from(target).saturating_sub(inventory))
+            } else {
+                0
+            };
             MarketRow {
-                inventory: selected_market.inventory.get(&id).copied().unwrap_or(0),
-                target: selected_market.targets.get(&id).copied().unwrap_or(0),
+                inventory,
+                target,
+                unit_cost: selected_market
+                    .cost_basis
+                    .get(&id)
+                    .and_then(|basis| basis.unit_cost_ceil().ok())
+                    .unwrap_or(Energy(0)),
+                funded_demand,
                 good_id: id,
                 name,
                 buy_quote: buy,
@@ -428,6 +538,37 @@ fn build_view(
     } else {
         None
     };
+    let route_energy_required = route.as_ref().and_then(|route| {
+        let ids = std::iter::once(route.legs.first()?.from_id.clone())
+            .chain(route.legs.iter().map(|leg| leg.to_id.clone()))
+            .collect::<Vec<_>>();
+        route_travel_energy(session.graph(), &ids, player.travel_burn_per_distance).ok()
+    });
+    let runway_jumps = player_market.and_then(|market| {
+        session
+            .graph()
+            .neighbors(&market.system_id)
+            .iter()
+            .map(|(_, distance)| travel_energy(*distance, player.travel_burn_per_distance))
+            .collect::<Result<Vec<_>, _>>()
+            .ok()
+            .and_then(|costs| {
+                costs
+                    .into_iter()
+                    .map(|cost| cost.0)
+                    .filter(|cost| *cost > 0)
+                    .min()
+            })
+            .and_then(|cost| u64::try_from(player.energy_tank.0 / cost).ok())
+    });
+    let burned = selected_market
+        .energy_flow
+        .life_support_burned
+        .0
+        .checked_add(selected_market.energy_flow.source_burned.0)
+        .and_then(|value| value.checked_add(selected_market.energy_flow.production_burned.0))
+        .and_then(|value| value.checked_add(selected_market.energy_flow.travel_burned.0))
+        .expect("checked per-market flow ledger must remain reportable");
     ApplicationView {
         tick: snapshot.tick,
         run_state,
@@ -435,6 +576,20 @@ fn build_view(
         systems,
         selected_system: selected_market.system_id.clone(),
         selected_route: route,
+        market_energy: MarketEnergyView {
+            stock: selected_market.energy_stock,
+            capacity: selected_market.energy_storage_cap,
+            reserved_claims: selected_market.reserved_energy,
+            operating_reserve: selected_market.operating_reserve,
+            protected_liquidation_budget: selected_market.protected_liquidation_budget,
+            unreserved_purchasing_energy: selected_market.unreserved_energy_for_purchases,
+            generated: selected_market.energy_flow.generated,
+            burned: Energy(burned),
+            curtailed: selected_market.energy_flow.curtailed,
+            unsupplied_life_support: selected_market.energy_flow.life_support_unsupplied,
+            bootstrap_risk_acknowledged: selected_market.bootstrap_risk_acknowledged,
+            health: energy_health(selected_market),
+        },
         market,
         player: PlayerStatusView {
             location_name: system_names
@@ -442,7 +597,13 @@ fn build_view(
                 .cloned()
                 .unwrap_or_else(|| "Unknown system".into()),
             location: player.system,
-            currency: player.currency,
+            tank_energy: player.energy_tank,
+            tank_capacity: player.energy_tank_capacity,
+            bay_energy: player
+                .cargo
+                .get(&ContentId::new(ENERGY_ID).expect("constant energy id"))
+                .copied()
+                .unwrap_or(0),
             cargo: player
                 .cargo
                 .iter()
@@ -458,27 +619,53 @@ fn build_view(
                 .collect(),
             cargo_used: player.cargo.values().sum(),
             cargo_capacity: player.cargo_capacity,
-            cargo_value: Money(cargo_value),
-            net_worth: Money(player_net),
-            purchase_cost: player.ledger.purchase_cost,
-            sales_revenue: player.ledger.sales_revenue,
-            realized_profit: player.ledger.sales_revenue - player.ledger.purchase_cost,
+            cargo_energy_value: Energy(cargo_energy_value),
+            total_energy_value: Energy(player_energy_value),
+            purchase_energy: player.ledger.purchase_cost,
+            sales_energy: player.ledger.sales_revenue,
+            realized_energy_gain: Energy(
+                player
+                    .ledger
+                    .sales_revenue
+                    .0
+                    .saturating_sub(player.ledger.purchase_cost.0),
+            ),
             units_moved: player.ledger.cargo_units_moved,
             transactions: player.ledger.completed_transactions,
-            net_worth_rank: rank,
-            net_worth_share_percent: if total_net == 0 {
+            energy_value_rank: rank,
+            energy_value_share_percent: if total_energy_value == 0 {
                 0.0
             } else {
-                player_net as f64 * 100.0 / total_net as f64
+                player_energy_value as f64 * 100.0 / total_energy_value as f64
             },
             sales_share_percent: if total_sales == 0 {
                 0.0
             } else {
-                player.ledger.sales_revenue as f64 * 100.0 / total_sales as f64
+                player.ledger.sales_revenue.0 as f64 * 100.0 / total_sales as f64
             },
+            route_energy_required,
+            runway_jumps,
             traveling: player.travel.is_some(),
         },
         events: events.iter().cloned().collect(),
+    }
+}
+
+fn energy_health(market: &game_core::MarketSnapshot) -> EnergyHealth {
+    if market.energy_flow.life_support_unsupplied.0 > 0 || market.energy_stock.0 == 0 {
+        EnergyHealth::Deficit
+    } else if market.energy_stock >= market.energy_storage_cap {
+        EnergyHealth::Full
+    } else if market.energy_stock.0
+        <= market
+            .operating_reserve
+            .0
+            .saturating_add(market.protected_liquidation_budget.0)
+            .saturating_add(market.reserved_energy.0)
+    {
+        EnergyHealth::Low
+    } else {
+        EnergyHealth::Healthy
     }
 }
 
@@ -573,13 +760,28 @@ impl EventLabels {
 fn format_event(event: &GameEvent, labels: &EventLabels) -> String {
     match event {
         GameEvent::TickAdvanced(tick) => format!("Tick {tick}"),
+        GameEvent::EnergyGenerated {
+            system,
+            amount,
+            curtailed,
+        } => format!(
+            "{} generated {} energy ({} curtailed)",
+            labels.system(system),
+            amount.0,
+            curtailed.0
+        ),
+        GameEvent::LifeSupport {
+            system,
+            burned,
+            unsupplied,
+        } => format!(
+            "{} life support burned {} energy ({} unsupplied)",
+            labels.system(system),
+            burned.0,
+            unsupplied.0
+        ),
         GameEvent::Produced { system, recipe } => format!(
             "{}: completed {}",
-            labels.system(system),
-            labels.recipe(recipe)
-        ),
-        GameEvent::Consumed { system, recipe } => format!(
-            "{}: consumed goods at {}",
             labels.system(system),
             labels.recipe(recipe)
         ),
@@ -589,7 +791,7 @@ fn format_event(event: &GameEvent, labels: &EventLabels) -> String {
             quantity,
             total,
         } => format!(
-            "{} bought {quantity} {} for ¤{}",
+            "{} bought {quantity} {} for {} energy",
             labels.trader(trader),
             labels.good(good),
             total.0
@@ -599,26 +801,78 @@ fn format_event(event: &GameEvent, labels: &EventLabels) -> String {
             good,
             quantity,
             total,
+            partial,
         } => format!(
-            "{} sold {quantity} {} for ¤{}",
+            "{} sold {quantity} {} for {} energy{}",
             labels.trader(trader),
             labels.good(good),
-            total.0
+            total.0,
+            if *partial {
+                " (partial settlement)"
+            } else {
+                ""
+            }
+        ),
+        GameEvent::ReservationCreated {
+            reservation,
+            trader,
+            destination,
+            good,
+            quantity,
+            reserved_energy,
+        } => format!(
+            "Reservation {reservation}: {} committed {quantity} {} to {} ({} energy claimed)",
+            labels.trader(trader),
+            labels.good(good),
+            labels.system(destination),
+            reserved_energy.0
+        ),
+        GameEvent::ReservationReleased {
+            reservation,
+            status,
+            released_energy,
+        } => format!(
+            "Reservation {reservation} {} ({} energy claim released)",
+            reservation_status(*status),
+            released_energy.0
+        ),
+        GameEvent::SaleDeferred {
+            trader,
+            good,
+            reason,
+        } => format!(
+            "{} deferred sale of {}: {reason}",
+            labels.trader(trader),
+            labels.good(good)
         ),
         GameEvent::Departed {
             trader,
             destination,
+            travel_burn,
         } => format!(
-            "{} departed for {}",
+            "{} departed for {} ({} tank energy committed)",
             labels.trader(trader),
-            labels.system(destination)
+            labels.system(destination),
+            travel_burn.0
         ),
         GameEvent::Arrived { trader, system } => format!(
             "{} arrived at {}",
             labels.trader(trader),
             labels.system(system)
         ),
+        GameEvent::PolicyChanged { system } => {
+            format!("{} market pricing policy changed", labels.system(system))
+        }
         GameEvent::Rejected(reason) => format!("Rejected: {reason}"),
+    }
+}
+
+fn reservation_status(status: ReservationStatus) -> &'static str {
+    match status {
+        ReservationStatus::Active => "active",
+        ReservationStatus::Fulfilled => "fulfilled",
+        ReservationStatus::Cancelled => "cancelled",
+        ReservationStatus::Expired => "expired",
     }
 }
 
@@ -626,7 +880,8 @@ fn format_event(event: &GameEvent, labels: &EventLabels) -> String {
 mod tests {
     use super::*;
     use game_core::{
-        GameDefinition, GoodCategory, GoodDefinition, Position3, SystemDefinition, TraderDefinition,
+        EconomyConfig, GameDefinition, GoodCategory, GoodDefinition, MarketPolicy, Position3,
+        RefuelPolicy, SourceDefinition, SystemDefinition, TraderDefinition,
     };
 
     fn id(value: &str) -> ContentId {
@@ -634,12 +889,20 @@ mod tests {
     }
 
     fn definition() -> GameDefinition {
-        let goods = vec![GoodDefinition {
-            id: id("core:ore"),
-            name: "Ore".into(),
-            category: GoodCategory::Raw,
-            base_price: Money(10),
-        }];
+        let goods = vec![
+            GoodDefinition {
+                id: id(ENERGY_ID),
+                name: "Energy".into(),
+                category: GoodCategory::Energy,
+                bootstrap_cost: Energy(1),
+            },
+            GoodDefinition {
+                id: id("core:ore"),
+                name: "Ore".into(),
+                category: GoodCategory::Raw,
+                bootstrap_cost: Energy(10),
+            },
+        ];
         let systems = (0..2)
             .map(|i| SystemDefinition {
                 id: id(&format!("core:s{i}")),
@@ -649,20 +912,28 @@ mod tests {
                     y: 0.0,
                     z: 0.0,
                 },
-                inventory: BTreeMap::from([(id("core:ore"), 10)]),
+                inventory: BTreeMap::from([(id(ENERGY_ID), 1_000), (id("core:ore"), 10)]),
                 targets: BTreeMap::from([(id("core:ore"), 10)]),
-                currency: Money(1000),
                 recipes: vec![],
-                sources: vec![],
+                sources: Vec::<SourceDefinition>::new(),
+                energy_output_per_tick: Energy(10),
+                energy_storage_cap: Energy(2_000),
+                population: 1,
+                policy: MarketPolicy::default(),
+                protected_liquidation_budget: Energy(10),
+                bootstrap_risk_acknowledged: false,
             })
             .collect();
         let traders = vec![TraderDefinition {
             id: id("core:player"),
             name: "Player".into(),
             system: id("core:s0"),
-            currency: Money(100),
+            energy_tank: Energy(100),
+            energy_tank_capacity: Energy(1_000),
             cargo_capacity: 10,
             speed: 1.0,
+            travel_burn_per_distance: Energy(1),
+            refuel_policy: RefuelPolicy::DepositAndWithdraw,
             player: true,
         }];
         GameDefinition {
@@ -670,7 +941,7 @@ mod tests {
             recipes: vec![],
             systems,
             traders,
-            economy: game_core::EconomyConfig::default(),
+            economy: EconomyConfig::default(),
         }
     }
 
@@ -687,25 +958,23 @@ mod tests {
                 system: id("core:s0"),
                 recipe: id("core:smelt"),
             },
-            GameEvent::Consumed {
-                system: id("core:s0"),
-                recipe: id("core:smelt"),
-            },
             GameEvent::Bought {
                 trader: id("core:player"),
                 good: id("core:ore"),
                 quantity: 2,
-                total: Money(10),
+                total: Energy(10),
             },
             GameEvent::Sold {
                 trader: id("core:player"),
                 good: id("core:ore"),
                 quantity: 2,
-                total: Money(12),
+                total: Energy(12),
+                partial: false,
             },
             GameEvent::Departed {
                 trader: id("core:player"),
                 destination: id("core:s0"),
+                travel_burn: Energy(1),
             },
             GameEvent::Arrived {
                 trader: id("core:player"),
@@ -799,9 +1068,10 @@ mod tests {
         let initial = handle.views.borrow().clone();
         assert_eq!(initial.systems.len(), 2);
         assert_eq!(initial.systems[0].connections[0].system_name, "S1");
-        assert_eq!(initial.market.len(), 1);
-        assert_eq!(initial.player.net_worth_rank, 1);
-        assert_eq!(initial.player.net_worth_share_percent, 100.0);
+        assert_eq!(initial.market.len(), 2);
+        assert_eq!(initial.player.energy_value_rank, 1);
+        assert_eq!(initial.player.energy_value_share_percent, 100.0);
+        assert_eq!(initial.market_energy.health, EnergyHealth::Healthy);
 
         handle
             .request(AppRequest::Buy {
@@ -814,7 +1084,7 @@ mod tests {
         assert_eq!(bought.player.cargo_used, 1);
         assert_eq!(bought.player.cargo[0].good_name, "Ore");
         assert_eq!(bought.player.transactions, 1);
-        assert!(bought.player.net_worth.0 > 0);
+        assert!(bought.player.total_energy_value.0 > 0);
         assert!(
             bought
                 .events
@@ -843,13 +1113,132 @@ mod tests {
             traveling
                 .events
                 .iter()
-                .any(|event| event == "Player departed for S1")
+                .any(|event| event.starts_with("Player departed for S1"))
         );
         assert!(
             traveling
                 .events
                 .iter()
                 .all(|event| !event.contains("core:"))
+        );
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn actor_dispatches_supported_economy_commands_without_crossing_owner_boundary() {
+        let session = GameSession::new(definition()).unwrap();
+        let handle = spawn(session);
+        handle
+            .request(AppRequest::DepositTank { amount: Energy(1) })
+            .await
+            .unwrap();
+        assert_eq!(handle.views.borrow().player.tank_energy, Energy(99));
+        handle
+            .request(AppRequest::WithdrawTank { amount: Energy(1) })
+            .await
+            .unwrap();
+        assert_eq!(handle.views.borrow().player.tank_energy, Energy(100));
+
+        let policy = MarketPolicy {
+            producer_margin_percent: 33,
+            ..MarketPolicy::default()
+        };
+        handle
+            .request(AppRequest::SetMarketPolicy {
+                system: id("core:s0"),
+                policy,
+            })
+            .await
+            .unwrap();
+        handle
+            .request(AppRequest::CommitTrade {
+                origin: id("core:s0"),
+                destination: id("core:s1"),
+                good: id("core:ore"),
+                quantity: 1,
+            })
+            .await
+            .unwrap();
+        assert_eq!(handle.views.borrow().tick, 0);
+        assert!(!handle.views.borrow().player.traveling);
+        handle.request(AppRequest::Step).await.unwrap();
+        assert!(handle.views.borrow().player.traveling);
+        handle.request(AppRequest::CancelReservation).await.unwrap();
+        assert!(
+            handle
+                .views
+                .borrow()
+                .events
+                .iter()
+                .any(|event| event.contains("cancelled"))
+        );
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn policy_requests_publish_recomputed_protection_and_reject_atomically() {
+        let session = GameSession::new(definition()).unwrap();
+        let handle = spawn(session);
+        let system = id("core:s0");
+        let policy = MarketPolicy::default();
+        handle
+            .request(AppRequest::SetMarketPolicy {
+                system: system.clone(),
+                policy: policy.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            handle
+                .views
+                .borrow()
+                .market_energy
+                .protected_liquidation_budget,
+            Energy(5)
+        );
+
+        let before_budget = handle
+            .views
+            .borrow()
+            .market_energy
+            .protected_liquidation_budget;
+        let before_quotes = handle
+            .views
+            .borrow()
+            .market
+            .iter()
+            .map(|row| (row.good_id.clone(), row.buy_quote, row.sell_quote))
+            .collect::<Vec<_>>();
+        let infeasible = MarketPolicy {
+            liquidation_threshold_percent: u32::MAX,
+            ..policy
+        };
+        assert!(matches!(
+            handle
+                .request(AppRequest::SetMarketPolicy {
+                    system,
+                    policy: infeasible,
+                })
+                .await,
+            Err(AppError::Core(CoreError::InvalidPhysicalDefinition))
+        ));
+        assert_eq!(
+            handle
+                .views
+                .borrow()
+                .market_energy
+                .protected_liquidation_budget,
+            before_budget
+        );
+        assert_eq!(
+            handle
+                .views
+                .borrow()
+                .market
+                .iter()
+                .map(|row| (row.good_id.clone(), row.buy_quote, row.sell_quote))
+                .collect::<Vec<_>>(),
+            before_quotes
         );
         handle.shutdown().await.unwrap();
     }

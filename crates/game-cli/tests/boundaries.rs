@@ -1,5 +1,5 @@
 use game_app::AppRequest;
-use game_core::{ContentId, CoreError, GameCommand, GameSession};
+use game_core::{ContentId, CoreError, Energy, GameCommand, GameSession};
 
 #[tokio::test]
 async fn public_crate_boundaries_compose() {
@@ -78,5 +78,5 @@ fn player_completes_a_multi_hop_headless_trade() {
         .unwrap();
     assert_eq!(player.cargo.get(&good).copied().unwrap_or(0), 0);
     assert_eq!(player.ledger.completed_transactions, 2);
-    assert!(player.ledger.sales_revenue > 0);
+    assert!(player.ledger.sales_revenue > Energy(0));
 }
