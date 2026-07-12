@@ -18,3 +18,4 @@
 - Markets now express role-specific demand, use lower raw-source rates and production buffers, and preserve stronger value growth through secondary goods.
 - Automated traders now reposition to supply markets after unloading at demand-only destinations.
 - Global market spreads, untargeted demand, raw-source output, and idle trader repositioning are now designer-configurable in `content/economy_config.ron`.
+- Added cumulative market cash-flow and production diagnostics plus a long-run `--economy-diagnostics` CLI report for investigating liquidity and trader stalls.

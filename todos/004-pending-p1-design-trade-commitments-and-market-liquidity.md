@@ -95,7 +95,7 @@ Keep this todo pending until the economic actor and commitment model is selected
 
 - **Review/PR/changeset:** PR #3 — economy-flow balancing
 - **Related issue/card:** None
-- **Log/capture:** Deterministic 1,000-tick diagnostic summarized in Findings; temporary probe was not retained.
+- **Log/capture:** Run `cargo run -p game-cli -- --economy-diagnostics 1000` for permanent 50-tick activity and final cash-flow diagnostics.
 - **Documentation:** `docs/initial-prototype.md`
 - **Similar pattern:** `crates/game-core/src/lib.rs` atomic market transaction validation
 
@@ -130,6 +130,19 @@ Keep this todo pending until the economic actor and commitment model is selected
 - The stall is deterministic and begins once all traders hold cargo that their destination markets cannot afford in full.
 - Idle repositioning cannot help because laden traders unconditionally retry the failed sale path.
 - Destination-fund checks alone are insufficient because multiple traders can select the same opportunity before settlement.
+
+### 2026-07-10 - Add permanent economy diagnostics
+
+**By:** OpenAI
+
+**Actions:**
+- Added cumulative per-market accounting for currency paid/received, traded units, source output, recipe throughput, and tertiary consumption.
+- Added `--economy-diagnostics <ticks>` with 50-tick activity windows, currency conservation totals, final market cash flows, and NPC state summaries.
+- Added tests proving successful and rejected transactions update diagnostic ledgers correctly and source/recipe counters follow deterministic execution.
+
+**Learnings:**
+- The retained 350-tick report confirms total currency remains ¤210,000 while it concentrates away from Systems 16 and 17.
+- At the stall, Systems 16 and 17 have cumulative net trade cash flows of approximately ¤-9,687 and ¤-9,604 respectively, while all nine NPCs are stationary with cargo.
 
 ## Notes
 

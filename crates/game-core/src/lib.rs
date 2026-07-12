@@ -169,6 +169,25 @@ pub struct SystemMarker;
 #[derive(Component, Clone, Copy, Debug)]
 pub struct SpatialPosition(pub Position3);
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MarketLedger {
+    pub currency_paid_to_traders: i64,
+    pub currency_received_from_traders: i64,
+    pub units_bought_from_traders: u64,
+    pub units_sold_to_traders: u64,
+    pub source_units_generated: u64,
+    pub recipe_input_units_consumed: u64,
+    pub recipe_output_units_produced: u64,
+    pub tertiary_input_units_consumed: u64,
+}
+
+impl MarketLedger {
+    #[must_use]
+    pub fn net_trade_cash_flow(self) -> i128 {
+        i128::from(self.currency_received_from_traders) - i128::from(self.currency_paid_to_traders)
+    }
+}
+
 #[derive(Component, Clone, Debug)]
 pub struct Market {
     pub inventory: BTreeMap<ContentId, u32>,
@@ -176,6 +195,7 @@ pub struct Market {
     pub currency: Money,
     pub recipes: Vec<ContentId>,
     pub sources: Vec<SourceDefinition>,
+    pub ledger: MarketLedger,
 }
 
 #[derive(Clone, Debug)]
@@ -470,6 +490,7 @@ pub struct MarketSnapshot {
     pub inventory: BTreeMap<ContentId, u32>,
     pub targets: BTreeMap<ContentId, u32>,
     pub currency: Money,
+    pub ledger: MarketLedger,
 }
 
 #[derive(Clone, Debug)]
@@ -538,6 +559,7 @@ impl GameSession {
                     currency: system.currency,
                     recipes: system.recipes,
                     sources: system.sources,
+                    ledger: MarketLedger::default(),
                 },
             ));
         }
@@ -618,6 +640,7 @@ impl GameSession {
                 inventory: market.inventory.clone(),
                 targets: market.targets.clone(),
                 currency: market.currency,
+                ledger: market.ledger,
             })
             .collect::<Vec<_>>();
         markets.sort_by(|a, b| a.system_id.cmp(&b.system_id));
@@ -768,6 +791,8 @@ impl GameSession {
             cargo_quantity,
             purchase_cost,
             transactions,
+            market_revenue,
+            market_units_sold,
         ) = {
             let market = self.world.get::<Market>(market_entity).expect("market");
             let stock = market.inventory.get(good).copied().unwrap_or(0);
@@ -811,11 +836,23 @@ impl GameSession {
                     .completed_transactions
                     .checked_add(1)
                     .ok_or(CoreError::Overflow)?,
+                market
+                    .ledger
+                    .currency_received_from_traders
+                    .checked_add(total)
+                    .ok_or(CoreError::Overflow)?,
+                market
+                    .ledger
+                    .units_sold_to_traders
+                    .checked_add(u64::from(quantity))
+                    .ok_or(CoreError::Overflow)?,
             )
         };
         let mut market = self.world.get_mut::<Market>(market_entity).expect("market");
         market.inventory.insert(good.clone(), market_stock);
         market.currency.0 = market_currency;
+        market.ledger.currency_received_from_traders = market_revenue;
+        market.ledger.units_sold_to_traders = market_units_sold;
         let trader_id = self
             .world
             .get::<StableId>(trader_entity)
@@ -873,6 +910,8 @@ impl GameSession {
             sales_revenue,
             units_moved,
             transactions,
+            market_expenditure,
+            market_units_bought,
         ) = {
             let market = self.world.get::<Market>(market_entity).expect("market");
             if market.currency.0 < total {
@@ -913,6 +952,16 @@ impl GameSession {
                     .completed_transactions
                     .checked_add(1)
                     .ok_or(CoreError::Overflow)?,
+                market
+                    .ledger
+                    .currency_paid_to_traders
+                    .checked_add(total)
+                    .ok_or(CoreError::Overflow)?,
+                market
+                    .ledger
+                    .units_bought_from_traders
+                    .checked_add(u64::from(quantity))
+                    .ok_or(CoreError::Overflow)?,
             )
         };
         let trader_id = self
@@ -934,6 +983,8 @@ impl GameSession {
         let mut market = self.world.get_mut::<Market>(market_entity).expect("market");
         market.currency.0 = market_currency;
         market.inventory.insert(good.clone(), market_stock);
+        market.ledger.currency_paid_to_traders = market_expenditure;
+        market.ledger.units_bought_from_traders = market_units_bought;
         self.world
             .resource_mut::<EventBuffer>()
             .0
@@ -1103,6 +1154,7 @@ impl GameSession {
             .iter(&self.world)
             .map(|(entity, market)| {
                 let mut inventory = market.inventory.clone();
+                let mut ledger = market.ledger;
                 for source in &market.sources {
                     let stock = inventory.entry(source.good.clone()).or_default();
                     let output = source
@@ -1111,15 +1163,18 @@ impl GameSession {
                         .ok_or(CoreError::Overflow)?
                         / 100;
                     *stock = stock.checked_add(output).ok_or(CoreError::Overflow)?;
+                    ledger.source_units_generated = ledger
+                        .source_units_generated
+                        .checked_add(u64::from(output))
+                        .ok_or(CoreError::Overflow)?;
                 }
-                Ok((entity, inventory))
+                Ok((entity, inventory, ledger))
             })
             .collect::<Result<Vec<_>, CoreError>>()?;
-        for (entity, inventory) in updates {
-            self.world
-                .get_mut::<Market>(entity)
-                .expect("market")
-                .inventory = inventory;
+        for (entity, inventory, ledger) in updates {
+            let mut market = self.world.get_mut::<Market>(entity).expect("market");
+            market.inventory = inventory;
+            market.ledger = ledger;
         }
         Ok(())
     }
@@ -1141,6 +1196,29 @@ impl GameSession {
                 {
                     continue;
                 }
+                let input_units = recipe.inputs.iter().try_fold(0_u64, |sum, input| {
+                    sum.checked_add(u64::from(input.quantity))
+                        .ok_or(CoreError::Overflow)
+                })?;
+                let output_units = recipe.outputs.iter().try_fold(0_u64, |sum, output| {
+                    sum.checked_add(u64::from(output.quantity))
+                        .ok_or(CoreError::Overflow)
+                })?;
+                let mut next_ledger = market.ledger;
+                next_ledger.recipe_input_units_consumed = next_ledger
+                    .recipe_input_units_consumed
+                    .checked_add(input_units)
+                    .ok_or(CoreError::Overflow)?;
+                next_ledger.recipe_output_units_produced = next_ledger
+                    .recipe_output_units_produced
+                    .checked_add(output_units)
+                    .ok_or(CoreError::Overflow)?;
+                if layer == RecipeLayer::Tertiary {
+                    next_ledger.tertiary_input_units_consumed = next_ledger
+                        .tertiary_input_units_consumed
+                        .checked_add(input_units)
+                        .ok_or(CoreError::Overflow)?;
+                }
                 let mut next_inventory = market.inventory.clone();
                 for input in &recipe.inputs {
                     *next_inventory
@@ -1154,6 +1232,7 @@ impl GameSession {
                         .ok_or(CoreError::Overflow)?;
                 }
                 market.inventory = next_inventory;
+                market.ledger = next_ledger;
                 produced.push((system_id.0.clone(), recipe.id.clone(), layer));
             }
         }
@@ -1710,6 +1789,9 @@ mod tests {
                 + after.traders.iter().map(|t| t.currency.0).sum::<i64>(),
             currency_before
         );
+        assert_eq!(after.markets[0].ledger.currency_received_from_traders, 26);
+        assert_eq!(after.markets[0].ledger.units_sold_to_traders, 2);
+        assert_eq!(after.markets[0].ledger.net_trade_cash_flow(), 26);
         assert_eq!(
             after
                 .markets
@@ -1795,12 +1877,24 @@ mod tests {
         let before = format!("{:?}", session.snapshot());
         assert_eq!(
             session.submit(GameCommand::Sell {
-                good: ore,
+                good: ore.clone(),
                 quantity: 1
             }),
             Err(CoreError::InsufficientFunds)
         );
         assert_eq!(format!("{:?}", session.snapshot()), before);
+
+        session.world.get_mut::<Market>(market).unwrap().currency = Money(100);
+        session
+            .submit(GameCommand::Sell {
+                good: ore,
+                quantity: 1,
+            })
+            .unwrap();
+        let ledger = session.snapshot().markets[0].ledger;
+        assert_eq!(ledger.currency_paid_to_traders, 12);
+        assert_eq!(ledger.units_bought_from_traders, 1);
+        assert_eq!(ledger.net_trade_cash_flow(), -12);
     }
 
     #[test]
@@ -1885,6 +1979,10 @@ mod tests {
         assert_eq!(market.inventory.get(&raw).copied().unwrap_or(0), 0);
         assert_eq!(market.inventory.get(&primary).copied().unwrap_or(0), 0);
         assert_eq!(market.inventory.get(&secondary).copied().unwrap_or(0), 0);
+        assert_eq!(market.ledger.source_units_generated, 1);
+        assert_eq!(market.ledger.recipe_input_units_consumed, 4);
+        assert_eq!(market.ledger.recipe_output_units_produced, 2);
+        assert_eq!(market.ledger.tertiary_input_units_consumed, 1);
         assert!(
             session
                 .drain_events()

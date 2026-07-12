@@ -49,11 +49,16 @@ Runtime content is stored under `content/`.
 
 The initial nine NPC traders use `EvenlySpaced` distribution across the 20 systems.
 
+## Economy diagnostics
+
+Run `cargo run -p game-cli -- --economy-diagnostics 500` to inspect activity in 50-tick windows and final per-market cash flow, source/production volume, tertiary consumption, currency concentration, and NPC cargo/travel state. The report is intended for balancing and long-run deadlock investigation.
+
 ## Validation
 
 ```bash
 cargo run -p game-cli -- --validate-content
 cargo run -p game-cli -- --headless
+cargo run -p game-cli -- --economy-diagnostics 500
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features

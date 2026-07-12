@@ -503,6 +503,8 @@ Use `tracing` for diagnostics. Because the TUI owns the terminal, logs should go
 
 Simulation events intended for users are typed application data and are separate from diagnostic traces.
 
+Each market keeps cumulative diagnostic accounting for currency paid to and received from traders, traded units, source generation, recipe inputs/outputs, and tertiary consumption. `cargo run -p game-cli -- --economy-diagnostics <ticks>` reports 50-tick activity windows, conserved currency distribution, final market cash flows, and NPC travel/cargo states. These counters are observational and do not alter simulation decisions.
+
 ## Testing
 
 ### Content validation
@@ -529,6 +531,7 @@ Simulation events intended for users are typed application data and are separate
 - Player and automated transactions obey the same market rules.
 - Invalid or unaffordable transactions do not partially mutate state.
 - Net worth and economy-share statistics are calculated consistently.
+- Market diagnostics account for successful trades, source generation, and recipe throughput without recording rejected mutations.
 
 ### Application boundary
 
