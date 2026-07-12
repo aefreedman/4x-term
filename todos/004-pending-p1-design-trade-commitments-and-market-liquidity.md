@@ -158,6 +158,21 @@ Keep this todo pending until the economic actor and commitment model is selected
 - Fuel and tertiary support address complementary cash-flow imbalances: trader operating costs return trader profits, while extraction upkeep gives source systems expenses and tertiary systems revenue.
 - The result is a hypothesis check only; it does not address dynamic pricing, simultaneous trader contention, contract settlement, or bootstrap reserves.
 
+### 2026-07-10 - Isolate pricing hypotheses
+
+**By:** OpenAI
+
+**Actions:**
+- Added `crates/game-core/tests/pricing_model_mock.rs` without changing production quote behavior.
+- Captured current recipe margins under scarce input bids and immediate versus backlogged output asks.
+- Tested a 15% acquisition-cost ask floor, a simplified 1,000-cycle processor balance, and cash-backed demand quantity reservations.
+
+**Learnings:**
+- Current immediate-sale margins are -¤4, -¤9, -¤8, +¤13, +¤22, and +¤63 across the six producing recipes.
+- At two units of untargeted output inventory, five of six recipes lose money: -¤17, -¤26, -¤23, -¤33, -¤33, and +¤2.
+- A cost floor can prevent processor accounting losses when output sells, but does not prove that buyers can afford or clear that output.
+- Funded quantity reservations prevent the observed ¤313 market from advertising a 30-unit purchase at ¤13; it can fund only 24 units, leaving no cash-backed quantity for a competing reservation.
+
 ## Notes
 
 - Do not implement a partial-sale-only fix without first deciding the market commitment and liquidity model.
