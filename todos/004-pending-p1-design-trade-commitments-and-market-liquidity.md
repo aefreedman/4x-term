@@ -144,6 +144,20 @@ Keep this todo pending until the economic actor and commitment model is selected
 - The retained 350-tick report confirms total currency remains ¤210,000 while it concentrates away from Systems 16 and 17.
 - At the stall, Systems 16 and 17 have cumulative net trade cash flows of approximately ¤-9,687 and ¤-9,604 respectively, while all nine NPCs are stationary with cargo.
 
+### 2026-07-10 - Compare closed-loop economy mocks
+
+**By:** OpenAI
+
+**Actions:**
+- Added `crates/game-core/tests/economy_loop_mock.rs` as a production-independent stock-flow experiment.
+- Compared baseline, abstract trader fuel/service spending, tertiary support goods consumed by extraction, and the combined loop over 1,000 cycles.
+- Kept the mock outside ECS gameplay behavior so its assumptions can be revised without committing to a feature design.
+
+**Learnings:**
+- Under the mock's documented fixed-price assumptions, baseline liquidity lasts 166 cycles, fuel alone 200, tertiary support alone 333, and the combined loop all 1,000 cycles.
+- Fuel and tertiary support address complementary cash-flow imbalances: trader operating costs return trader profits, while extraction upkeep gives source systems expenses and tertiary systems revenue.
+- The result is a hypothesis check only; it does not address dynamic pricing, simultaneous trader contention, contract settlement, or bootstrap reserves.
+
 ## Notes
 
 - Do not implement a partial-sale-only fix without first deciding the market commitment and liquidity model.

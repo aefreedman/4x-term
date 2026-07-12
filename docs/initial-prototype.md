@@ -533,6 +533,10 @@ Each market keeps cumulative diagnostic accounting for currency paid to and rece
 - Net worth and economy-share statistics are calculated consistently.
 - Market diagnostics account for successful trades, source generation, and recipe throughput without recording rejected mutations.
 
+### Economy design experiments
+
+`crates/game-core/tests/economy_loop_mock.rs` is a deliberately simplified stock-flow test, not a production gameplay rule. It compares baseline, trader operating-cost only, tertiary-support only, and combined scenarios over 1,000 cycles. Under its documented fixed-price assumptions, the baseline remains solvent for 166 cycles, operating costs alone for 200, tertiary extraction support alone for 333, and the combined loop for all 1,000 while conserving currency. The mock supports further design work but does not resolve trader contention, contracts, dynamic pricing, or ECS integration.
+
 ### Application boundary
 
 - Requests are processed in order.
