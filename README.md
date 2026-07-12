@@ -38,6 +38,10 @@ Controls:
 
 The terminal should be at least 70 columns by 24 rows. The prototype exposes current market information for all systems.
 
+## Designer configuration
+
+Runtime content is stored under `content/`. Trader population parameters are centralized in `content/traders.ron`, including NPC count, common speed, starting currency, cargo capacity, naming, and distribution strategy. The initial nine NPC traders use `EvenlySpaced` distribution across the 20 systems.
+
 ## Validation
 
 ```bash

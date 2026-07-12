@@ -14,3 +14,4 @@
 - Route previews, active travel, direct connections, and player location now use readable system names with jump, distance, and timing summaries instead of exposing internal content IDs.
 - Event log entries now resolve system, trader, good, and production-process IDs to readable display names.
 - Player cargo now displays readable good names instead of internal content IDs.
+- NPC trader setup now uses nine evenly distributed traders with a shared speed and designer-editable parameters in `content/traders.ron`.

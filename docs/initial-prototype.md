@@ -298,6 +298,8 @@ The deterministic selection algorithm is:
 
 The algorithm has full market information in the prototype. Information limits and imperfect estimates are deferred.
 
+The initial content creates nine automated traders. Their count, ID/name prefixes, starting currency, cargo capacity, common speed, and distribution strategy are authored in `content/traders.ron`. `EvenlySpaced` assigns them across the ordered 20-system list using centered intervals, placing them at Systems 02, 04, 06, 08, 11, 13, 15, 17, and 19 rather than clustering them near the player.
+
 ### Player trader
 
 The player is a trader entity using the same location, inventory, currency, cargo, travel, market transaction, and route components as automated traders. A marker component identifies which trader is controlled by the current frontend; economic systems do not special-case its transactions.
@@ -486,6 +488,7 @@ content/
   goods.ron
   recipes.ron
   economy.ron
+  traders.ron
 ```
 
 Content is loaded and validated before the simulation task starts. The core receives compiled typed definitions and does not read these files itself.

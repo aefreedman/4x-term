@@ -80,7 +80,6 @@ struct AmountSource {
 #[derive(Deserialize)]
 struct EconomySource {
     markets: Vec<MarketSource>,
-    traders: Vec<TraderSource>,
 }
 
 #[derive(Deserialize)]
@@ -94,14 +93,35 @@ struct MarketSource {
 }
 
 #[derive(Deserialize)]
-struct TraderSource {
+struct TraderConfigSource {
+    player: PlayerTraderSource,
+    npcs: NpcTraderSource,
+}
+
+#[derive(Deserialize)]
+struct PlayerTraderSource {
     id: String,
     name: String,
-    system: String,
+    starting_system: String,
     currency: i64,
     cargo_capacity: u32,
     speed: f64,
-    player: bool,
+}
+
+#[derive(Deserialize)]
+struct NpcTraderSource {
+    count: usize,
+    id_prefix: String,
+    name_prefix: String,
+    currency: i64,
+    cargo_capacity: u32,
+    speed: f64,
+    distribution: TraderDistributionSource,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+enum TraderDistributionSource {
+    EvenlySpaced,
 }
 
 pub fn load_directory(root: impl AsRef<Path>) -> Result<GameDefinition, ContentError> {
@@ -110,7 +130,8 @@ pub fn load_directory(root: impl AsRef<Path>) -> Result<GameDefinition, ContentE
     let goods: Vec<GoodSource> = load(root.join("goods.ron"))?;
     let recipes: Vec<RecipeSource> = load(root.join("recipes.ron"))?;
     let economy: EconomySource = load(root.join("economy.ron"))?;
-    compile(systems, goods, recipes, economy)
+    let traders: TraderConfigSource = load(root.join("traders.ron"))?;
+    compile(systems, goods, recipes, economy, traders)
 }
 
 fn load<T: for<'de> Deserialize<'de>>(path: PathBuf) -> Result<T, ContentError> {
@@ -139,6 +160,7 @@ fn compile(
     goods: Vec<GoodSource>,
     recipes: Vec<RecipeSource>,
     economy: EconomySource,
+    traders: TraderConfigSource,
 ) -> Result<GameDefinition, ContentError> {
     let mut errors = Vec::new();
     if systems.len() != 20 {
@@ -401,46 +423,84 @@ fn compile(
         .iter()
         .map(|system| system.id.clone())
         .collect();
-    let mut trader_seen = BTreeSet::new();
     let mut compiled_traders = Vec::new();
-    for source in economy.traders {
-        let Some(id) = parse_id(&source.id, "economy.ron:trader", &mut errors) else {
-            continue;
-        };
-        let Some(system) = parse_id(&source.system, &format!("economy.ron:{id}"), &mut errors)
-        else {
-            continue;
-        };
-        if !trader_seen.insert(id.clone()) {
-            errors.push(format!("economy.ron: duplicate trader {id}"));
-        }
+    let player_id = parse_id(&traders.player.id, "traders.ron:player", &mut errors);
+    let player_system = parse_id(
+        &traders.player.starting_system,
+        "traders.ron:player:starting_system",
+        &mut errors,
+    );
+    if let (Some(id), Some(system)) = (player_id, player_system) {
         if !system_ids.contains(&system) {
-            errors.push(format!("economy.ron:{id}: unknown system {system}"));
+            errors.push(format!(
+                "traders.ron:player: unknown starting system {system}"
+            ));
         }
-        if source.currency < 0
-            || source.cargo_capacity == 0
-            || !source.speed.is_finite()
-            || source.speed <= 0.0
-        {
-            errors.push(format!("economy.ron:{id}: invalid trader numeric value"));
+        if !valid_trader_numbers(
+            traders.player.currency,
+            traders.player.cargo_capacity,
+            traders.player.speed,
+        ) {
+            errors.push("traders.ron:player: invalid numeric value".into());
         }
         compiled_traders.push(TraderDefinition {
             id,
-            name: source.name,
+            name: traders.player.name,
             system,
-            currency: Money(source.currency),
-            cargo_capacity: source.cargo_capacity,
-            speed: source.speed,
-            player: source.player,
+            currency: Money(traders.player.currency),
+            cargo_capacity: traders.player.cargo_capacity,
+            speed: traders.player.speed,
+            player: true,
         });
     }
-    if compiled_traders
+
+    if traders.npcs.count > compiled_systems.len() {
+        errors.push(format!(
+            "traders.ron:npcs: count {} exceeds system count {}",
+            traders.npcs.count,
+            compiled_systems.len()
+        ));
+    }
+    if !valid_trader_numbers(
+        traders.npcs.currency,
+        traders.npcs.cargo_capacity,
+        traders.npcs.speed,
+    ) {
+        errors.push("traders.ron:npcs: invalid numeric value".into());
+    }
+    if traders.npcs.name_prefix.trim().is_empty() {
+        errors.push("traders.ron:npcs: name_prefix cannot be empty".into());
+    }
+    if !compiled_systems.is_empty() && traders.npcs.count <= compiled_systems.len() {
+        match traders.npcs.distribution {
+            TraderDistributionSource::EvenlySpaced => {
+                for index in 0..traders.npcs.count {
+                    let system_index = ((2 * index + 1) * compiled_systems.len())
+                        / (2 * traders.npcs.count.max(1));
+                    let raw_id = format!("{}_{:02}", traders.npcs.id_prefix, index + 1);
+                    let Some(id) = parse_id(&raw_id, "traders.ron:npcs:id_prefix", &mut errors)
+                    else {
+                        continue;
+                    };
+                    compiled_traders.push(TraderDefinition {
+                        id,
+                        name: format!("{} {:02}", traders.npcs.name_prefix, index + 1),
+                        system: compiled_systems[system_index].id.clone(),
+                        currency: Money(traders.npcs.currency),
+                        cargo_capacity: traders.npcs.cargo_capacity,
+                        speed: traders.npcs.speed,
+                        player: false,
+                    });
+                }
+            }
+        }
+    }
+    let unique_trader_ids = compiled_traders
         .iter()
-        .filter(|trader| trader.player)
-        .count()
-        != 1
-    {
-        errors.push("economy.ron: expected exactly one player trader".into());
+        .map(|trader| trader.id.clone())
+        .collect::<BTreeSet<_>>();
+    if unique_trader_ids.len() != compiled_traders.len() {
+        errors.push("traders.ron: trader IDs must be unique".into());
     }
     if !errors.is_empty() {
         return Err(ContentError::Validation(errors));
@@ -454,6 +514,10 @@ fn compile(
     game_core::SystemGraph::build(&definition.systems)
         .map_err(|error| ContentError::Validation(vec![format!("system graph: {error}")]))?;
     Ok(definition)
+}
+
+fn valid_trader_numbers(currency: i64, cargo_capacity: u32, speed: f64) -> bool {
+    currency >= 0 && cargo_capacity > 0 && speed.is_finite() && speed > 0.0
 }
 
 fn amounts_to_map(
@@ -495,6 +559,29 @@ mod tests {
                 .count(),
             1
         );
+        let npcs = definition
+            .traders
+            .iter()
+            .filter(|trader| !trader.player)
+            .collect::<Vec<_>>();
+        assert_eq!(npcs.len(), 9);
+        assert!(npcs.iter().all(|trader| trader.speed == 8.0));
+        assert_eq!(
+            npcs.iter()
+                .map(|trader| trader.system.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "frontier:system_02",
+                "frontier:system_04",
+                "frontier:system_06",
+                "frontier:system_08",
+                "frontier:system_11",
+                "frontier:system_13",
+                "frontier:system_15",
+                "frontier:system_17",
+                "frontier:system_19",
+            ]
+        );
     }
 
     #[test]
@@ -516,13 +603,13 @@ mod tests {
         assert_invalid(|_, _, recipes, _| {
             recipes[0].inputs[0].good = "frontier:structural_alloy".into()
         });
-        assert_invalid(|_, _, _, economy| {
-            economy
-                .traders
-                .iter_mut()
-                .for_each(|trader| trader.player = false)
+        assert_invalid_traders(|traders| traders.npcs.count = 21);
+        assert_invalid_traders(|traders| traders.npcs.speed = 0.0);
+        assert_invalid_traders(|traders| traders.npcs.id_prefix = "Invalid ID".into());
+        assert_invalid_traders(|traders| traders.npcs.name_prefix.clear());
+        assert_invalid_traders(|traders| {
+            traders.player.starting_system = "frontier:missing".into()
         });
-        assert_invalid(|_, _, _, economy| economy.traders[1].player = true);
         assert_invalid(|systems, _, _, _| {
             for (index, system) in systems.iter_mut().enumerate() {
                 let cluster = if index < 10 { 0.0 } else { 10_000.0 };
@@ -578,9 +665,24 @@ mod tests {
         let mut goods = load(root.join("goods.ron")).unwrap();
         let mut recipes = load(root.join("recipes.ron")).unwrap();
         let mut economy = load(root.join("economy.ron")).unwrap();
+        let traders = load(root.join("traders.ron")).unwrap();
         mutate(&mut systems, &mut goods, &mut recipes, &mut economy);
         assert!(matches!(
-            compile(systems, goods, recipes, economy),
+            compile(systems, goods, recipes, economy, traders),
+            Err(ContentError::Validation(_))
+        ));
+    }
+
+    fn assert_invalid_traders(mutate: impl FnOnce(&mut TraderConfigSource)) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let systems = load(root.join("systems.ron")).unwrap();
+        let goods = load(root.join("goods.ron")).unwrap();
+        let recipes = load(root.join("recipes.ron")).unwrap();
+        let economy = load(root.join("economy.ron")).unwrap();
+        let mut traders = load(root.join("traders.ron")).unwrap();
+        mutate(&mut traders);
+        assert!(matches!(
+            compile(systems, goods, recipes, economy, traders),
             Err(ContentError::Validation(_))
         ));
     }

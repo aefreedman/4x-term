@@ -1,0 +1,19 @@
+(
+  player: (
+    id: "frontier:player",
+    name: "Free Trader",
+    starting_system: "frontier:system_01",
+    currency: 1000,
+    cargo_capacity: 40,
+    speed: 8.0,
+  ),
+  npcs: (
+    count: 9,
+    id_prefix: "frontier:trader",
+    name_prefix: "Wayfarer",
+    currency: 1000,
+    cargo_capacity: 30,
+    speed: 8.0,
+    distribution: EvenlySpaced,
+  ),
+)

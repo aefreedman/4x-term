@@ -81,11 +81,4 @@
       targets: [(good: "frontier:ferrite_ore", quantity: 30), (good: "frontier:silicate_crystals", quantity: 30), (good: "frontier:hydrocarbon_feedstock", quantity: 30), (good: "frontier:biomass", quantity: 30), (good: "frontier:structural_alloy", quantity: 30), (good: "frontier:ceramic_composite", quantity: 30), (good: "frontier:biopolymer", quantity: 30), (good: "frontier:industrial_machinery", quantity: 30), (good: "frontier:habitat_modules", quantity: 30), (good: "frontier:reactor_assemblies", quantity: 30)],
       recipes: ["frontier:research_enclave"], sources: []),
   ],
-  traders: [
-    (id: "frontier:player", name: "Free Trader", system: "frontier:system_01", currency: 1000, cargo_capacity: 40, speed: 8.0, player: true),
-    (id: "frontier:trader_01", name: "Wayfarer One", system: "frontier:system_01", currency: 1000, cargo_capacity: 30, speed: 7.0, player: false),
-    (id: "frontier:trader_02", name: "Wayfarer Two", system: "frontier:system_02", currency: 1000, cargo_capacity: 30, speed: 8.0, player: false),
-    (id: "frontier:trader_03", name: "Wayfarer Three", system: "frontier:system_03", currency: 1000, cargo_capacity: 30, speed: 9.0, player: false),
-    (id: "frontier:trader_04", name: "Wayfarer Four", system: "frontier:system_04", currency: 1000, cargo_capacity: 30, speed: 7.5, player: false),
-  ],
 )
