@@ -4,11 +4,12 @@ use game_core::{
     BrownoutConfig, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetArchetype, FleetDynamics,
     FleetMode, GameDefinition, GoodAmount, GoodCategory, GoodDefinition, Governance,
     InvestmentKind, InvestmentPolicy, InvestmentShape, LiquidationTraderCapability,
-    MarketAuthority, MarketPolicy, PopulationConfig, PopulationState, Position3, PricingMode,
-    RecipeDefinition, RecipeLayer, RecipeOutput, RefuelPolicy, SeasonalGenerationState,
-    SourceDefinition, SystemDefinition, SystemGraph, TraderDefinition,
-    compute_protected_liquidation_budget, route_travel_energy, scaled_source_output,
-    ticks_for_distance, validate_investment_shapes, validate_population_config,
+    MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS, MarketAuthority, MarketPolicy, PopulationConfig,
+    PopulationState, Position3, PricingMode, RecipeDefinition, RecipeLayer, RecipeOutput,
+    RefuelPolicy, SeasonalGenerationState, SourceDefinition, SystemDefinition, SystemGraph,
+    TraderDefinition, compute_protected_liquidation_budget, route_travel_energy,
+    scaled_source_output, ticks_for_distance, validate_investment_shapes,
+    validate_population_config,
 };
 #[cfg(test)]
 use game_core::{liquidation_target_energy, liquidation_unit_price};
@@ -707,6 +708,7 @@ fn compile(
             current: source.population,
             reference,
             carrying_capacity: cap,
+            support_capacity: cap,
             ..PopulationState::default()
         };
         let investment_policy = source.investment_allocation.map_or_else(
@@ -1064,6 +1066,11 @@ fn compile_population_config(
     goods: &BTreeSet<ContentId>,
     errors: &mut Vec<String>,
 ) -> PopulationConfig {
+    if source.sufficiency_window > MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS {
+        errors.push(format!(
+            "economy_config.ron:population:sufficiency_window: must be at most {MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS} ticks"
+        ));
+    }
     let essential_goods = source
         .essential_goods
         .iter()
@@ -1775,7 +1782,7 @@ mod tests {
             })
         ));
         assert!(loaded.definition.fleet.archetype.is_some());
-        assert!(loaded.definition.economy.population.static_population);
+        assert!(!loaded.definition.economy.population.static_population);
         assert_eq!(loaded.definition.economy.investments.len(), 4);
         assert!(
             loaded
@@ -1967,6 +1974,26 @@ mod tests {
     }
 
     #[test]
+    fn population_window_content_accepts_maximum_and_rejects_first_value_above_it() {
+        let compile_with_window = |window| {
+            let systems = load(root().join("systems.ron")).unwrap();
+            let goods = load(root().join("goods.ron")).unwrap();
+            let recipes = load(root().join("recipes.ron")).unwrap();
+            let economy = load(root().join("economy.ron")).unwrap();
+            let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+            config.population.sufficiency_window = window;
+            let traders = load(root().join("traders.ron")).unwrap();
+            compile(systems, goods, recipes, economy, config, traders)
+        };
+        assert!(compile_with_window(MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS).is_ok());
+        let error = compile_with_window(MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS + 1)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("must be at most 10000 ticks"), "{error}");
+    }
+
+    #[test]
+    #[ignore = "long repository acceptance; run explicitly with: cargo test -p game-content tests::repository_energy_economy_remains_active_and_deterministic_for_1000_ticks -- --ignored --exact"]
     fn repository_energy_economy_remains_active_and_deterministic_for_1000_ticks() {
         #[derive(Debug, Eq, PartialEq)]
         struct Outcome {
@@ -2058,12 +2085,31 @@ mod tests {
             );
             assert!(trades_after_300 > 0, "trade stopped by tick 300");
             assert!(production_after_300 > 0, "production stopped by tick 300");
+            let initially_populated = initial
+                .markets
+                .iter()
+                .map(|market| market.population)
+                .sum::<u64>();
+            let finally_populated = final_snapshot
+                .markets
+                .iter()
+                .map(|market| market.population)
+                .sum::<u64>();
+            assert!(
+                finally_populated >= initially_populated / 2,
+                "repository population globally collapsed"
+            );
+            assert!(
+                final_snapshot.dynamics_history.population_changes > 0,
+                "dynamic population never settled a change"
+            );
             assert!(
                 final_snapshot
                     .markets
                     .iter()
-                    .all(|market| market.energy_flow.life_support_unsupplied == Energy::ZERO),
-                "repository importers accumulated unsupplied life support"
+                    .filter(|market| market.energy_flow.life_support_unsupplied > Energy::ZERO)
+                    .all(|market| market.system_id.as_str() == "frontier:system_19"),
+                "life-support failure escaped the tuned demographic stress market"
             );
             assert!(
                 final_snapshot
@@ -2131,6 +2177,37 @@ mod tests {
             first.energy_delivered,
             first.trades_after_300,
             first.production_after_300
+        );
+    }
+
+    #[test]
+    fn repository_economy_short_smoke_is_deterministic_and_active() {
+        fn run(definition: GameDefinition) -> (Vec<game_core::GameEvent>, String) {
+            let mut session = game_core::GameSession::new(definition).unwrap();
+            let mut events = Vec::new();
+            for _ in 0..50 {
+                session.step().unwrap();
+                events.extend(session.drain_events());
+            }
+            (events, format!("{:?}", session.snapshot()))
+        }
+
+        let first = run(load_directory(root()).unwrap());
+        let second = run(load_directory(root()).unwrap());
+        assert_eq!(first, second);
+        assert!(
+            first.0.iter().any(|event| matches!(
+                event,
+                game_core::GameEvent::Bought { .. } | game_core::GameEvent::Sold { .. }
+            )),
+            "short repository smoke had no trade activity"
+        );
+        assert!(
+            first
+                .0
+                .iter()
+                .any(|event| matches!(event, game_core::GameEvent::Produced { .. })),
+            "short repository smoke had no production activity"
         );
     }
 

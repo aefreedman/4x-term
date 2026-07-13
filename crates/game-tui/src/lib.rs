@@ -405,8 +405,9 @@ fn render_systems(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui:
                 Style::default()
             };
             ListItem::new(format!(
-                "{} E {}/{} {} · {}",
+                "{} P {} · E {}/{} {} · {}",
                 system.name,
+                system.population.current,
                 system.energy_stock.0,
                 system.energy_capacity.0,
                 system.health.label(),
@@ -451,6 +452,16 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
             )),
         ]
     });
+    let population = &view.population;
+    let recent_trajectory = population
+        .sufficiency_trajectory
+        .iter()
+        .rev()
+        .take(8)
+        .rev()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
     let energy = &view.market_energy;
     lines.push(Line::from(format!(
         "Energy {}/{} · {} · {} · {}t runway",
@@ -474,6 +485,21 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
     if energy.bootstrap_risk_acknowledged {
         lines.push(Line::from("Bootstrap risk: ACKNOWLEDGED"));
     }
+    lines.push(Line::from(format!(
+        "Population {} · {} · cap {} · tier {} · sufficiency {}% [{}]",
+        population.current,
+        population.trend.label(),
+        population.carrying_capacity,
+        population.tier,
+        population.sufficiency_average_percent,
+        recent_trajectory,
+    )));
+    lines.push(Line::from(format!(
+        "History population changes {} · milestones {} · stage transitions {}",
+        view.dynamics.population_changes,
+        view.dynamics.population_milestones,
+        view.dynamics.stage_transitions,
+    )));
     let season = energy.seasonal_generation;
     lines.push(Line::from(format!(
         "Season {}/{} base/effective · phase {}/{} {} · turn {} ({}t)",
@@ -671,14 +697,15 @@ fn render_events(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
 mod tests {
     use super::*;
     use game_app::{
-        CargoItemView, ConnectionView, EnergyHealth, MarketEnergyView, MarketRow, PlayerStatusView,
-        RouteLegView, RouteView, SeasonalGenerationView, SystemListItem, TickRate,
+        AggregateDynamicsView, CargoItemView, ConnectionView, EnergyHealth, MarketEnergyView,
+        MarketRow, PlayerStatusView, PopulationView, RouteLegView, RouteView,
+        SeasonalGenerationView, SystemListItem, TickRate,
     };
     use game_core::{
         BrownoutStage, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetDynamics, FleetMode,
         GameDefinition, GameSession, GoodCategory, GoodDefinition, Governance, InvestmentPolicy,
-        MarketPolicy, PopulationState, Position3, RefuelPolicy, SeasonalGenerationState,
-        SeasonalTrend, SystemDefinition, TraderDefinition,
+        MarketPolicy, PopulationState, PopulationTrend, Position3, RefuelPolicy,
+        SeasonalGenerationState, SeasonalTrend, SystemDefinition, TraderDefinition,
     };
     use ratatui::backend::TestBackend;
     use std::cell::RefCell;
@@ -811,6 +838,16 @@ mod tests {
                 id: id("core:s0"),
                 name: "Aster".into(),
                 coordinates: (0.0, 0.0, 0.0),
+                population: PopulationView {
+                    current: 5,
+                    reference: 5,
+                    carrying_capacity: 6,
+                    trend: PopulationTrend::Growing,
+                    tier: 2,
+                    sufficiency_average_percent: 94,
+                    sufficiency_trajectory: vec![90, 94, 98],
+                    settled_changes: 1,
+                },
                 energy_stock: Energy(800),
                 energy_capacity: Energy(1_000),
                 health: EnergyHealth::Healthy,
@@ -858,6 +895,22 @@ mod tests {
                     ticks_until_turning_point: 10,
                     next_turning_point_tick: Some(10),
                 },
+            },
+            population: PopulationView {
+                current: 5,
+                reference: 5,
+                carrying_capacity: 6,
+                trend: PopulationTrend::Growing,
+                tier: 2,
+                sufficiency_average_percent: 94,
+                sufficiency_trajectory: vec![90, 94, 98],
+                settled_changes: 1,
+            },
+            dynamics: AggregateDynamicsView {
+                stage_occupancy_ticks: [10, 2, 1, 0],
+                stage_transitions: 3,
+                population_changes: 1,
+                population_milestones: 1,
             },
             market: vec![MarketRow {
                 good_id: id("core:ore"),
@@ -1026,6 +1079,8 @@ mod tests {
             assert!(rendered.contains(&format!("Normal → {}", stage.label())));
             assert!(rendered.contains("Season 40/32 base/effective"));
             assert!(rendered.contains("phase 0/20 rising · turn 10 (10t)"));
+            assert!(rendered.contains("Population 5 · growing · cap 6 · tier 2"));
+            assert!(rendered.contains("History population changes 1 · milestones 1"));
             if stage >= BrownoutStage::Emergency {
                 assert!(rendered.contains("0 E"), "suppressed distress bid missing");
             }

@@ -63,6 +63,20 @@ cargo run -p game-cli -- --player-impact \
 
 The probe requires a stage or population divergence within the bounded horizon and reconciles the intervention inflow separately.
 
+The 10,000-tick population/metastability harness is an explicit acceptance run, not a routine test/CI path:
+
+```bash
+cargo run -p game-cli --release -- --economy-diagnostics 10000
+```
+
+The repository's older 1,000-tick content acceptance is ignored by default because it is intentionally long. Run it explicitly with:
+
+```bash
+cargo test -p game-content tests::repository_energy_economy_remains_active_and_deterministic_for_1000_ticks -- --ignored --exact
+```
+
+A 50-tick deterministic/activity smoke and short system-only/trader-only insertion permutations remain in the default suite.
+
 ## Validation
 
 ```bash

@@ -16,6 +16,7 @@
 - Deterministic seasonal generation on three prototype systems, with base/effective output, phase, trend, and next-turning-point visibility in immutable app views and the TUI.
 - A bounded identical-session player-impact probe with one typed, recorded external delivery and explicit reconciliation of intervention inflow.
 - A deterministic endogenous NPC fleet with normalized persistent opportunity, market-funded slow spawning, bounded profitability, conservation-safe deferred retirement, typed lifecycle events, and fleet diagnostics.
+- Dynamic population hysteresis with a validated 10,000-sample maximum for efficient bounded energy/goods sufficiency history, fast starvation decline, slower gated logistic recovery, atomically denominator-paired carry, population-scaled life support/labor/tertiary demand, tier milestones, and an explicit 10,000-tick metastability acceptance harness.
 
 ### Changed
 
@@ -31,3 +32,5 @@
 - Nonzero seasonal amplitudes now require even periods so triangle waves reach exact sampled extrema, with source-aware content errors for invalid definitions.
 - Conflicting CLI execution modes are rejected instead of being resolved by argument-order precedence.
 - Cost-aware asks now compound sustainable cost-basis margin with bounded scarcity, while processor input bids use deterministic non-recursive solvency ceilings.
+- Repository markets now use dynamic population, with Sable Junction tuned as a recoverable demographic stress case; app, TUI, and CLI views expose population trend, carrying cap, tier, sufficiency trajectory, and aggregate stage/population history.
+- The long 1,000-tick repository content acceptance is ignored by default with an explicit command; routine tests retain a 50-tick deterministic/activity smoke and short system-only/trader-only insertion-order checks.

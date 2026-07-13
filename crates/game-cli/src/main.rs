@@ -4,7 +4,7 @@ use game_core::{
     BrownoutStage, ContentId, CoreSnapshot, ENERGY_ID, GameDefinition, GameEvent, GameSession,
     PricingMode,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
                 let mut session =
                     GameSession::new(definition).context("failed to construct simulation")?;
                 println!("\n=== pricing_mode={} ===", pricing_mode_label(mode));
-                run_economy_diagnostics(&mut session, ticks)?;
+                let _ = run_economy_diagnostics(&mut session, ticks)?;
             }
         }
         ExecutionMode::EconomyDiagnostics => {
@@ -59,7 +59,15 @@ async fn main() -> Result<()> {
             }
             let mut session =
                 GameSession::new(definition).context("failed to construct simulation")?;
-            run_economy_diagnostics(&mut session, ticks)?;
+            let baseline = run_economy_diagnostics(&mut session, ticks)?;
+            if ticks >= 10_000 {
+                validate_metastability(&baseline, "baseline")?;
+                println!(
+                    "metastability_acceptance ticks={} {} status=ok",
+                    ticks,
+                    format_soak_summary(&baseline),
+                );
+            }
         }
         ExecutionMode::Headless => {
             let mut definition = loaded.definition;
@@ -508,6 +516,301 @@ struct DiagnosticActivity {
     fleet_retirements: u64,
 }
 
+const FINAL_ACTIVITY_WINDOW_TICKS: u64 = 1_000;
+const FINAL_POPULATION_STABILITY_WINDOW_TICKS: u64 = 100;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SoakSummary {
+    initial_populations: BTreeMap<ContentId, u64>,
+    minimum_populations: BTreeMap<ContentId, u64>,
+    final_populations: BTreeMap<ContentId, u64>,
+    final_stability_minimums: BTreeMap<ContentId, u64>,
+    final_stability_maximums: BTreeMap<ContentId, u64>,
+    minimum_aggregate_population: u64,
+    final_window_trades: u64,
+    final_window_stage_transitions: u64,
+    post_midpoint_stage_transitions: u64,
+    population_changes: u64,
+    maximum_stationary_laden_streak: u64,
+    final_window_ticks: u64,
+    final_stages: BTreeMap<ContentId, BrownoutStage>,
+    market_ledgers: BTreeMap<ContentId, game_core::MarketLedger>,
+    market_energy_flows: BTreeMap<ContentId, game_core::EnergyFlowLedger>,
+    global_energy_flow: game_core::GlobalEnergyFlowLedger,
+    dynamics_history: game_core::AggregateDynamicsHistory,
+    reconciliation: ReconciliationReport,
+}
+
+struct SoakTracker {
+    ticks: u64,
+    final_window_start: u64,
+    final_stability_start: u64,
+    initial_populations: BTreeMap<ContentId, u64>,
+    minimum_populations: BTreeMap<ContentId, u64>,
+    final_stability_minimums: BTreeMap<ContentId, u64>,
+    final_stability_maximums: BTreeMap<ContentId, u64>,
+    minimum_aggregate_population: u64,
+    final_window_trades: u64,
+    final_window_stage_transitions: u64,
+    post_midpoint_stage_transitions: u64,
+    population_changes: u64,
+    stationary_laden_streaks: BTreeMap<ContentId, u64>,
+    maximum_stationary_laden_streak: u64,
+}
+
+impl SoakTracker {
+    fn new(initial: &CoreSnapshot, ticks: u64) -> Self {
+        let initial_populations = initial
+            .markets
+            .iter()
+            .map(|market| (market.system_id.clone(), market.population))
+            .collect::<BTreeMap<_, _>>();
+        Self {
+            ticks,
+            final_window_start: ticks.saturating_sub(ticks.min(FINAL_ACTIVITY_WINDOW_TICKS)),
+            final_stability_start: ticks
+                .saturating_sub(ticks.min(FINAL_POPULATION_STABILITY_WINDOW_TICKS)),
+            minimum_aggregate_population: initial_populations.values().sum(),
+            minimum_populations: initial_populations.clone(),
+            initial_populations,
+            final_stability_minimums: BTreeMap::new(),
+            final_stability_maximums: BTreeMap::new(),
+            final_window_trades: 0,
+            final_window_stage_transitions: 0,
+            post_midpoint_stage_transitions: 0,
+            population_changes: 0,
+            stationary_laden_streaks: BTreeMap::new(),
+            maximum_stationary_laden_streak: 0,
+        }
+    }
+
+    fn observe_event(&mut self, tick: u64, event: &GameEvent) {
+        let in_final_window = tick > self.final_window_start;
+        match event {
+            GameEvent::Bought { .. } | GameEvent::Sold { .. } if in_final_window => {
+                self.final_window_trades += 1;
+            }
+            GameEvent::BrownoutTransition { .. } => {
+                if in_final_window {
+                    self.final_window_stage_transitions += 1;
+                }
+                if tick > self.ticks / 2 {
+                    self.post_midpoint_stage_transitions += 1;
+                }
+            }
+            GameEvent::PopulationChanged { .. } => {
+                self.population_changes += 1;
+            }
+            _ => {}
+        }
+    }
+
+    fn observe_snapshot(&mut self, tick: u64, snapshot: &CoreSnapshot) {
+        let aggregate = snapshot
+            .markets
+            .iter()
+            .map(|market| market.population)
+            .sum::<u64>();
+        self.minimum_aggregate_population = self.minimum_aggregate_population.min(aggregate);
+        for market in &snapshot.markets {
+            self.minimum_populations
+                .entry(market.system_id.clone())
+                .and_modify(|minimum| *minimum = (*minimum).min(market.population))
+                .or_insert(market.population);
+            if tick > self.final_stability_start {
+                self.final_stability_minimums
+                    .entry(market.system_id.clone())
+                    .and_modify(|minimum| *minimum = (*minimum).min(market.population))
+                    .or_insert(market.population);
+                self.final_stability_maximums
+                    .entry(market.system_id.clone())
+                    .and_modify(|maximum| *maximum = (*maximum).max(market.population))
+                    .or_insert(market.population);
+            }
+        }
+        if tick <= self.final_window_start {
+            return;
+        }
+        let stationary = snapshot
+            .traders
+            .iter()
+            .filter(|trader| !trader.player && trader.travel.is_none() && !trader.cargo.is_empty())
+            .map(|trader| trader.id.clone())
+            .collect::<BTreeSet<_>>();
+        self.stationary_laden_streaks
+            .retain(|trader, _| stationary.contains(trader));
+        for trader in stationary {
+            let streak = self.stationary_laden_streaks.entry(trader).or_default();
+            *streak += 1;
+            self.maximum_stationary_laden_streak =
+                self.maximum_stationary_laden_streak.max(*streak);
+        }
+    }
+
+    fn finish(self, snapshot: &CoreSnapshot, reconciliation: ReconciliationReport) -> SoakSummary {
+        SoakSummary {
+            initial_populations: self.initial_populations,
+            minimum_populations: self.minimum_populations,
+            final_populations: snapshot
+                .markets
+                .iter()
+                .map(|market| (market.system_id.clone(), market.population))
+                .collect(),
+            final_stability_minimums: self.final_stability_minimums,
+            final_stability_maximums: self.final_stability_maximums,
+            minimum_aggregate_population: self.minimum_aggregate_population,
+            final_window_trades: self.final_window_trades,
+            final_window_stage_transitions: self.final_window_stage_transitions,
+            post_midpoint_stage_transitions: self.post_midpoint_stage_transitions,
+            population_changes: self.population_changes,
+            maximum_stationary_laden_streak: self.maximum_stationary_laden_streak,
+            final_window_ticks: self.ticks.min(FINAL_ACTIVITY_WINDOW_TICKS),
+            final_stages: snapshot
+                .markets
+                .iter()
+                .map(|market| (market.system_id.clone(), market.brownout.stage))
+                .collect(),
+            market_ledgers: snapshot
+                .markets
+                .iter()
+                .map(|market| (market.system_id.clone(), market.ledger))
+                .collect(),
+            market_energy_flows: snapshot
+                .markets
+                .iter()
+                .map(|market| (market.system_id.clone(), market.energy_flow))
+                .collect(),
+            global_energy_flow: snapshot.energy_flow,
+            dynamics_history: snapshot.dynamics_history.clone(),
+            reconciliation,
+        }
+    }
+}
+
+fn validate_metastability(summary: &SoakSummary, label: &str) -> Result<()> {
+    let initial_population = summary.initial_populations.values().sum::<u64>();
+    let final_population = summary.final_populations.values().sum::<u64>();
+    anyhow::ensure!(
+        summary
+            .initial_populations
+            .keys()
+            .eq(summary.minimum_populations.keys())
+            && summary
+                .initial_populations
+                .keys()
+                .eq(summary.final_populations.keys()),
+        "{label} soak population maps do not describe the same systems"
+    );
+    anyhow::ensure!(
+        summary.initial_populations.iter().all(|(system, initial)| {
+            *initial > 0
+                && summary
+                    .minimum_populations
+                    .get(system)
+                    .is_some_and(|value| *value > 0)
+                && summary
+                    .final_populations
+                    .get(system)
+                    .is_some_and(|value| *value > 0)
+        }),
+        "{label} soak contains an extinct system"
+    );
+    anyhow::ensure!(
+        u128::from(summary.minimum_aggregate_population) * 2 >= u128::from(initial_population),
+        "{label} soak suffered a global population collapse: initial={initial_population} minimum={}",
+        summary.minimum_aggregate_population
+    );
+    anyhow::ensure!(
+        u128::from(final_population) * 100 >= u128::from(initial_population) * 90,
+        "{label} soak has a severe population ratchet: {initial_population} -> {final_population}"
+    );
+    anyhow::ensure!(
+        summary.final_window_trades > 0 && summary.final_window_stage_transitions > 0,
+        "{label} soak lost final-window trade/stage activity"
+    );
+    anyhow::ensure!(
+        summary.post_midpoint_stage_transitions > 0,
+        "{label} soak had no post-midpoint stage transition"
+    );
+    let stable_changed_system = summary.initial_populations.iter().any(|(system, initial)| {
+        let changed = summary
+            .minimum_populations
+            .get(system)
+            .is_some_and(|minimum| minimum != initial)
+            || summary
+                .final_populations
+                .get(system)
+                .is_some_and(|final_population| final_population != initial);
+        changed
+            && summary.final_stability_minimums.get(system)
+                == summary.final_stability_maximums.get(system)
+            && summary.final_stability_minimums.get(system) == summary.final_populations.get(system)
+    });
+    anyhow::ensure!(
+        summary.population_changes > 0 && stable_changed_system,
+        "{label} soak had no changed population stable over the final {} ticks",
+        FINAL_POPULATION_STABILITY_WINDOW_TICKS
+    );
+    anyhow::ensure!(
+        summary.maximum_stationary_laden_streak < summary.final_window_ticks,
+        "{label} soak has a stationary laden deadlock"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+fn compare_deterministic_outcomes(
+    baseline: &SoakSummary,
+    comparison: &SoakSummary,
+    label: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        baseline.final_populations == comparison.final_populations
+            && baseline.final_stages == comparison.final_stages
+            && baseline.market_ledgers == comparison.market_ledgers
+            && baseline.market_energy_flows == comparison.market_energy_flows
+            && baseline.global_energy_flow == comparison.global_energy_flow
+            && baseline.dynamics_history == comparison.dynamics_history
+            && baseline.reconciliation == comparison.reconciliation,
+        "{label} insertion-order outcome diverged"
+    );
+    Ok(())
+}
+
+fn format_soak_summary(summary: &SoakSummary) -> String {
+    format!(
+        "population={}->{} minimum_population={} population_changes={} stage_transitions={} post_midpoint_transitions={} final_window_trades={} final_window_stage_transitions={} max_stationary_laden_streak={}",
+        summary.initial_populations.values().sum::<u64>(),
+        summary.final_populations.values().sum::<u64>(),
+        summary.minimum_aggregate_population,
+        summary.population_changes,
+        summary.dynamics_history.stage_transitions,
+        summary.post_midpoint_stage_transitions,
+        summary.final_window_trades,
+        summary.final_window_stage_transitions,
+        summary.maximum_stationary_laden_streak,
+    )
+}
+
+#[cfg(test)]
+fn run_compact_soak(definition: GameDefinition, ticks: u64) -> Result<SoakSummary> {
+    let mut session = GameSession::new(definition).context("failed to construct compact soak")?;
+    let initial = session.snapshot();
+    let initial_physical = physical_energy(&initial)?;
+    let mut tracker = SoakTracker::new(&initial, ticks);
+    for tick in 1..=ticks {
+        session.step()?;
+        for event in session.drain_events() {
+            tracker.observe_event(tick, &event);
+        }
+        tracker.observe_snapshot(tick, &session.snapshot());
+    }
+    let snapshot = session.snapshot();
+    let reconciliation = reconcile_energy(&snapshot, initial_physical)
+        .context("compact soak energy reconciliation failed")?;
+    Ok(tracker.finish(&snapshot, reconciliation))
+}
+
 #[derive(Clone, Copy, Debug)]
 struct CycleAmplitude {
     minimum_effective_output: i64,
@@ -589,10 +892,12 @@ fn format_network_dynamics(snapshot: &CoreSnapshot) -> String {
         current[market.brownout.stage.index()] += 1;
     }
     format!(
-        "network_stages current[{}] occupancy[{}] transitions={} npc_fleet_size={} normalized_unserved_opportunity_per_system={} opportunity_persistence={} fleet_spawns={} fleet_retirements={}",
+        "network_stages current[{}] occupancy[{}] transitions={} population_changes={} population_milestones={} npc_fleet_size={} normalized_unserved_opportunity_per_system={} opportunity_persistence={} fleet_spawns={} fleet_retirements={}",
         format_stage_percentages(current),
         format_stage_percentages(snapshot.dynamics_history.stage_occupancy_ticks),
         snapshot.dynamics_history.stage_transitions,
+        snapshot.dynamics_history.population_changes,
+        snapshot.dynamics_history.population_milestones,
         snapshot
             .traders
             .iter()
@@ -615,10 +920,14 @@ fn format_profitability_window(values: &[i64]) -> String {
     format!("samples={} sum={sum} average={average:.1}", values.len())
 }
 
+fn sampled_population_trajectory(values: &VecDeque<u32>) -> Vec<u32> {
+    values.iter().rev().take(16).copied().rev().collect()
+}
+
 fn format_system_dynamics(market: &game_core::MarketSnapshot, previous_stock: i64) -> String {
     let phase = market.seasonal_phase;
     format!(
-        "system={} net_flow={} storage={} stage={} occupancy=[{}] transitions={} generation_base={} generation_effective={} seasonal_phase={}/{}:{} next_turning_point={} ticks_to_turn={}",
+        "system={} net_flow={} storage={} stage={} occupancy=[{}] transitions={} population={} population_trend={} population_cap={} population_tier={} population_sufficiency_average={} population_trajectory={:?} generation_base={} generation_effective={} seasonal_phase={}/{}:{} next_turning_point={} ticks_to_turn={}",
         market.system_id,
         i128::from(market.energy_stock.0) - i128::from(previous_stock),
         format_basis_points(storage_basis_points(
@@ -628,6 +937,12 @@ fn format_system_dynamics(market: &game_core::MarketSnapshot, previous_stock: i6
         market.brownout.stage.label(),
         format_stage_percentages(market.brownout.occupancy_ticks),
         market.brownout.transition_count,
+        market.population,
+        market.population_state.trend.label(),
+        market.population_state.carrying_capacity,
+        market.population_state.tier,
+        market.population_state.sufficiency_average_percent,
+        sampled_population_trajectory(&market.population_state.sufficiency_samples),
         market.seasonal_generation.base_output.0,
         market.seasonal_generation.current_effective_output.0,
         phase.position_ticks,
@@ -661,9 +976,10 @@ fn format_cycle_amplitude(market: &game_core::MarketSnapshot, amplitude: CycleAm
     )
 }
 
-fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> {
+fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<SoakSummary> {
     const REPORT_INTERVAL: u64 = 50;
     let initial = session.snapshot();
+    let mut soak_tracker = SoakTracker::new(&initial, ticks);
     let initial_physical = physical_energy(&initial)?;
     let initial_stocks = initial
         .markets
@@ -685,6 +1001,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
     for tick in 1..=ticks {
         session.step()?;
         for event in session.drain_events() {
+            soak_tracker.observe_event(tick, &event);
             match event {
                 GameEvent::Bought { .. } => activity.trades += 1,
                 GameEvent::Sold { partial, .. } => {
@@ -706,6 +1023,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
                 GameEvent::ExternalDeliveryRecorded { .. }
                 | GameEvent::BrownoutTransition { .. }
                 | GameEvent::PopulationChanged { .. }
+                | GameEvent::PopulationTierChanged { .. }
                 | GameEvent::InvestmentCompleted { .. }
                 | GameEvent::InvestmentDeferred { .. }
                 | GameEvent::GovernorPolicyRejected { .. }
@@ -717,6 +1035,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
             }
         }
         let tick_snapshot = session.snapshot();
+        soak_tracker.observe_snapshot(tick, &tick_snapshot);
         update_cycle_amplitudes(&mut cycle_amplitudes, &tick_snapshot);
         if tick % REPORT_INTERVAL == 0 || tick == ticks {
             let snapshot = tick_snapshot;
@@ -799,7 +1118,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
         let realized_processor_revenue = i128::from(market.ledger.processor_output_revenue.0);
         let realized_processor_margin = realized_processor_revenue - realized_processor_cost;
         println!(
-            "  {} energy={}/{} storage={} net_flow={} health={} stage={} occupancy=[{}] transitions={} generation_base={} generation_effective={} seasonal_phase={}/{}:{} next_turning_point={} reserved_claims={} operating_reserve={} protected_budget={} unreserved_purchasing={} funded_demand_units={} generated={} external_inflow={} burned={} curtailed={} unsupplied_life_support={} avg_unit_cost={} policy_margin={}% realized_processor_input_cost={} realized_processor_operating_energy={} realized_processor_output_revenue={} realized_processor_margin={} targets_met={}/{} bootstrap_risk_acknowledged={} net_trade_energy={} paid={} received={} units_bought={} units_sold={} source_units={} recipe_inputs={} recipe_outputs={}",
+            "  {} energy={}/{} storage={} net_flow={} health={} stage={} occupancy=[{}] transitions={} population={} population_trend={} population_cap={} population_tier={} population_sufficiency_average={} population_changes={} generation_base={} generation_effective={} seasonal_phase={}/{}:{} next_turning_point={} reserved_claims={} operating_reserve={} protected_budget={} unreserved_purchasing={} funded_demand_units={} generated={} external_inflow={} burned={} curtailed={} unsupplied_life_support={} avg_unit_cost={} policy_margin={}% realized_processor_input_cost={} realized_processor_operating_energy={} realized_processor_output_revenue={} realized_processor_margin={} targets_met={}/{} bootstrap_risk_acknowledged={} net_trade_energy={} paid={} received={} units_bought={} units_sold={} source_units={} recipe_inputs={} recipe_outputs={}",
             market.name,
             market.energy_stock.0,
             market.energy_storage_cap.0,
@@ -818,6 +1137,12 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
             market.brownout.stage.label(),
             format_stage_percentages(market.brownout.occupancy_ticks),
             market.brownout.transition_count,
+            market.population,
+            market.population_state.trend.label(),
+            market.population_state.carrying_capacity,
+            market.population_state.tier,
+            market.population_state.sufficiency_average_percent,
+            market.population_state.settled_changes,
             market.seasonal_generation.base_output.0,
             market.seasonal_generation.current_effective_output.0,
             market.seasonal_phase.position_ticks,
@@ -918,7 +1243,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
                 - i128::from(trader.ledger.travel_cost.0),
         );
     }
-    Ok(())
+    Ok(soak_tracker.finish(&snapshot, reconciliation))
 }
 
 fn market_health(market: &game_core::MarketSnapshot) -> &'static str {
@@ -1054,6 +1379,129 @@ fn format_reconciliation(report: &ReconciliationReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn synthetic_soak_summary(
+        initial: &[(&str, u64)],
+        minimum: &[(&str, u64)],
+        final_values: &[(&str, u64)],
+    ) -> SoakSummary {
+        let populations = |values: &[(&str, u64)]| {
+            values
+                .iter()
+                .map(|(system, population)| (ContentId::new(*system).unwrap(), *population))
+                .collect::<BTreeMap<_, _>>()
+        };
+        let final_populations = populations(final_values);
+        let systems = final_populations.keys().cloned().collect::<Vec<_>>();
+        SoakSummary {
+            initial_populations: populations(initial),
+            minimum_populations: populations(minimum),
+            final_stability_minimums: final_populations.clone(),
+            final_stability_maximums: final_populations.clone(),
+            minimum_aggregate_population: minimum.iter().map(|(_, value)| *value).sum(),
+            final_populations,
+            final_window_trades: 1,
+            final_window_stage_transitions: 1,
+            post_midpoint_stage_transitions: 1,
+            population_changes: 1,
+            maximum_stationary_laden_streak: 0,
+            final_window_ticks: FINAL_ACTIVITY_WINDOW_TICKS,
+            final_stages: systems
+                .iter()
+                .cloned()
+                .map(|system| (system, BrownoutStage::Normal))
+                .collect(),
+            market_ledgers: systems
+                .iter()
+                .cloned()
+                .map(|system| (system, game_core::MarketLedger::default()))
+                .collect(),
+            market_energy_flows: systems
+                .iter()
+                .cloned()
+                .map(|system| (system, game_core::EnergyFlowLedger::default()))
+                .collect(),
+            global_energy_flow: game_core::GlobalEnergyFlowLedger::default(),
+            dynamics_history: game_core::AggregateDynamicsHistory {
+                stage_transitions: 1,
+                population_changes: 1,
+                ..game_core::AggregateDynamicsHistory::default()
+            },
+            reconciliation: ReconciliationReport {
+                initial: 0,
+                external_inflow: 0,
+                generated: 0,
+                burned: 0,
+                curtailed: 0,
+                expected: 0,
+                actual: 0,
+                market_to_tank: 0,
+                tank_to_market: 0,
+                market_to_energy_cargo: 0,
+                energy_cargo_to_market: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn metastability_rejects_a_fifty_percent_monotonic_decline() {
+        let summary =
+            synthetic_soak_summary(&[("test:a", 100)], &[("test:a", 50)], &[("test:a", 50)]);
+        assert!(validate_metastability(&summary, "synthetic").is_err());
+    }
+
+    #[test]
+    fn metastability_rejects_any_system_extinction() {
+        let summary = synthetic_soak_summary(
+            &[("test:a", 100), ("test:b", 1)],
+            &[("test:a", 100), ("test:b", 0)],
+            &[("test:a", 100), ("test:b", 0)],
+        );
+        assert!(validate_metastability(&summary, "synthetic").is_err());
+    }
+
+    #[test]
+    fn deterministic_comparison_rejects_equal_aggregate_different_population_maps() {
+        let baseline = synthetic_soak_summary(
+            &[("test:a", 100), ("test:b", 100)],
+            &[("test:a", 95), ("test:b", 100)],
+            &[("test:a", 95), ("test:b", 105)],
+        );
+        let comparison = synthetic_soak_summary(
+            &[("test:a", 100), ("test:b", 100)],
+            &[("test:a", 90), ("test:b", 100)],
+            &[("test:a", 90), ("test:b", 110)],
+        );
+        assert_eq!(
+            baseline.final_populations.values().sum::<u64>(),
+            comparison.final_populations.values().sum::<u64>()
+        );
+        assert!(compare_deterministic_outcomes(&baseline, &comparison, "synthetic").is_err());
+    }
+
+    #[test]
+    fn metastability_accepts_decline_then_final_stabilization_or_recovery() {
+        let summary =
+            synthetic_soak_summary(&[("test:a", 100)], &[("test:a", 80)], &[("test:a", 95)]);
+        validate_metastability(&summary, "synthetic").unwrap();
+    }
+
+    #[test]
+    fn short_system_only_and_trader_only_permutations_match_key_outcomes() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let definition = game_content::load_directory(root).unwrap();
+        let baseline = run_compact_soak(definition.clone(), 10).unwrap();
+
+        let mut systems_reversed = definition.clone();
+        systems_reversed.systems.reverse();
+        let system_outcome = run_compact_soak(systems_reversed, 10).unwrap();
+        compare_deterministic_outcomes(&baseline, &system_outcome, "system-only").unwrap();
+
+        let mut traders_reversed = definition;
+        traders_reversed.traders.reverse();
+        let trader_outcome = run_compact_soak(traders_reversed, 10).unwrap();
+        compare_deterministic_outcomes(&baseline, &trader_outcome, "trader-only").unwrap();
+    }
 
     #[test]
     fn economy_diagnostic_tick_argument_is_optional_and_validated() {

@@ -2,8 +2,8 @@
 
 use game_core::{
     BrownoutStage, ContentId, CoreError, ENERGY_ID, Energy, GameCommand, GameEvent, GameSession,
-    MarketPolicy, ReservationStatus, SeasonalTrend, route_travel_energy, ticks_for_distance,
-    travel_energy,
+    MarketPolicy, PopulationTrend, ReservationStatus, SeasonalTrend, route_travel_energy,
+    ticks_for_distance, travel_energy,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
@@ -98,6 +98,7 @@ pub struct SystemListItem {
     pub id: ContentId,
     pub name: String,
     pub coordinates: (f64, f64, f64),
+    pub population: PopulationView,
     pub energy_stock: Energy,
     pub energy_capacity: Energy,
     pub health: EnergyHealth,
@@ -105,6 +106,26 @@ pub struct SystemListItem {
     pub runway_ticks: u32,
     pub seasonal_generation: SeasonalGenerationView,
     pub connections: Vec<ConnectionView>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PopulationView {
+    pub current: u64,
+    pub reference: u64,
+    pub carrying_capacity: u64,
+    pub trend: PopulationTrend,
+    pub tier: usize,
+    pub sufficiency_average_percent: u32,
+    pub sufficiency_trajectory: Vec<u32>,
+    pub settled_changes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AggregateDynamicsView {
+    pub stage_occupancy_ticks: [u64; 4],
+    pub stage_transitions: u64,
+    pub population_changes: u64,
+    pub population_milestones: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -248,6 +269,8 @@ pub struct ApplicationView {
     pub selected_system: ContentId,
     pub selected_route: Option<RouteView>,
     pub market_energy: MarketEnergyView,
+    pub population: PopulationView,
+    pub dynamics: AggregateDynamicsView,
     pub market: Vec<MarketRow>,
     pub player: PlayerStatusView,
     pub fleet: FleetView,
@@ -487,6 +510,21 @@ fn build_view(
             id: market.system_id.clone(),
             name: market.name.clone(),
             coordinates: (market.position.x, market.position.y, market.position.z),
+            population: PopulationView {
+                current: market.population,
+                reference: market.population_state.reference,
+                carrying_capacity: market.population_state.carrying_capacity,
+                trend: market.population_state.trend,
+                tier: market.population_state.tier,
+                sufficiency_average_percent: market.population_state.sufficiency_average_percent,
+                sufficiency_trajectory: market
+                    .population_state
+                    .sufficiency_samples
+                    .iter()
+                    .copied()
+                    .collect(),
+                settled_changes: market.population_state.settled_changes,
+            },
             energy_stock: market.energy_stock,
             energy_capacity: market.energy_storage_cap,
             health: energy_health(market),
@@ -640,6 +678,29 @@ fn build_view(
                 ticks_until_turning_point: selected_market.seasonal_phase.ticks_until_turning_point,
                 next_turning_point_tick: selected_market.seasonal_phase.next_turning_point_tick,
             },
+        },
+        population: PopulationView {
+            current: selected_market.population,
+            reference: selected_market.population_state.reference,
+            carrying_capacity: selected_market.population_state.carrying_capacity,
+            trend: selected_market.population_state.trend,
+            tier: selected_market.population_state.tier,
+            sufficiency_average_percent: selected_market
+                .population_state
+                .sufficiency_average_percent,
+            sufficiency_trajectory: selected_market
+                .population_state
+                .sufficiency_samples
+                .iter()
+                .copied()
+                .collect(),
+            settled_changes: selected_market.population_state.settled_changes,
+        },
+        dynamics: AggregateDynamicsView {
+            stage_occupancy_ticks: snapshot.dynamics_history.stage_occupancy_ticks,
+            stage_transitions: snapshot.dynamics_history.stage_transitions,
+            population_changes: snapshot.dynamics_history.population_changes,
+            population_milestones: snapshot.dynamics_history.population_milestones,
         },
         market,
         player: PlayerStatusView {
@@ -873,6 +934,18 @@ fn format_event(event: &GameEvent, labels: &EventLabels) -> String {
             labels.system(system),
             from,
             to
+        ),
+        GameEvent::PopulationTierChanged {
+            system,
+            from,
+            to,
+            population,
+        } => format!(
+            "{} population milestone tier {} → {} at {}",
+            labels.system(system),
+            from,
+            to,
+            population
         ),
         GameEvent::TraderSpawned { trader, system } => format!(
             "{} entered service at {}",
@@ -1235,6 +1308,12 @@ mod tests {
         assert_eq!(initial.player.energy_value_rank, 1);
         assert_eq!(initial.player.energy_value_share_percent, 100.0);
         assert_eq!(initial.market_energy.health, EnergyHealth::Healthy);
+        assert_eq!(initial.population.current, 1);
+        assert_eq!(initial.population.carrying_capacity, 1);
+        assert_eq!(initial.population.trend, PopulationTrend::Stable);
+        assert_eq!(initial.systems[0].population, initial.population);
+        assert_eq!(initial.dynamics.population_changes, 0);
+        assert_eq!(initial.dynamics.stage_occupancy_ticks, [0; 4]);
 
         handle
             .request(AppRequest::Buy {

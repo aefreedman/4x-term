@@ -28,7 +28,7 @@
     survival_goods: ["core:energy"],
   ),
   population: (
-    static_population: true,
+    static_population: false,
     sufficiency_window: 500,
     growth_sufficiency_percent: 90,
     essential_goods: ["core:energy"],
@@ -37,7 +37,7 @@
     ],
     decline_per_thousand: 10,
     growth_per_thousand: 1,
-    logistic_scale: 1000,
+    logistic_scale: 1,
     minimum_cap: 0,
     maximum_cap: 1000000,
     tier_thresholds: [1, 5, 10],

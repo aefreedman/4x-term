@@ -109,13 +109,16 @@ Each system has a compiled base generation rate and an integer triangle-wave def
 
 ### Population, fleet, investment, and governance scaffolding
 
-Population state records current/reference population, carrying capacity, a bounded sufficiency window and sum, a checked change remainder, and growth/decline counters. Population tuning resolves authored essential goods, per-thousand tertiary-demand mappings, a fixed-point growth sufficiency gate, and strictly increasing tier thresholds. Authored decline must be five to ten times the growth rate. Future growth uses checked logistic arithmetic,
+Population is explicit runtime state with current/reference population, a supply-history carrying cap, an authored support cap, a bounded oldest-to-newest sufficiency window and sum, separate checked growth/decline remainders, trend/counter history, and tier milestones. Each post-trade tick records the minimum 0–100 sufficiency of mandatory energy delivery and authored essential/tertiary goods. The `VecDeque` moving window evicts deterministically and content cannot request more than 10,000 samples, bounding memory and per-tick history work. Its average scales the support cap; growth requires a full window, a Normal stage, and the authored average gate.
+
+Starvation decline uses `floor((population × decline_rate + remainder) / 1000)`. Recovery is five to ten times slower and uses checked logistic arithmetic,
 
 ```text
-delta = floor(population × (cap − population) × growth_rate / (cap × 1000 × scale))
+delta = floor((population × (cap − population) × growth_rate + remainder)
+              / (cap × 1000 × scale))
 ```
 
-with the remainder retained and the result capped at `cap − population`. Population remains static in the current checkpoint.
+Both paths retain their own remainder; logistic growth stores the denominator paired with its remainder and atomically rebases that fraction whenever the carrying cap changes, so an old remainder is never interpreted against a new denominator. Constructed states validate the pair before simulation starts. Growth is capped at `cap − population`, and zero population never regrows without future migration. A settled change occurs after all trade/fleet work, so the new population first affects the next tick's life-support obligation. Labor is `min(100, floor(current × 100 / reference))`; stage and labor percentages pass through the one final-carry throughput helper. Authored tertiary targets scale by current/reference population (or by the configured per-thousand rate when no base target exists) and also take effect next tick.
 
 Fleet configuration is explicitly `Fixed` or `Dynamic`. Fixed mode is a strict lifecycle bypass: trader count is stable and profitability, persistence, cooldown, spawn, retirement, and lifecycle events do not mutate. Production content uses Dynamic with an authored initial/max count, opportunity threshold/window, spawn cooldown, and retirement threshold/window.
 
@@ -137,9 +140,10 @@ The headless core executes explicit deterministic phases for the current brownou
 4. classify the brownout stage and derive the effective operating profile;
 5. execute sources and recipes with composed stage/labor throughput and operating energy;
 6. settle arrivals and funded liquidation fallback;
-7. collect and resolve automated commitments in stable order;
+7. collect and resolve automated commitments in stable order, including cargo purchase and departure;
 8. evaluate dynamic-fleet profitability, deferred retirement cleanup, opportunity persistence, and at most one funded spawn for next-tick eligibility;
-9. buy cargo, depart, advance the clock, and publish events/snapshots.
+9. record bounded energy/goods sufficiency, settle population decline/growth, labor, tertiary demand, tiers, and milestones for next-tick effect;
+10. advance the clock and publish events/snapshots.
 
 ECS iteration order is never used to choose contention winners.
 
@@ -165,6 +169,6 @@ The energy ledger separately tracks generation, life support, source/production/
 initial physical stock + recorded external inflow + generated − burned − curtailed = final physical stock
 ```
 
-The CLI supports identical-seed scarcity versus cost-aware A/B runs and reports interval activity, per-system net stock flow/storage/stage history, network stage percentages, stationary-laden traders, seasonal phase and cycle amplitudes, realized processor input cost, operating energy, output revenue, realized margin, structural processor solvency, reserves, claims, and storage. Diagnostics report active NPC fleet size, normalized unserved profitable opportunity per system, persistence, spawn/retirement totals, rolling profitability, cleanup state, and failed-liquidation ticks. Typed spawn/retire events use resolved app-log trader and system labels. It displays market↔tank and market↔energy-cargo transfer dimensions separately while excluding those internal transfers from exact external-flow reconciliation.
+The CLI supports identical-seed scarcity versus cost-aware A/B runs and reports interval activity, per-system net stock flow/storage/stage history, network stage percentages, stationary-laden traders, seasonal phase and cycle amplitudes, realized processor input cost, operating energy, output revenue, realized margin, structural processor solvency, reserves, claims, and storage. Diagnostics report active NPC fleet size, normalized unserved profitable opportunity per system, persistence, spawn/retirement totals, rolling profitability, cleanup state, and failed-liquidation ticks. They also expose population/trend/cap/tier, bounded recent sufficiency trajectory, settled changes/milestones, and aggregate stage-history score inputs. A 10,000-tick run is an explicit CLI acceptance path that enforces exact reconciliation, no system extinction or global collapse, no final aggregate ratchet below 90% of initial population, final-window trade and stage activity, a post-midpoint transition, a changed population stable over the final 100 ticks, and no final-window stationary-laden deadlock. Short deterministic tests compare system-only and trader-only insertion permutations using exact final population/stage maps, market ledgers, energy-flow/reconciliation outcomes, and aggregate dynamics; long insertion permutations are not part of routine tests. Typed spawn/retire events use resolved app-log trader and system labels. Diagnostics display market↔tank and market↔energy-cargo transfer dimensions separately while excluding those internal transfers from exact external-flow reconciliation.
 
 `--player-impact` runs two identical deterministic sessions and applies exactly one typed `RecordExternalDelivery` to the intervention session. Target, delivery tick, good, quantity, and bounded horizon are explicit CLI inputs. The core validates the full delivery before mutation, emits one recorded-delivery event, and accounts energy deliveries as external inflow in exact reconciliation. The probe reports the first target stage/population divergence or fails when none occurs within the requested horizon.

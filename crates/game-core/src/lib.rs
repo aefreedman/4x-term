@@ -2,11 +2,15 @@
 
 use bevy_ecs::prelude::*;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
 use std::fmt::{Display, Formatter};
 use thiserror::Error;
 
 pub const ENERGY_ID: &str = "core:energy";
+/// Content-facing upper bound for population sufficiency history.
+///
+/// This caps both memory use and per-tick history validation work.
+pub const MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS: u32 = 10_000;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ContentId(String);
@@ -380,16 +384,55 @@ impl Default for PopulationConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PopulationTrend {
+    Growing,
+    Declining,
+    #[default]
+    Stable,
+}
+
+impl PopulationTrend {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Growing => "growing",
+            Self::Declining => "declining",
+            Self::Stable => "stable",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LogisticGrowthCarry {
+    /// Fractional numerator retained from the previous growth calculation.
+    pub remainder: u64,
+    /// Denominator paired with `remainder`; both are rebased atomically when
+    /// carrying capacity changes.
+    pub denominator: u64,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PopulationState {
     pub current: u64,
     pub reference: u64,
+    /// The cap currently supported by the bounded supply history.
     pub carrying_capacity: u64,
-    pub sufficiency_samples: Vec<u32>,
+    /// The authored/investment-adjusted upper bound from which history derives
+    /// the current carrying capacity.
+    pub support_capacity: u64,
+    /// Oldest-to-newest fixed-point percentage samples (0..=100). Its length
+    /// is bounded by `MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS`.
+    pub sufficiency_samples: VecDeque<u32>,
     pub sufficiency_sum: u64,
-    pub change_remainder: u64,
+    pub sufficiency_average_percent: u32,
+    pub growth_carry: LogisticGrowthCarry,
+    pub decline_remainder: u64,
     pub growth_ticks: u64,
     pub decline_ticks: u64,
+    pub settled_changes: u64,
+    pub trend: PopulationTrend,
+    pub tier: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -499,6 +542,7 @@ pub struct AggregateDynamicsHistory {
     pub stage_occupancy_ticks: [u64; 4],
     pub stage_transitions: u64,
     pub population_changes: u64,
+    pub population_milestones: u64,
     pub fleet_spawns: u64,
     pub fleet_retirements: u64,
     pub investments_completed: u64,
@@ -878,10 +922,22 @@ pub fn investment_cost(shape: &InvestmentShape, level: u32) -> Result<Energy, Co
     Ok(cost)
 }
 
+fn valid_logistic_growth_carry(carry: LogisticGrowthCarry, config: &PopulationConfig) -> bool {
+    if carry.denominator == 0 {
+        return carry.remainder == 0;
+    }
+    let denominator_per_capita = u64::from(config.logistic_scale).checked_mul(1_000);
+    carry.remainder < carry.denominator
+        && denominator_per_capita.is_some_and(|unit| {
+            carry.denominator % unit == 0 && carry.denominator / unit <= config.maximum_cap
+        })
+}
+
 pub fn validate_population_config(config: &PopulationConfig) -> Result<(), CoreError> {
     let decline = u64::from(config.decline_per_thousand);
     let growth = u64::from(config.growth_per_thousand);
     if config.sufficiency_window == 0
+        || config.sufficiency_window > MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS
         || !(1..=100).contains(&config.growth_sufficiency_percent)
         || config.essential_goods.is_empty()
         || config
@@ -893,6 +949,10 @@ pub fn validate_population_config(config: &PopulationConfig) -> Result<(), CoreE
         || decline > growth.checked_mul(10).ok_or(CoreError::Overflow)?
         || config.decline_per_thousand > 1_000
         || config.logistic_scale == 0
+        || u128::from(config.maximum_cap)
+            .checked_mul(1_000)
+            .and_then(|value| value.checked_mul(u128::from(config.logistic_scale)))
+            .is_none_or(|denominator| denominator > u128::from(u64::MAX))
         || config.minimum_cap > config.maximum_cap
         || config.tier_thresholds.is_empty()
         || config.tier_thresholds[0] == 0
@@ -931,36 +991,129 @@ pub fn validate_investment_shapes(
     Ok(())
 }
 
+pub fn population_labor_percent(current: u64, reference: u64) -> Result<u32, CoreError> {
+    if reference == 0 {
+        return Err(CoreError::InvalidWorldDynamics);
+    }
+    let percent = u128::from(current)
+        .checked_mul(100)
+        .ok_or(CoreError::Overflow)?
+        / u128::from(reference);
+    u32::try_from(percent.min(100)).map_err(|_| CoreError::Overflow)
+}
+
+pub fn population_tier(population: u64, thresholds: &[u64]) -> usize {
+    thresholds
+        .iter()
+        .take_while(|threshold| population >= **threshold)
+        .count()
+}
+
+pub fn population_demand_target(
+    authored_target: u32,
+    population: u64,
+    reference: u64,
+    units_per_thousand: u32,
+) -> Result<u32, CoreError> {
+    if reference == 0 || units_per_thousand == 0 {
+        return Err(CoreError::InvalidWorldDynamics);
+    }
+    let (numerator, denominator) = if authored_target > 0 {
+        (
+            u128::from(authored_target)
+                .checked_mul(u128::from(population))
+                .ok_or(CoreError::Overflow)?,
+            u128::from(reference),
+        )
+    } else {
+        (
+            u128::from(population)
+                .checked_mul(u128::from(units_per_thousand))
+                .ok_or(CoreError::Overflow)?,
+            1_000,
+        )
+    };
+    if numerator == 0 {
+        return Ok(0);
+    }
+    let rounded = numerator
+        .checked_add(denominator - 1)
+        .ok_or(CoreError::Overflow)?
+        / denominator;
+    u32::try_from(rounded).map_err(|_| CoreError::Overflow)
+}
+
+pub fn proportional_population_delta(
+    population: u64,
+    rate_per_thousand: u32,
+    remainder: &mut u64,
+) -> Result<u64, CoreError> {
+    if rate_per_thousand == 0 || rate_per_thousand > 1_000 || *remainder >= 1_000 {
+        return Err(CoreError::InvalidWorldDynamics);
+    }
+    let numerator = u128::from(population)
+        .checked_mul(u128::from(rate_per_thousand))
+        .and_then(|value| value.checked_add(u128::from(*remainder)))
+        .ok_or(CoreError::Overflow)?;
+    let next_remainder = u64::try_from(numerator % 1_000).map_err(|_| CoreError::Overflow)?;
+    let delta = u64::try_from(numerator / 1_000)
+        .map_err(|_| CoreError::Overflow)?
+        .min(population);
+    *remainder = next_remainder;
+    Ok(delta)
+}
+
 pub fn logistic_population_delta(
     population: u64,
     carrying_capacity: u64,
     rate_per_thousand: u32,
     scale: u32,
-    remainder: &mut u64,
+    carry: &mut LogisticGrowthCarry,
 ) -> Result<u64, CoreError> {
-    if scale == 0 || carrying_capacity == 0 {
+    if scale == 0
+        || carrying_capacity == 0
+        || (carry.denominator == 0 && carry.remainder != 0)
+        || (carry.denominator != 0 && carry.remainder >= carry.denominator)
+    {
         return Err(CoreError::InvalidWorldDynamics);
     }
     let denominator = u128::from(carrying_capacity)
         .checked_mul(1_000)
         .and_then(|value| value.checked_mul(u128::from(scale)))
         .ok_or(CoreError::Overflow)?;
-    if u128::from(*remainder) >= denominator {
-        return Err(CoreError::InvalidWorldDynamics);
-    }
+    let denominator = u64::try_from(denominator).map_err(|_| CoreError::Overflow)?;
+    let rebased_remainder = if carry.denominator == 0 || carry.denominator == denominator {
+        carry.remainder
+    } else {
+        u64::try_from(
+            u128::from(carry.remainder)
+                .checked_mul(u128::from(denominator))
+                .ok_or(CoreError::Overflow)?
+                / u128::from(carry.denominator),
+        )
+        .map_err(|_| CoreError::Overflow)?
+    };
     if population >= carrying_capacity {
+        *carry = LogisticGrowthCarry {
+            remainder: rebased_remainder,
+            denominator,
+        };
         return Ok(0);
     }
     let numerator = u128::from(population)
         .checked_mul(u128::from(carrying_capacity - population))
         .and_then(|value| value.checked_mul(u128::from(rate_per_thousand)))
-        .and_then(|value| value.checked_add(u128::from(*remainder)))
+        .and_then(|value| value.checked_add(u128::from(rebased_remainder)))
         .ok_or(CoreError::Overflow)?;
-    let next_remainder = u64::try_from(numerator % denominator).map_err(|_| CoreError::Overflow)?;
-    let delta = u64::try_from(numerator / denominator)
+    let next_carry = LogisticGrowthCarry {
+        remainder: u64::try_from(numerator % u128::from(denominator))
+            .map_err(|_| CoreError::Overflow)?,
+        denominator,
+    };
+    let delta = u64::try_from(numerator / u128::from(denominator))
         .map_err(|_| CoreError::Overflow)?
         .min(carrying_capacity - population);
-    *remainder = next_remainder;
+    *carry = next_carry;
     Ok(delta)
 }
 
@@ -1142,7 +1295,11 @@ pub enum ThroughputScheduleKey {
 #[derive(Component, Clone, Debug)]
 pub struct Market {
     pub inventory: BTreeMap<ContentId, u64>,
+    /// Effective demand targets for the current population.
     pub targets: BTreeMap<ContentId, u32>,
+    /// Immutable authored targets used when population-mapped demand is
+    /// recomputed for the next tick.
+    pub authored_targets: BTreeMap<ContentId, u32>,
     pub recipes: Vec<ContentId>,
     pub sources: Vec<SourceDefinition>,
     pub cost_basis: BTreeMap<ContentId, CostBasis>,
@@ -1591,6 +1748,12 @@ pub enum GameEvent {
         system: ContentId,
         from: u64,
         to: u64,
+    },
+    PopulationTierChanged {
+        system: ContentId,
+        from: usize,
+        to: usize,
+        population: u64,
     },
     TraderSpawned {
         trader: ContentId,
@@ -2117,11 +2280,8 @@ impl GameSession {
                 system.seasonal_generation.base_output = system.energy_output_per_tick;
                 system.seasonal_generation.current_effective_output = system.energy_output_per_tick;
             }
-            if world
-                .resource::<EconomyConfig>()
-                .population
-                .static_population
-            {
+            let population_config = world.resource::<EconomyConfig>().population.clone();
+            if population_config.static_population {
                 system.population_state.current = system.population;
                 system.population_state.reference = system.population.max(1);
                 system.population_state.carrying_capacity = system
@@ -2129,6 +2289,14 @@ impl GameSession {
                     .carrying_capacity
                     .max(system.population);
             }
+            if system.population_state.support_capacity == 0 {
+                system.population_state.support_capacity = system
+                    .population_state
+                    .carrying_capacity
+                    .max(system.population);
+            }
+            system.population_state.tier =
+                population_tier(system.population, &population_config.tier_thresholds);
             system.seasonal_generation.validate()?;
             let initial_effective_output = system.seasonal_generation.effective_output_at(0)?;
             system.seasonal_generation.current_effective_output = initial_effective_output;
@@ -2138,6 +2306,41 @@ impl GameSession {
                 || system.seasonal_generation.base_output != system.energy_output_per_tick
                 || system.population_state.current != system.population
                 || system.population_state.reference == 0
+                || system.population_state.support_capacity < population_config.minimum_cap
+                || system.population_state.support_capacity > population_config.maximum_cap
+                || system.population_state.carrying_capacity
+                    > system.population_state.support_capacity
+                || system.population_state.sufficiency_samples.len()
+                    > usize::try_from(population_config.sufficiency_window)
+                        .map_err(|_| CoreError::Overflow)?
+                || system
+                    .population_state
+                    .sufficiency_samples
+                    .iter()
+                    .any(|sample| *sample > 100)
+                || system.population_state.sufficiency_sum
+                    != system
+                        .population_state
+                        .sufficiency_samples
+                        .iter()
+                        .map(|sample| u64::from(*sample))
+                        .sum::<u64>()
+                || system.population_state.sufficiency_average_percent
+                    != if system.population_state.sufficiency_samples.is_empty() {
+                        0
+                    } else {
+                        u32::try_from(
+                            system.population_state.sufficiency_sum
+                                / u64::try_from(system.population_state.sufficiency_samples.len())
+                                    .map_err(|_| CoreError::Overflow)?,
+                        )
+                        .map_err(|_| CoreError::Overflow)?
+                    }
+                || system.population_state.decline_remainder >= 1_000
+                || !valid_logistic_growth_carry(
+                    system.population_state.growth_carry,
+                    &population_config,
+                )
             {
                 return Err(CoreError::InvalidPhysicalDefinition);
             }
@@ -2201,6 +2404,7 @@ impl GameSession {
                 system.policy,
                 Market {
                     inventory: system.inventory,
+                    authored_targets: system.targets.clone(),
                     targets: system.targets,
                     recipes: system.recipes,
                     sources: system.sources,
@@ -2430,6 +2634,7 @@ impl GameSession {
         self.collect_automated_trader_requests()?;
         self.resolve_pending_trade_requests()?;
         self.evaluate_dynamic_fleet()?;
+        self.update_populations()?;
         self.world.resource_mut::<Clock>().0 =
             self.tick().checked_add(1).ok_or(CoreError::Overflow)?;
         let tick = self.tick();
@@ -3685,7 +3890,10 @@ impl GameSession {
                 next.operating_profile = MarketOperatingProfile {
                     stage: next_stage,
                     throughput_percent: config.throughput_percent(next_stage),
-                    labor_percent: 100,
+                    labor_percent: population_labor_percent(
+                        next.population_state.current,
+                        next.population_state.reference,
+                    )?,
                     investment_allowed: next_stage < BrownoutStage::Emergency,
                 };
                 Ok((entity, id.0.clone(), from, next_stage, ticks_of_burn, next))
@@ -3727,6 +3935,226 @@ impl GameSession {
             .resource_mut::<EventBuffer>()
             .0
             .extend(transition_events);
+        Ok(())
+    }
+
+    fn update_populations(&mut self) -> Result<(), CoreError> {
+        let config = self.world.resource::<EconomyConfig>().population.clone();
+        if config.static_population {
+            return Ok(());
+        }
+        let life_per_capita = self
+            .world
+            .resource::<EconomyConfig>()
+            .life_support_burn_per_capita;
+        let energy_id = ContentId::new(ENERGY_ID).expect("constant energy id");
+        let window = usize::try_from(config.sufficiency_window).map_err(|_| CoreError::Overflow)?;
+        let mut updates = self
+            .world
+            .query::<(Entity, &StableId, &Market)>()
+            .iter(&self.world)
+            .map(|(entity, id, market)| {
+                let obligation = life_per_capita.checked_mul(market.population)?;
+                let energy_sufficiency = if obligation.0 == 0 {
+                    100
+                } else {
+                    let supplied = obligation.checked_sub(market.last_life_support_unsupplied)?;
+                    u32::try_from(
+                        i128::from(supplied.0)
+                            .checked_mul(100)
+                            .ok_or(CoreError::Overflow)?
+                            / i128::from(obligation.0),
+                    )
+                    .map_err(|_| CoreError::Overflow)?
+                    .min(100)
+                };
+                let mut sample = energy_sufficiency;
+                let mut sampled_goods = config.essential_goods.clone();
+                sampled_goods.extend(config.tertiary_demand_per_thousand.keys().cloned());
+                sampled_goods.remove(&energy_id);
+                for good in sampled_goods {
+                    let authored = market.authored_targets.get(&good).copied().unwrap_or(0);
+                    let target = if let Some(rate) = config.tertiary_demand_per_thousand.get(&good)
+                    {
+                        population_demand_target(
+                            authored,
+                            market.population,
+                            market.population_state.reference,
+                            *rate,
+                        )?
+                    } else {
+                        authored
+                    };
+                    if target == 0 {
+                        continue;
+                    }
+                    let stock = market.inventory.get(&good).copied().unwrap_or(0);
+                    let percent = u32::try_from(
+                        u128::from(stock)
+                            .checked_mul(100)
+                            .ok_or(CoreError::Overflow)?
+                            / u128::from(target),
+                    )
+                    .unwrap_or(u32::MAX)
+                    .min(100);
+                    sample = sample.min(percent);
+                }
+
+                let mut next = market.clone();
+                next.population_state.sufficiency_samples.push_back(sample);
+                next.population_state.sufficiency_sum = next
+                    .population_state
+                    .sufficiency_sum
+                    .checked_add(u64::from(sample))
+                    .ok_or(CoreError::Overflow)?;
+                if next.population_state.sufficiency_samples.len() > window {
+                    let evicted = next
+                        .population_state
+                        .sufficiency_samples
+                        .pop_front()
+                        .expect("window overflow guarantees an oldest sample");
+                    next.population_state.sufficiency_sum = next
+                        .population_state
+                        .sufficiency_sum
+                        .checked_sub(u64::from(evicted))
+                        .ok_or(CoreError::Overflow)?;
+                }
+                let sample_count = u64::try_from(next.population_state.sufficiency_samples.len())
+                    .map_err(|_| CoreError::Overflow)?;
+                next.population_state.sufficiency_average_percent =
+                    u32::try_from(next.population_state.sufficiency_sum / sample_count)
+                        .map_err(|_| CoreError::Overflow)?;
+                let history_cap = u128::from(next.population_state.support_capacity)
+                    .checked_mul(u128::from(
+                        next.population_state.sufficiency_average_percent,
+                    ))
+                    .ok_or(CoreError::Overflow)?
+                    / 100;
+                next.population_state.carrying_capacity = u64::try_from(history_cap)
+                    .map_err(|_| CoreError::Overflow)?
+                    .clamp(config.minimum_cap, config.maximum_cap)
+                    .min(next.population_state.support_capacity);
+
+                let from_population = next.population;
+                let from_tier = next.population_state.tier;
+                next.population_state.trend = PopulationTrend::Stable;
+                if next.brownout.stage == BrownoutStage::Starvation && next.population > 0 {
+                    let decline = proportional_population_delta(
+                        next.population,
+                        config.decline_per_thousand,
+                        &mut next.population_state.decline_remainder,
+                    )?;
+                    next.population_state.decline_ticks = next
+                        .population_state
+                        .decline_ticks
+                        .checked_add(1)
+                        .ok_or(CoreError::Overflow)?;
+                    if decline > 0 {
+                        next.population = next
+                            .population
+                            .checked_sub(decline)
+                            .ok_or(CoreError::Overflow)?;
+                        next.population_state.trend = PopulationTrend::Declining;
+                    }
+                } else if next.population > 0
+                    && next.brownout.stage == BrownoutStage::Normal
+                    && next.population_state.sufficiency_samples.len() == window
+                    && next.population_state.sufficiency_average_percent
+                        >= config.growth_sufficiency_percent
+                    && next.population < next.population_state.carrying_capacity
+                {
+                    let growth = logistic_population_delta(
+                        next.population,
+                        next.population_state.carrying_capacity,
+                        config.growth_per_thousand,
+                        config.logistic_scale,
+                        &mut next.population_state.growth_carry,
+                    )?;
+                    next.population_state.growth_ticks = next
+                        .population_state
+                        .growth_ticks
+                        .checked_add(1)
+                        .ok_or(CoreError::Overflow)?;
+                    if growth > 0 {
+                        next.population = next
+                            .population
+                            .checked_add(growth)
+                            .ok_or(CoreError::Overflow)?
+                            .min(next.population_state.carrying_capacity);
+                        next.population_state.trend = PopulationTrend::Growing;
+                    }
+                }
+                next.population_state.current = next.population;
+                let changed = next.population != from_population;
+                if changed {
+                    next.population_state.settled_changes = next
+                        .population_state
+                        .settled_changes
+                        .checked_add(1)
+                        .ok_or(CoreError::Overflow)?;
+                }
+                let to_tier = population_tier(next.population, &config.tier_thresholds);
+                next.population_state.tier = to_tier;
+                next.operating_profile.labor_percent =
+                    population_labor_percent(next.population, next.population_state.reference)?;
+                for (good, rate) in &config.tertiary_demand_per_thousand {
+                    let authored = next.authored_targets.get(good).copied().unwrap_or(0);
+                    let target = population_demand_target(
+                        authored,
+                        next.population,
+                        next.population_state.reference,
+                        *rate,
+                    )?;
+                    next.targets.insert(good.clone(), target);
+                }
+                Ok((
+                    id.0.clone(),
+                    entity,
+                    next,
+                    from_population,
+                    from_tier,
+                    to_tier,
+                    changed,
+                ))
+            })
+            .collect::<Result<Vec<_>, CoreError>>()?;
+        updates.sort_by(|left, right| left.0.cmp(&right.0));
+
+        let population_changes = u64::try_from(updates.iter().filter(|row| row.6).count())
+            .map_err(|_| CoreError::Overflow)?;
+        let milestones = u64::try_from(updates.iter().filter(|row| row.4 != row.5).count())
+            .map_err(|_| CoreError::Overflow)?;
+        let mut history = self.world.resource::<AggregateDynamicsHistory>().clone();
+        history.population_changes = history
+            .population_changes
+            .checked_add(population_changes)
+            .ok_or(CoreError::Overflow)?;
+        history.population_milestones = history
+            .population_milestones
+            .checked_add(milestones)
+            .ok_or(CoreError::Overflow)?;
+        let mut events = Vec::new();
+        for (system, entity, next, from, from_tier, to_tier, changed) in updates {
+            let population = next.population;
+            *self.world.get_mut::<Market>(entity).unwrap() = next;
+            if changed {
+                events.push(GameEvent::PopulationChanged {
+                    system: system.clone(),
+                    from,
+                    to: population,
+                });
+            }
+            if from_tier != to_tier {
+                events.push(GameEvent::PopulationTierChanged {
+                    system,
+                    from: from_tier,
+                    to: to_tier,
+                    population,
+                });
+            }
+        }
+        *self.world.resource_mut::<AggregateDynamicsHistory>() = history;
+        self.world.resource_mut::<EventBuffer>().0.extend(events);
         Ok(())
     }
 
@@ -7068,13 +7496,13 @@ mod tests {
         );
         assert_eq!(carry, 0);
 
-        let mut population_remainder = 0;
+        let mut population_carry = LogisticGrowthCarry::default();
         assert_eq!(
-            logistic_population_delta(90, 100, 1_000, 1, &mut population_remainder).unwrap(),
+            logistic_population_delta(90, 100, 1_000, 1, &mut population_carry).unwrap(),
             9
         );
         assert_eq!(
-            logistic_population_delta(100, 100, 1_000, 1, &mut population_remainder).unwrap(),
+            logistic_population_delta(100, 100, 1_000, 1, &mut population_carry).unwrap(),
             0
         );
         assert_eq!(update_opportunity_persistence(4, 10, 10).unwrap(), 5);
@@ -7574,27 +8002,326 @@ mod tests {
     }
 
     #[test]
-    fn logistic_population_delta_rejects_invalid_inputs_without_mutating_remainder() {
-        let mut remainder = 17;
+    fn population_window_accepts_documented_maximum_and_rejects_first_value_above_it() {
+        let mut config = PopulationConfig::default();
+        config.sufficiency_window = MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS;
+        assert_eq!(validate_population_config(&config), Ok(()));
+        config.sufficiency_window = MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS + 1;
         assert_eq!(
-            logistic_population_delta(10, 100, 1, 0, &mut remainder),
+            validate_population_config(&config),
             Err(CoreError::InvalidWorldDynamics)
         );
-        assert_eq!(remainder, 17);
+    }
 
-        let mut invalid_remainder = 100_000;
+    #[test]
+    fn constructed_population_state_rejects_an_unpaired_growth_remainder() {
+        let mut invalid = definition();
+        invalid.systems[0].population_state.growth_carry = LogisticGrowthCarry {
+            remainder: 1,
+            denominator: 3,
+        };
+        assert!(matches!(
+            GameSession::new(invalid),
+            Err(CoreError::InvalidPhysicalDefinition)
+        ));
+    }
+
+    #[test]
+    fn logistic_population_delta_rejects_invalid_inputs_without_mutating_carry() {
+        let mut carry = LogisticGrowthCarry {
+            remainder: 17,
+            denominator: 100_000,
+        };
         assert_eq!(
-            logistic_population_delta(10, 100, 1, 1, &mut invalid_remainder),
+            logistic_population_delta(10, 100, 1, 0, &mut carry),
             Err(CoreError::InvalidWorldDynamics)
         );
-        assert_eq!(invalid_remainder, 100_000);
-
-        let mut overflow_remainder = 23;
         assert_eq!(
-            logistic_population_delta(u64::MAX / 2, u64::MAX, u32::MAX, 1, &mut overflow_remainder),
+            carry,
+            LogisticGrowthCarry {
+                remainder: 17,
+                denominator: 100_000,
+            }
+        );
+
+        let mut invalid_carry = LogisticGrowthCarry {
+            remainder: 100_000,
+            denominator: 100_000,
+        };
+        let before = invalid_carry;
+        assert_eq!(
+            logistic_population_delta(10, 100, 1, 1, &mut invalid_carry),
+            Err(CoreError::InvalidWorldDynamics)
+        );
+        assert_eq!(invalid_carry, before);
+
+        let mut overflow_carry = LogisticGrowthCarry {
+            remainder: 23,
+            denominator: 1_000,
+        };
+        let before = overflow_carry;
+        assert_eq!(
+            logistic_population_delta(u64::MAX / 2, u64::MAX, u32::MAX, 1, &mut overflow_carry),
             Err(CoreError::Overflow)
         );
-        assert_eq!(overflow_remainder, 23);
+        assert_eq!(overflow_carry, before);
+    }
+
+    #[test]
+    fn logistic_growth_carry_rebases_atomically_across_capacity_changes() {
+        let mut carry = LogisticGrowthCarry {
+            remainder: 50_000,
+            denominator: 100_000,
+        };
+        assert_eq!(
+            logistic_population_delta(5, 10, 1, 1, &mut carry).unwrap(),
+            0,
+            "a downward cap change accepts an old remainder larger than the new denominator"
+        );
+        assert_eq!(carry.denominator, 10_000);
+        assert_eq!(carry.remainder, 5_025);
+
+        assert_eq!(
+            logistic_population_delta(5, 200, 1, 1, &mut carry).unwrap(),
+            0,
+            "an upward cap change preserves the rebased fractional carry"
+        );
+        assert_eq!(carry.denominator, 200_000);
+        assert_eq!(carry.remainder, 101_475);
+    }
+
+    #[test]
+    fn population_helpers_cover_rates_remainders_caps_and_zero() {
+        assert_eq!(population_labor_percent(0, 10).unwrap(), 0);
+        assert_eq!(population_labor_percent(5, 10).unwrap(), 50);
+        assert_eq!(population_labor_percent(20, 10).unwrap(), 100);
+        assert_eq!(population_demand_target(60, 4, 8, 1).unwrap(), 30);
+        assert_eq!(population_demand_target(0, 1, 1, 1).unwrap(), 1);
+        assert_eq!(population_tier(0, &[1, 5, 10]), 0);
+        assert_eq!(population_tier(5, &[1, 5, 10]), 2);
+
+        let mut decline_remainder = 0;
+        let declines = (0..100)
+            .map(|_| proportional_population_delta(1, 10, &mut decline_remainder).unwrap())
+            .sum::<u64>();
+        assert_eq!(
+            declines, 1,
+            "tiny populations progress through carried decline"
+        );
+        assert_eq!(decline_remainder, 0);
+        let mut zero_remainder = 0;
+        assert_eq!(
+            proportional_population_delta(0, 10, &mut zero_remainder).unwrap(),
+            0,
+            "an empty market stays empty"
+        );
+
+        let mut growth_carry = LogisticGrowthCarry::default();
+        let growth = (0..2)
+            .map(|_| logistic_population_delta(10, 20, 100, 1, &mut growth_carry).unwrap())
+            .sum::<u64>();
+        assert_eq!(growth, 1);
+        assert_eq!(growth_carry.remainder, 0);
+        let mut cap_carry = LogisticGrowthCarry::default();
+        assert_eq!(
+            (0..2)
+                .map(|_| logistic_population_delta(19, 20, 1_000, 1, &mut cap_carry).unwrap())
+                .sum::<u64>(),
+            1
+        );
+        assert_eq!(
+            logistic_population_delta(20, 20, 1_000, 1, &mut cap_carry).unwrap(),
+            0,
+            "logistic growth never overshoots its cap"
+        );
+    }
+
+    #[test]
+    fn moving_sufficiency_window_gates_slow_growth_and_evicts_oldest() {
+        let mut d = definition();
+        d.economy.population.static_population = false;
+        d.economy.population.sufficiency_window = 2;
+        d.economy.population.essential_goods = BTreeSet::from([id(ENERGY_ID)]);
+        d.economy.population.tertiary_demand_per_thousand.clear();
+        d.economy.population.decline_per_thousand = 500;
+        d.economy.population.growth_per_thousand = 100;
+        d.economy.population.logistic_scale = 1;
+        d.systems[0].population = 10;
+        d.systems[0].population_state = PopulationState {
+            current: 10,
+            reference: 10,
+            carrying_capacity: 20,
+            support_capacity: 20,
+            ..PopulationState::default()
+        };
+        let mut session = GameSession::new(d).unwrap();
+        let entity = session.market_entity(&id("core:s0")).unwrap();
+
+        session.update_populations().unwrap();
+        assert_eq!(session.world.get::<Market>(entity).unwrap().population, 10);
+        assert_eq!(
+            session
+                .world
+                .get::<Market>(entity)
+                .unwrap()
+                .population_state
+                .sufficiency_samples,
+            VecDeque::from([100])
+        );
+        session.update_populations().unwrap();
+        assert_eq!(session.world.get::<Market>(entity).unwrap().population, 10);
+        session.update_populations().unwrap();
+        let state = &session
+            .world
+            .get::<Market>(entity)
+            .unwrap()
+            .population_state;
+        assert_eq!(
+            state.current, 11,
+            "growth waits for a full long-average window"
+        );
+        assert_eq!(state.sufficiency_samples, VecDeque::from([100, 100]));
+        assert_eq!(state.sufficiency_sum, 200);
+
+        {
+            let mut market = session.world.get_mut::<Market>(entity).unwrap();
+            market.last_life_support_unsupplied = Energy(11);
+        }
+        session.update_populations().unwrap();
+        let state = &session
+            .world
+            .get::<Market>(entity)
+            .unwrap()
+            .population_state;
+        assert_eq!(state.sufficiency_samples, VecDeque::from([100, 0]));
+        assert_eq!(state.sufficiency_sum, 100);
+        assert_eq!(state.sufficiency_average_percent, 50);
+        assert_eq!(state.trend, PopulationTrend::Stable);
+    }
+
+    #[test]
+    fn population_change_drives_next_tick_burn_labor_and_tertiary_demand() {
+        let mut d = definition();
+        d.economy.population.static_population = false;
+        d.economy.population.sufficiency_window = 2;
+        d.economy.population.essential_goods = BTreeSet::from([id(ENERGY_ID)]);
+        d.economy
+            .population
+            .tertiary_demand_per_thousand
+            .insert(id("core:ore"), 1_000);
+        d.economy.population.decline_per_thousand = 100;
+        d.economy.population.growth_per_thousand = 20;
+        d.economy.population.logistic_scale = 1;
+        d.economy.population.tier_thresholds = vec![1, 50, 100];
+        d.systems[0].population = 100;
+        d.systems[0].population_state = PopulationState {
+            current: 100,
+            reference: 100,
+            carrying_capacity: 120,
+            support_capacity: 120,
+            ..PopulationState::default()
+        };
+        d.systems[0].inventory.insert(id(ENERGY_ID), 0);
+        d.systems[0].inventory.insert(id("core:ore"), 100);
+        d.systems[0].targets.insert(id("core:ore"), 100);
+        d.systems[0].sources = vec![SourceDefinition {
+            good: id("core:ore"),
+            quantity_per_tick: 100,
+            extraction_energy: Energy::ZERO,
+        }];
+        d.systems[0].energy_output_per_tick = Energy::ZERO;
+        d.systems[0].seasonal_generation.base_output = Energy::ZERO;
+        d.systems[0].seasonal_generation.current_effective_output = Energy::ZERO;
+        let mut session = GameSession::new(d).unwrap();
+        let entity = session.market_entity(&id("core:s0")).unwrap();
+        {
+            let mut market = session.world.get_mut::<Market>(entity).unwrap();
+            market.brownout.stage = BrownoutStage::Starvation;
+            market.operating_profile.stage = BrownoutStage::Starvation;
+            market.last_life_support_unsupplied = Energy(100);
+        }
+        session.update_populations().unwrap();
+        {
+            let market = session.world.get::<Market>(entity).unwrap();
+            assert_eq!(market.population, 90);
+            assert_eq!(market.population_state.current, 90);
+            assert_eq!(market.operating_profile.labor_percent, 90);
+            assert_eq!(market.targets[&id("core:ore")], 90);
+        }
+
+        {
+            let mut market = session.world.get_mut::<Market>(entity).unwrap();
+            market.seasonal_generation.base_output = Energy(1_000);
+            market.energy_output_per_tick = Energy(1_000);
+            market.brownout.stage = BrownoutStage::Normal;
+            market.brownout.entered_at_tick = 0;
+        }
+        session.step().unwrap();
+        let market = session.world.get::<Market>(entity).unwrap();
+        assert_eq!(market.energy_flow.life_support_burned, Energy(90));
+        assert_eq!(market.operating_profile.labor_percent, 90);
+        assert_eq!(market.targets[&id("core:ore")], 90);
+        assert_eq!(market.inventory[&id("core:ore")], 145);
+        assert_eq!(market.brownout.stage, BrownoutStage::Throttled);
+    }
+
+    #[test]
+    fn population_updates_are_atomic_and_insertion_order_invariant() {
+        let mut d = definition();
+        d.economy.population.static_population = false;
+        d.economy.population.sufficiency_window = 1;
+        d.economy.population.essential_goods = BTreeSet::from([id(ENERGY_ID)]);
+        d.economy.population.tertiary_demand_per_thousand.clear();
+        d.economy.population.decline_per_thousand = 10;
+        d.economy.population.growth_per_thousand = 1;
+        for system in &mut d.systems {
+            system.population = 10;
+            system.population_state = PopulationState {
+                current: 10,
+                reference: 10,
+                carrying_capacity: 10,
+                support_capacity: 10,
+                ..PopulationState::default()
+            };
+        }
+        let mut reversed = d.clone();
+        reversed.systems.reverse();
+        let mut left = GameSession::new(d).unwrap();
+        let mut right = GameSession::new(reversed).unwrap();
+        for _ in 0..100 {
+            left.step().unwrap();
+            right.step().unwrap();
+            left.drain_events();
+            right.drain_events();
+        }
+        let left_population = left
+            .snapshot()
+            .markets
+            .into_iter()
+            .map(|market| (market.system_id, market.population_state))
+            .collect::<Vec<_>>();
+        let right_population = right
+            .snapshot()
+            .markets
+            .into_iter()
+            .map(|market| (market.system_id, market.population_state))
+            .collect::<Vec<_>>();
+        assert_eq!(left_population, right_population);
+
+        let entity = left.market_entity(&id("core:s0")).unwrap();
+        {
+            let mut market = left.world.get_mut::<Market>(entity).unwrap();
+            market.brownout.stage = BrownoutStage::Starvation;
+            market.last_life_support_unsupplied = Energy(10);
+            market.population_state.decline_remainder = 990;
+        }
+        left.world
+            .resource_mut::<AggregateDynamicsHistory>()
+            .population_changes = u64::MAX;
+        let before = format!("{:?}", left.snapshot());
+        assert_eq!(left.update_populations(), Err(CoreError::Overflow));
+        assert_eq!(format!("{:?}", left.snapshot()), before);
+        assert!(left.drain_events().is_empty());
     }
 
     #[test]

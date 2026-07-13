@@ -123,7 +123,7 @@
       targets: [(good: "frontier:industrial_machinery", quantity: 70), (good: "frontier:reactor_assemblies", quantity: 40), (good: "core:energy", quantity: 3500)],
       recipes: ["frontier:orbital_shipyard"], sources: [],
       star_luminosity: 20, collector_efficiency: 500,
-      energy_storage_cap: 5000, population: 8,
+      energy_storage_cap: 5000, population: 12,
       seasonal: (amplitude_percent: 50, period_ticks: 200, phase_ticks: 150),
       policy: (operating_reserve_ticks: Some(2)),),
     (system: "frontier:system_20", starting_energy: 1200,

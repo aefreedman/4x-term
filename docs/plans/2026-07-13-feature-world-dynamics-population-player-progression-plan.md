@@ -285,19 +285,19 @@ Validation:
 
 ### Phase 5: Population Hysteresis and Metastability Soak
 
-- [ ] Refactor static market population into explicit runtime population/history state while preserving the public snapshot value.
-- [ ] Record deterministic energy/goods sufficiency samples in a bounded moving window.
-- [ ] Implement fast Starvation decline and 5–10x slower long-average-gated logistic growth with remainder carry and checked cap updates.
-- [ ] Scale life-support burn, labor/throughput, and authored tertiary demand through shared population helpers.
-- [ ] Expose current population, trend, cap/tier, and sampled trajectory in app/TUI/CLI views.
-- [ ] Add population milestones and aggregate stage history for governor score inputs.
-- [ ] Add the 10,000-tick unattended metastability harness after ladder, seasons, and dynamic fleet are enabled.
+- [x] Refactor static market population into explicit runtime population/history state while preserving the public snapshot value.
+- [x] Record deterministic energy/goods sufficiency samples in a bounded moving window.
+- [x] Implement fast Starvation decline and 5–10x slower long-average-gated logistic growth with remainder carry and checked cap updates.
+- [x] Scale life-support burn, labor/throughput, and authored tertiary demand through shared population helpers.
+- [x] Expose current population, trend, cap/tier, and sampled trajectory in app/TUI/CLI views.
+- [x] Add population milestones and aggregate stage history for governor score inputs.
+- [x] Add the 10,000-tick unattended metastability harness after ladder, seasons, and dynamic fleet are enabled.
 
 Validation:
-- [ ] Unit tests cover decline/growth ratios, moving-window initialization/eviction, no instantaneous recovery, logistic no-overshoot, tiny-population remainder progress, zero-population behavior, and insertion-order determinism.
-- [ ] Coupling tests prove population changes consistently alter next-tick burn, labor throughput, and tertiary demand without partial mutation, and confirm production and diagnostics use the same single-carry composition when labor and stage modifiers are both active.
-- [ ] The 10,000-tick seeded soak has no tick error or accounting mismatch, no global population collapse, continued trade/stage activity in the final window, at least one post-midpoint stage transition, and at least one system settled at a population different from its initial value.
-- [ ] Compare multiple fixed seeds or content permutations before accepting tuning so one lucky run does not conceal a population ratchet.
+- [x] Unit tests cover decline/growth ratios, moving-window initialization/eviction, no instantaneous recovery, logistic no-overshoot, tiny-population remainder progress, zero-population behavior, and insertion-order determinism.
+- [x] Coupling tests prove population changes consistently alter next-tick burn, labor throughput, and tertiary demand without partial mutation, and confirm production and diagnostics use the same single-carry composition when labor and stage modifiers are both active.
+- [x] The 10,000-tick seeded soak has no tick error or accounting mismatch, no global population collapse, continued trade/stage activity in the final window, at least one post-midpoint stage transition, and at least one system settled at a population different from its initial value.
+- [x] Compare multiple fixed seeds or content permutations before accepting tuning so one lucky run does not conceal a population ratchet.
 
 ### Phase 6: Investments, Governor Commands, and UI
 
