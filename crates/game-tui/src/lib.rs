@@ -331,13 +331,16 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
     render_player(frame, bottom[0], view, ui);
     render_events(frame, bottom[1], view, ui);
     let controls = format!(
-        "{} tick {} | Qty {} (n edit) | Space pause/run | s step | r rate | b buy | x sell | Enter travel | ? help | Tab focus | q quit {}",
+        "{} tick {} | Fleet {} opp {} ({}) | Qty {} (n edit) | Space pause/run | s step | r rate | b buy | x sell | Enter travel | ? help | Tab focus | q quit {}",
         if view.run_state == RunState::Paused {
             "PAUSED"
         } else {
             "RUNNING"
         },
         view.tick,
+        view.fleet.active_npcs,
+        view.fleet.normalized_unserved_opportunity,
+        view.fleet.opportunity_persistence,
         ui.trade_quantity,
         if ui.message.is_empty() {
             String::new()
@@ -893,6 +896,7 @@ mod tests {
                 runway_jumps: Some(5),
                 traveling: false,
             },
+            fleet: game_app::FleetView::default(),
             events: vec![],
         }
     }

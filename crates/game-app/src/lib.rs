@@ -230,6 +230,15 @@ pub struct PlayerStatusView {
     pub traveling: bool,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FleetView {
+    pub active_npcs: usize,
+    pub normalized_unserved_opportunity: u64,
+    pub opportunity_persistence: u32,
+    pub total_spawns: u64,
+    pub total_retirements: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct ApplicationView {
     pub tick: u64,
@@ -241,6 +250,7 @@ pub struct ApplicationView {
     pub market_energy: MarketEnergyView,
     pub market: Vec<MarketRow>,
     pub player: PlayerStatusView,
+    pub fleet: FleetView,
     pub events: Vec<String>,
 }
 
@@ -687,6 +697,17 @@ fn build_view(
             route_energy_required,
             runway_jumps,
             traveling: player.travel.is_some(),
+        },
+        fleet: FleetView {
+            active_npcs: snapshot
+                .traders
+                .iter()
+                .filter(|trader| !trader.player)
+                .count(),
+            normalized_unserved_opportunity: snapshot.fleet.normalized_unserved_opportunity,
+            opportunity_persistence: snapshot.fleet.opportunity_persistence,
+            total_spawns: snapshot.dynamics_history.fleet_spawns,
+            total_retirements: snapshot.dynamics_history.fleet_retirements,
         },
         events: events.iter().cloned().collect(),
     }

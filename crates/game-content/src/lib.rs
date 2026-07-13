@@ -1,14 +1,14 @@
 //! RON loading, validation, and compilation into format-independent core definitions.
 
 use game_core::{
-    BrownoutConfig, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetDynamics, FleetMode,
-    GameDefinition, GoodAmount, GoodCategory, GoodDefinition, Governance, InvestmentKind,
-    InvestmentPolicy, InvestmentShape, LiquidationTraderCapability, MarketAuthority, MarketPolicy,
-    PopulationConfig, PopulationState, Position3, PricingMode, RecipeDefinition, RecipeLayer,
-    RecipeOutput, RefuelPolicy, SeasonalGenerationState, SourceDefinition, SystemDefinition,
-    SystemGraph, TraderDefinition, compute_protected_liquidation_budget, route_travel_energy,
-    scaled_source_output, ticks_for_distance, validate_investment_shapes,
-    validate_population_config,
+    BrownoutConfig, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetArchetype, FleetDynamics,
+    FleetMode, GameDefinition, GoodAmount, GoodCategory, GoodDefinition, Governance,
+    InvestmentKind, InvestmentPolicy, InvestmentShape, LiquidationTraderCapability,
+    MarketAuthority, MarketPolicy, PopulationConfig, PopulationState, Position3, PricingMode,
+    RecipeDefinition, RecipeLayer, RecipeOutput, RefuelPolicy, SeasonalGenerationState,
+    SourceDefinition, SystemDefinition, SystemGraph, TraderDefinition,
+    compute_protected_liquidation_budget, route_travel_energy, scaled_source_output,
+    ticks_for_distance, validate_investment_shapes, validate_population_config,
 };
 #[cfg(test)]
 use game_core::{liquidation_target_energy, liquidation_unit_price};
@@ -1295,12 +1295,18 @@ fn compile_traders(
     };
     if source.npcs.dynamic.opportunity_threshold == 0
         || source.npcs.dynamic.opportunity_window == 0
+        || source.npcs.dynamic.opportunity_window > 10_000
         || source.npcs.dynamic.spawn_cooldown_ticks == 0
         || source.npcs.dynamic.retirement_window == 0
+        || source.npcs.dynamic.retirement_window > 10_000
+        || source.npcs.dynamic.maximum_count == 0
         || source.npcs.dynamic.maximum_count < source.npcs.count
         || source.npcs.dynamic.maximum_count > systems.len()
     {
-        errors.push("traders.ron:npcs:dynamic: thresholds/windows must be positive and maximum_count must cover initial count without exceeding systems".into());
+        errors.push("traders.ron:npcs:dynamic: thresholds/windows must be positive, windows must be at most 10000 ticks, and maximum_count must cover initial count without exceeding systems".into());
+    }
+    if ContentId::new(format!("{}_dynamic_00000001", source.npcs.id_prefix)).is_err() {
+        errors.push("traders.ron:npcs:id_prefix: cannot form stable generated trader IDs".into());
     }
     let system_ids = systems
         .iter()
@@ -1382,6 +1388,18 @@ fn compile_traders(
             });
         }
     }
+    if matches!(&fleet_mode, FleetMode::Dynamic { .. }) {
+        let generated_namespace = format!("{}_dynamic_", source.npcs.id_prefix);
+        if let Some(collision) = result
+            .iter()
+            .find(|trader| trader.id.as_str().starts_with(&generated_namespace))
+        {
+            errors.push(format!(
+                "traders.ron:npcs:id_prefix: generated trader namespace {generated_namespace} collides with existing trader {}",
+                collision.id
+            ));
+        }
+    }
     if result
         .iter()
         .map(|trader| &trader.id)
@@ -1395,6 +1413,16 @@ fn compile_traders(
         result,
         FleetDynamics {
             mode: Some(fleet_mode),
+            archetype: Some(FleetArchetype {
+                id_prefix: source.npcs.id_prefix,
+                name_prefix: source.npcs.name_prefix,
+                starting_tank: Energy(source.npcs.energy_tank),
+                energy_tank_capacity: Energy(source.npcs.energy_tank_capacity),
+                cargo_capacity: source.npcs.cargo_capacity,
+                speed: source.npcs.speed,
+                travel_burn_per_distance: Energy(source.npcs.travel_burn_per_distance),
+                refuel_policy: source.npcs.refuel_policy.into(),
+            }),
             archetype_capability: Some(LiquidationTraderCapability {
                 cargo_capacity: source.npcs.cargo_capacity,
                 energy_tank_capacity: Energy(source.npcs.energy_tank_capacity),
@@ -1499,6 +1527,7 @@ fn compute_protected_budgets(
         .collect::<Vec<_>>();
     let mut capabilities = traders
         .iter()
+        .filter(|trader| trader.player)
         .map(|trader| LiquidationTraderCapability {
             cargo_capacity: trader.cargo_capacity,
             energy_tank_capacity: trader.energy_tank_capacity,
@@ -1739,8 +1768,13 @@ mod tests {
         );
         assert!(matches!(
             loaded.definition.fleet.mode,
-            Some(FleetMode::Fixed { count: 9 })
+            Some(FleetMode::Dynamic {
+                initial_count: 9,
+                maximum_count: 20,
+                ..
+            })
         ));
+        assert!(loaded.definition.fleet.archetype.is_some());
         assert!(loaded.definition.economy.population.static_population);
         assert_eq!(loaded.definition.economy.investments.len(), 4);
         assert!(
@@ -1811,6 +1845,27 @@ mod tests {
         ] {
             assert!(error.contains(context), "missing {context} in {error}");
         }
+    }
+
+    #[test]
+    fn dynamic_trader_namespace_collision_reports_source_context() {
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let economy = load(root().join("economy.ron")).unwrap();
+        let config = load(root().join("economy_config.ron")).unwrap();
+        let mut traders: TraderConfigSource = load(root().join("traders.ron")).unwrap();
+        traders.npcs.mode = NpcFleetModeSource::Dynamic;
+        traders.player.id = format!("{}_dynamic_00000001", traders.npcs.id_prefix);
+
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("traders.ron:npcs:id_prefix: generated trader namespace")
+                && error.contains("_dynamic_00000001"),
+            "{error}"
+        );
     }
 
     #[test]

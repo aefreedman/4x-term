@@ -15,13 +15,14 @@
 - Validated world-dynamics content scaffolding for seasons, static/dynamic population configuration, fixed/dynamic fleets, all four investment kinds, governance, and aggregate history.
 - Deterministic seasonal generation on three prototype systems, with base/effective output, phase, trend, and next-turning-point visibility in immutable app views and the TUI.
 - A bounded identical-session player-impact probe with one typed, recorded external delivery and explicit reconciliation of intervention inflow.
+- A deterministic endogenous NPC fleet with normalized persistent opportunity, market-funded slow spawning, bounded profitability, conservation-safe deferred retirement, typed lifecycle events, and fleet diagnostics.
 
 ### Changed
 
 - Route previews, active travel, direct connections, and player location now use readable system names with jump, distance, and timing summaries instead of exposing internal content IDs.
 - Event log entries now resolve system, trader, good, and production-process IDs to readable display names.
 - Player cargo now displays readable good names instead of internal content IDs.
-- NPC trader setup now uses nine evenly distributed traders with a shared speed and designer-editable parameters in `content/traders.ron`.
+- NPC trader setup now begins with nine evenly distributed traders and uses Dynamic production mode with designer-editable archetype, response, cooldown, retirement, and maximum-count parameters in `content/traders.ron`.
 - Markets now express role-specific demand, use lower raw-source rates and production buffers, and preserve stronger value growth through secondary goods.
 - Automated traders now reposition to supply markets after unloading at demand-only destinations.
 - Global market spreads, untargeted demand, raw-source output, and idle trader repositioning are now designer-configurable in `content/economy_config.ron`.

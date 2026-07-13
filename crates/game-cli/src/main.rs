@@ -504,6 +504,8 @@ struct DiagnosticActivity {
     produced: u64,
     generated: i128,
     life_support_unsupplied: i128,
+    fleet_spawns: u64,
+    fleet_retirements: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -587,11 +589,30 @@ fn format_network_dynamics(snapshot: &CoreSnapshot) -> String {
         current[market.brownout.stage.index()] += 1;
     }
     format!(
-        "network_stages current[{}] occupancy[{}] transitions={} normalized_opportunity_per_system=unavailable",
+        "network_stages current[{}] occupancy[{}] transitions={} npc_fleet_size={} normalized_unserved_opportunity_per_system={} opportunity_persistence={} fleet_spawns={} fleet_retirements={}",
         format_stage_percentages(current),
         format_stage_percentages(snapshot.dynamics_history.stage_occupancy_ticks),
         snapshot.dynamics_history.stage_transitions,
+        snapshot
+            .traders
+            .iter()
+            .filter(|trader| !trader.player)
+            .count(),
+        snapshot.fleet.normalized_unserved_opportunity,
+        snapshot.fleet.opportunity_persistence,
+        snapshot.dynamics_history.fleet_spawns,
+        snapshot.dynamics_history.fleet_retirements,
     )
+}
+
+fn format_profitability_window(values: &[i64]) -> String {
+    let sum = values.iter().map(|value| i128::from(*value)).sum::<i128>();
+    let average = if values.is_empty() {
+        0.0
+    } else {
+        sum as f64 / values.len() as f64
+    };
+    format!("samples={} sum={sum} average={average:.1}", values.len())
 }
 
 fn format_system_dynamics(market: &game_core::MarketSnapshot, previous_stock: i64) -> String {
@@ -680,11 +701,11 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
                 GameEvent::LifeSupport { unsupplied, .. } => {
                     activity.life_support_unsupplied += i128::from(unsupplied.0);
                 }
+                GameEvent::TraderSpawned { .. } => activity.fleet_spawns += 1,
+                GameEvent::TraderRetired { .. } => activity.fleet_retirements += 1,
                 GameEvent::ExternalDeliveryRecorded { .. }
                 | GameEvent::BrownoutTransition { .. }
                 | GameEvent::PopulationChanged { .. }
-                | GameEvent::TraderSpawned { .. }
-                | GameEvent::TraderRetired { .. }
                 | GameEvent::InvestmentCompleted { .. }
                 | GameEvent::InvestmentDeferred { .. }
                 | GameEvent::GovernorPolicyRejected { .. }
@@ -710,7 +731,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
                 }
             }
             println!(
-                "tick={tick} trades={} partial_sales={} reservations={} departures={} arrivals={} produced={} generated={} life_support_unsupplied={} npc_traveling={traveling} npc_idle={idle} npc_stationary_laden={blocked_laden}",
+                "tick={tick} trades={} partial_sales={} reservations={} departures={} arrivals={} produced={} generated={} life_support_unsupplied={} npc_fleet_size={} npc_traveling={traveling} npc_idle={idle} npc_stationary_laden={blocked_laden} fleet_spawns={} fleet_retirements={} normalized_unserved_opportunity_per_system={} opportunity_persistence={}",
                 activity.trades,
                 activity.partial_sales,
                 activity.reservations,
@@ -719,6 +740,11 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
                 activity.produced,
                 activity.generated,
                 activity.life_support_unsupplied,
+                traveling + idle + blocked_laden,
+                activity.fleet_spawns,
+                activity.fleet_retirements,
+                snapshot.fleet.normalized_unserved_opportunity,
+                snapshot.fleet.opportunity_persistence,
             );
             println!("{}", format_network_dynamics(&snapshot));
             for market in &snapshot.markets {
@@ -874,7 +900,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
             .find(|(good, _)| good.as_str() == ENERGY_ID)
             .map_or(0, |(_, quantity)| *quantity);
         println!(
-            "  {} state={state} system={} tank={}/{} bay_energy={} cargo_units={}/{} reservation={:?} transactions={} net_trade_energy={}",
+            "  {} state={state} system={} tank={}/{} bay_energy={} cargo_units={}/{} reservation={:?} retirement={:?} failed_liquidation_ticks={} profitability_window=[{}] transactions={} net_trade_energy={}",
             trader.name,
             trader.system,
             trader.energy_tank.0,
@@ -883,8 +909,13 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
             trader.cargo.values().sum::<u64>(),
             trader.cargo_capacity,
             trader.reservation,
+            trader.retirement,
+            trader.failed_liquidation_ticks,
+            format_profitability_window(&trader.profitability_window),
             trader.ledger.completed_transactions,
-            i128::from(trader.ledger.sales_revenue.0) - i128::from(trader.ledger.purchase_cost.0),
+            i128::from(trader.ledger.sales_revenue.0)
+                - i128::from(trader.ledger.purchase_cost.0)
+                - i128::from(trader.ledger.travel_cost.0),
         );
     }
     Ok(())
@@ -1107,6 +1138,18 @@ mod tests {
     }
 
     #[test]
+    fn profitability_diagnostics_are_summarized() {
+        assert_eq!(
+            format_profitability_window(&[-10, 5, 20]),
+            "samples=3 sum=15 average=5.0"
+        );
+        assert_eq!(
+            format_profitability_window(&[]),
+            "samples=0 sum=0 average=0.0"
+        );
+    }
+
+    #[test]
     fn reconciliation_formatter_reports_exact_flow() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
         let definition = game_content::load_directory(root).unwrap();
@@ -1138,7 +1181,9 @@ mod tests {
         assert!(system.contains("seasonal_phase="));
         let network = format_network_dynamics(&snapshot);
         assert!(network.contains("network_stages current["));
-        assert!(network.contains("normalized_opportunity_per_system=unavailable"));
+        assert!(network.contains("npc_fleet_size=9"));
+        assert!(network.contains("normalized_unserved_opportunity_per_system="));
+        assert!(network.contains("opportunity_persistence="));
         let amplitude = CycleAmplitude {
             minimum_effective_output: 5,
             maximum_effective_output: 15,

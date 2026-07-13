@@ -269,19 +269,19 @@ Validation:
 
 ### Phase 4: Endogenous NPC Fleet Behind a Mode Flag
 
-- [ ] Compile fixed and dynamic fleet modes; switch production content to Dynamic only after fixed-mode regressions pass.
-- [ ] Reuse automated trade request scoring to compute network opportunity backlog and consecutive-tick persistence.
-- [ ] Add deterministic, rate-limited spawning at the highest safely fundable surplus market with atomically funded starting tank energy and stable generated IDs.
-- [ ] Track bounded rolling profitability and failed-jump/liquidation state for retirement decisions.
-- [ ] Implement deferred, conservation-safe retirement after cargo/reservation/tank cleanup.
-- [ ] Derive protected liquidation budgets from configured archetype capabilities so active fleet count cannot weaken anti-strand behavior.
-- [ ] Add fleet size/backlog and spawn/retire events to snapshots, CLI diagnostics, and app logs.
+- [x] Compile fixed and dynamic fleet modes; switch production content to Dynamic only after fixed-mode regressions pass.
+- [x] Reuse automated trade request scoring to compute network opportunity backlog and consecutive-tick persistence.
+- [x] Add deterministic, rate-limited spawning at the highest safely fundable surplus market with atomically funded starting tank energy and stable generated IDs.
+- [x] Track bounded rolling profitability and failed-jump/liquidation state for retirement decisions.
+- [x] Implement deferred, conservation-safe retirement after cargo/reservation/tank cleanup.
+- [x] Derive protected liquidation budgets from configured archetype capabilities so active fleet count cannot weaken anti-strand behavior.
+- [x] Add fleet size/backlog and spawn/retire events to snapshots, CLI diagnostics, and app logs.
 
 Validation:
-- [ ] Fixed mode produces identical trader count and no lifecycle events across long deterministic runs.
-- [ ] Dynamic-mode tests cover threshold persistence/reset, spawn cooldown, maximum count, stable tie-breaking, insufficient safe spawn funding, generated ID stability, and next-tick eligibility.
-- [ ] Retirement tests cover sustained loss, anti-strand liquidation failure, active reservation, laden/in-transit deferral, tank return, and exact energy/cargo accounting. A laden, sustained-unprofitable fixture must liquidate through the anti-strand path, finish deferred cleanup, and retire within a bounded number of ticks; it must never persist as a stationary laden trader in the soak run.
-- [ ] A tuned fixed-seed run shows NPC capacity keeping importers alive near the Throttled band while preserving a measurable player response window.
+- [x] Fixed mode produces identical trader count and no lifecycle events across long deterministic runs.
+- [x] Dynamic-mode tests cover threshold persistence/reset, spawn cooldown, maximum count, stable tie-breaking, insufficient safe spawn funding, generated ID stability, and next-tick eligibility.
+- [x] Retirement tests cover sustained loss, anti-strand liquidation failure, active reservation, laden/in-transit deferral, tank return, and exact energy/cargo accounting. A laden, sustained-unprofitable fixture must liquidate through the anti-strand path, finish deferred cleanup, and retire within a bounded number of ticks; it must never persist as a stationary laden trader in the soak run.
+- [x] A tuned fixed-seed run shows NPC capacity keeping importers alive near the Throttled band while preserving a measurable player response window.
 
 ### Phase 5: Population Hysteresis and Metastability Soak
 

@@ -45,13 +45,13 @@ Runtime content is stored under `content/`.
 - `economy_config.ron` controls global market buy/sell percentages, the untargeted-good discount, overall raw-source output, and idle NPC repositioning.
 - `economy.ron` controls per-system inventories, demand targets, recipes, raw sources, and deterministic seasonal generation.
 - `goods.ron` controls individual base prices.
-- `traders.ron` controls trader count, speed, starting funds, cargo capacity, naming, and distribution.
+- `traders.ron` controls fixed/dynamic fleet mode, initial and maximum count, response/retirement windows, speed, physical starting tank, cargo capacity, naming, and distribution.
 
-The initial nine NPC traders use `EvenlySpaced` distribution across the 20 systems.
+The dynamic production fleet begins with nine evenly spaced NPC traders and adapts slowly to persistent normalized unserved profitable opportunity.
 
 ## Economy diagnostics
 
-Run `cargo run -p game-cli -- --economy-diagnostics 500` to inspect 50-tick and final per-system net flow, storage, brownout history, seasonal phase/output, network stage percentages, cycle amplitudes, physical-energy reconciliation, and NPC cargo/travel state.
+Run `cargo run -p game-cli -- --economy-diagnostics 500` to inspect 50-tick and final per-system net flow, storage, brownout history, seasonal phase/output, network stage percentages, cycle amplitudes, fleet size/backlog/persistence/spawn/retirement state, physical-energy reconciliation, and NPC cargo/travel/profitability state.
 
 Run an identical-session player-impact probe with one explicitly recorded external delivery:
 
