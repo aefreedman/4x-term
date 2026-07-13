@@ -60,7 +60,8 @@ The fixed-point scarcity multiplier is bounded to 1.000–1.500. Every multiply 
 The authored operating reserve and computed liquidation budget are independent:
 
 ```text
-operating reserve = operating_reserve_ticks × mandatory market burn
+operating reserve = life-support burn over the horizon
+  + scheduled source/recipe burn over the horizon from cloned current carries
 unreserved purchasing energy =
   energy stock
   − active reservation claims
@@ -69,7 +70,7 @@ unreserved purchasing energy =
 funded quantity = floor(max(0, unreserved purchasing energy) / bid)
 ```
 
-The operating reserve is a tunable policy knob. One shared core contract computes `protected_liquidation_budget` from graph adjacency, trader travel burn/capabilities, eligible cargo bootstrap references, and the policy's liquidation settings. `game-content` uses it during compilation; an atomic whole-policy replacement recomputes and validates it from current runtime inputs before applying either the policy or budget. It is never authored and changing operating-reserve ticks cannot weaken it.
+The operating reserve is a tunable policy knob. Its horizon simulation uses distinct source and recipe schedule keys and never mutates persistent production carries. One shared core contract computes `protected_liquidation_budget` from graph adjacency, trader travel burn/capabilities, eligible cargo bootstrap references, and the policy's liquidation settings. `game-content` uses it during compilation; an atomic whole-policy replacement recomputes and validates it from current runtime inputs before applying either the policy or budget. It is never authored and changing operating-reserve ticks cannot weaken it.
 
 Every laden trader can sell the funded liquidation sub-quantity needed to afford the cheapest adjacent jump. The same checked funded-settlement primitive handles ordinary sales, energy cargo, reservations, partial sales, and liquidation. Remaining cargo is deterministically rerouted rather than retried as an ignored full-stack failure.
 
@@ -81,17 +82,59 @@ Command-driven, laden-reroute, and automated commitment requests enter one pendi
 
 Travel energy is the checked sum of `ceil(leg_distance × energy_per_distance)` once for every route leg. Planning, departure, rerouting, and bootstrap validation use that same rule. Bay energy is excluded. Multi-component operations calculate complete checked next state before applying it or emitting events.
 
+## World-dynamics contracts
+
+Slice 2 extends the same physical economy additively. Its compatibility defaults are zero-amplitude seasons, static population, a fixed NPC fleet, and disabled investments.
+
+### Brownout ladder and throughput
+
+After generation, storage capping, and mandatory life support, each market computes integer runway as `floor(energy stock / life-support obligation)`. A zero obligation has unlimited runway. Unsupplied life support forces **Starvation**; otherwise ordered authored entry thresholds select **Normal**, **Throttled**, **Emergency**, or **Starvation**. Authored recovery thresholds are higher than their corresponding entry thresholds, and a minimum stage duration prevents edge chatter. A severe shock may cross several entry bands in one transition, while recovery proceeds one band at a time. Core owns per-stage occupancy and transition counts.
+
+The current stage derives an operating profile without rewriting authored market policy. Normal retains 100% throughput. Throttled reduces industrial throughput. Emergency and Starvation allow demand only for authored survival goods (which must include `core:energy`), disable investment eligibility, and raise the energy bid toward—but never above—the authored emergency ceiling. Core validates that ceiling against each compiled market's conservative maximum normal energy bid, so entering distress can never lower the bid. Suppression governs newly advertised demand and overrides future route-subsidy premiums; it does not cancel existing reservations. Those reservations continue through the normal funded partial-settlement and release lifecycle.
+
+Production uses one fixed-point contract:
+
+```text
+effective = floor((base × stage_percent × labor_percent + carry) / 10_000)
+next_carry = (base × stage_percent × labor_percent + carry) mod 10_000
+```
+
+Stage and labor are multiplied before rounding. There is one final carry per production schedule, never one carry per modifier. Source execution, recipes, and operating-reserve estimates call the same checked helper. Static population supplies a 100% labor modifier in the current checkpoint.
+
+Every ordinary quote, funded quantity, reservation, settlement, and tank withdrawal continues to derive spendable energy from canonical stock after active claims, the stage-aware operating reserve, and the graph-compiled protected liquidation budget. Source and recipe burn independently retain active claims and protected liquidation energy. Stage transitions therefore change policy capacity without creating a second treasury or revoking anti-strand protection.
+
+### Deterministic seasons
+
+Each system has a compiled base generation rate and an integer triangle-wave definition with amplitude, period, and phase. The pure waveform is periodic, bounded to non-negative output, and uses checked integer arithmetic only. Amplitude zero returns the base rate exactly without evaluating phase arithmetic. The current brownout checkpoint still generates the base rate; the seasonal runtime writer remains deferred. Collector investment will change the base rate, and future seasonal output will always derive from that base. Repository defaults remain zero amplitude.
+
+### Population, fleet, investment, and governance scaffolding
+
+Population state records current/reference population, carrying capacity, a bounded sufficiency window and sum, a checked change remainder, and growth/decline counters. Population tuning resolves authored essential goods, per-thousand tertiary-demand mappings, a fixed-point growth sufficiency gate, and strictly increasing tier thresholds. Authored decline must be five to ten times the growth rate. Future growth uses checked logistic arithmetic,
+
+```text
+delta = floor(population × (cap − population) × growth_rate / (cap × 1000 × scale))
+```
+
+with the remainder retained and the result capped at `cap − population`. Population remains static in the current checkpoint.
+
+Fleet configuration is explicitly `Fixed` or `Dynamic`. Dynamic configuration carries initial/max count, opportunity persistence, spawn cooldown, and retirement thresholds/windows, while the current checkpoint executes fixed mode only. Opportunity persistence increments only while the normalized threshold is met and otherwise resets to zero. Future spawn tanks must be withdrawn atomically from protected market surplus; retirement must defer until reservations, cargo, transit, and tank energy are reconciled. Protected liquidation budgets are compiled from validated trader/archetype capabilities rather than a fleet-size multiplier, so count changes cannot weaken the guarantee.
+
+All four investment kinds—collector, storage, population support, and route subsidy—share a typed shape: enabled state, checked base cost, multiplicative cost growth, maximum level, cooldown, and effect per level. Cost level `n` repeatedly applies checked ceiling multiplication by the authored growth percentage. Allocation percentages are unique and total at most 100%. Investments are disabled by default and, when enabled later, may spend only the same stage-aware unreserved purchasing pool. Emergency suppression has final authority over subsidy advertising and spending. Governance is separate typed authority state. Public/player policy commands require the sole player's stable ID to match the market's authored player authority; autonomous/unowned markets reject before policy or protection mutation. Future internal AI execution remains a separate core application path.
+
+Aggregate simulation history, not formatted UI history, owns stage occupancy/transitions and future population, fleet, and investment outcomes. Event labels and immutable snapshots are presentation projections. Long-run diagnostics must pass exact physical-energy reconciliation, retain nonzero final-window activity, and report stage occupancy/transition evidence; intervention diagnostics must start from identical content and seed, explicitly account for external inflow, and identify the first bounded stage or population divergence.
+
 ## Tick phases
 
-The headless core executes explicit deterministic phases:
+The headless core executes explicit deterministic phases for the current brownout checkpoint:
 
 1. complete travel and refresh/expire reservation state;
-2. generate energy, cap storage, and record curtailment;
+2. generate the configured base output, cap storage, and record curtailment;
 3. assess mandatory life support;
-4. execute sources and recipes with operating energy and cost transfer;
-5. settle arrivals and funded liquidation fallback;
-6. collect and resolve automated commitments in stable order;
-7. buy cargo, depart, advance the clock, and publish events/snapshots.
+4. classify the brownout stage and derive the effective operating profile;
+5. execute sources and recipes with composed stage/labor throughput and operating energy;
+6. settle arrivals and funded liquidation fallback;
+7. collect and resolve automated commitments in stable order;
+8. buy cargo, depart, advance the clock, and publish events/snapshots.
 
 ECS iteration order is never used to choose contention winners.
 
@@ -109,7 +152,7 @@ Importer runway must exceed plausible first-delivery time plus one scheduling ti
 
 ## Observability and reconciliation
 
-Snapshots and the TUI distinguish market stock/cap, active claims, operating reserve, protected liquidation budget, unreserved purchasing energy, health/deficit, trader tank/cap, bay energy, cargo capacity, and runway.
+Snapshots and the TUI distinguish market stock/cap, active claims, operating reserve, protected liquidation budget, unreserved purchasing energy, canonical effective advertised/funded demand, health/deficit, trader tank/cap, bay energy, cargo capacity, and runway. Frontends and diagnostics consume the core demand projection rather than reconstructing funding.
 
 The energy ledger separately tracks generation, life support, source/production/travel burn, curtailment, market↔tank and market↔energy-cargo transfers, and unsupplied life support. Per-market counters remain checked `Energy`; global reporting aggregates exactly in wider `i128` counters and never saturates or clamps. Reservation claim changes are non-physical and excluded. Diagnostics reconcile:
 

@@ -402,11 +402,12 @@ fn render_systems(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui:
                 Style::default()
             };
             ListItem::new(format!(
-                "{} E {}/{} {}",
+                "{} E {}/{} {} · {}",
                 system.name,
                 system.energy_stock.0,
                 system.energy_capacity.0,
-                system.health.label()
+                system.health.label(),
+                system.brownout_stage.label()
             ))
             .style(style)
         })
@@ -449,10 +450,12 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
     });
     let energy = &view.market_energy;
     lines.push(Line::from(format!(
-        "Energy {}/{} · {}",
+        "Energy {}/{} · {} · {} · {}t runway",
         energy.stock.0,
         energy.capacity.0,
-        energy.health.label()
+        energy.health.label(),
+        energy.brownout_stage.label(),
+        energy.runway_ticks
     )));
     lines.push(Line::from(format!(
         "Claims {} · operating {} · protected {} · purchasing {}",
@@ -656,8 +659,10 @@ mod tests {
         RouteLegView, RouteView, SystemListItem, TickRate,
     };
     use game_core::{
-        ContentId, ENERGY_ID, EconomyConfig, Energy, GameDefinition, GameSession, GoodCategory,
-        GoodDefinition, MarketPolicy, Position3, RefuelPolicy, SystemDefinition, TraderDefinition,
+        BrownoutStage, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetDynamics, FleetMode,
+        GameDefinition, GameSession, GoodCategory, GoodDefinition, Governance, InvestmentPolicy,
+        MarketPolicy, PopulationState, Position3, RefuelPolicy, SeasonalGenerationState,
+        SystemDefinition, TraderDefinition,
     };
     use ratatui::backend::TestBackend;
     use std::cell::RefCell;
@@ -721,8 +726,23 @@ mod tests {
                 recipes: vec![],
                 sources: vec![],
                 energy_output_per_tick: Energy(10),
+                seasonal_generation: SeasonalGenerationState {
+                    base_output: Energy(10),
+                    amplitude_percent: 0,
+                    period_ticks: 100,
+                    phase_ticks: 0,
+                    current_effective_output: Energy(10),
+                },
                 energy_storage_cap: Energy(2_000),
                 population: 1,
+                population_state: PopulationState {
+                    current: 1,
+                    reference: 1,
+                    carrying_capacity: 1,
+                    ..PopulationState::default()
+                },
+                investment_policy: InvestmentPolicy::default(),
+                governance: Governance::default(),
                 policy: MarketPolicy::default(),
                 protected_liquidation_budget: Energy(10),
                 bootstrap_risk_acknowledged: false,
@@ -757,6 +777,10 @@ mod tests {
                 refuel_policy: RefuelPolicy::DepositAndWithdraw,
                 player: true,
             }],
+            fleet: FleetDynamics {
+                mode: Some(FleetMode::Fixed { count: 0 }),
+                ..FleetDynamics::default()
+            },
             economy: EconomyConfig::default(),
         })
         .unwrap()
@@ -774,6 +798,8 @@ mod tests {
                 energy_stock: Energy(800),
                 energy_capacity: Energy(1_000),
                 health: EnergyHealth::Healthy,
+                brownout_stage: BrownoutStage::Normal,
+                runway_ticks: 80,
                 connections: vec![ConnectionView {
                     system_id: id("core:s1"),
                     system_name: "Brasshaven".into(),
@@ -796,6 +822,8 @@ mod tests {
                 unsupplied_life_support: Energy(0),
                 bootstrap_risk_acknowledged: false,
                 health: EnergyHealth::Healthy,
+                brownout_stage: BrownoutStage::Normal,
+                runway_ticks: 80,
             },
             market: vec![MarketRow {
                 good_id: id("core:ore"),
@@ -923,6 +951,47 @@ mod tests {
                 "missing {label} energy display"
             );
             assert!(rendered.contains(&format!("life-support deficit {}", deficit.0)));
+        }
+    }
+
+    #[test]
+    fn test_backend_renders_every_brownout_stage_and_transition_text() {
+        for stage in [
+            BrownoutStage::Normal,
+            BrownoutStage::Throttled,
+            BrownoutStage::Emergency,
+            BrownoutStage::Starvation,
+        ] {
+            let mut view = test_view();
+            view.systems[0].brownout_stage = stage;
+            view.market_energy.brownout_stage = stage;
+            view.market_energy.runway_ticks = match stage {
+                BrownoutStage::Normal => 80,
+                BrownoutStage::Throttled => 12,
+                BrownoutStage::Emergency => 6,
+                BrownoutStage::Starvation => 0,
+            };
+            view.market[0].buy_quote = if stage >= BrownoutStage::Emergency {
+                Energy::ZERO
+            } else {
+                Energy(9)
+            };
+            view.events = vec![format!(
+                "Aster Reach brownout stage Normal → {} at tick 7 ({} ticks runway)",
+                stage.label(),
+                view.market_energy.runway_ticks
+            )];
+            let rendered = rendered_view(&view);
+            assert!(
+                rendered.contains(&format!("· {} ·", stage.label())),
+                "missing stage {}",
+                stage.label()
+            );
+            assert!(rendered.contains(&format!("{}t runway", view.market_energy.runway_ticks)));
+            assert!(rendered.contains(&format!("Normal → {}", stage.label())));
+            if stage >= BrownoutStage::Emergency {
+                assert!(rendered.contains("0 E"), "suppressed distress bid missing");
+            }
         }
     }
 

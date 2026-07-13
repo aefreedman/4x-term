@@ -224,33 +224,33 @@ Update authored schema in one validated evolution:
 
 ### Phase 1: Contracts, Schema, and Test Scaffolding
 
-- [ ] Add durable Slice 2 design details to `docs/energy-economy.md` or a linked world-dynamics document: stage metric/phase boundary, effective profile, seasonal waveform, population equations, fleet conservation, investment funding, and diagnostic pass/fail definitions.
-- [ ] Introduce typed core definitions/components/resources for stages, seasons, population history, fleet mode/dynamics, investment kinds/policy/state, governance, and aggregate history without enabling all runtime writers.
-- [ ] Extend `game-content` source structs and compilation for every new data shape, including all four investments and both fleet modes.
-- [ ] Add source-aware validation for ordered thresholds, positive windows/periods, amplitude and fixed-point bounds, resolved goods, growth/decline ratio, logistic limits, fleet thresholds/rates/caps, investment curves/rate limits, allocation totals, and starting governorship references.
-- [ ] Preserve current behavior under zero-amplitude seasons, static population, fixed fleet mode, and disabled/default investments.
-- [ ] Write pure helper tests first for stage boundaries/recovery, triangle-wave extrema/phase/wrap, checked throughput carry, logistic/cap arithmetic, opportunity persistence reset, investment cost curves, and overflow/zero boundaries. Include a table-driven composed-throughput test with stage and labor modifiers at 0%, a small nonzero value, and 100%; prove one final carry and identical results for production, operating reserve, and diagnostics.
+- [x] Add durable Slice 2 design details to `docs/energy-economy.md` or a linked world-dynamics document: stage metric/phase boundary, effective profile, seasonal waveform, population equations, fleet conservation, investment funding, and diagnostic pass/fail definitions.
+- [x] Introduce typed core definitions/components/resources for stages, seasons, population history, fleet mode/dynamics, investment kinds/policy/state, governance, and aggregate history without enabling all runtime writers.
+- [x] Extend `game-content` source structs and compilation for every new data shape, including all four investments and both fleet modes.
+- [x] Add source-aware validation for ordered thresholds, positive windows/periods, amplitude and fixed-point bounds, resolved goods, growth/decline ratio, logistic limits, fleet thresholds/rates/caps, investment curves/rate limits, allocation totals, and starting governorship references.
+- [x] Preserve current behavior under zero-amplitude seasons, static population, fixed fleet mode, and disabled/default investments.
+- [x] Write pure helper tests first for stage boundaries/recovery, triangle-wave extrema/phase/wrap, checked throughput carry, logistic/cap arithmetic, opportunity persistence reset, investment cost curves, and overflow/zero boundaries. Include a table-driven composed-throughput test with stage and labor modifiers at 0%, a small nonzero value, and 100%; prove one final carry and identical results for production, operating reserve, and diagnostics.
 
 Validation:
-- [ ] `cargo test -p game-core` passes pure contract tests without a terminal or filesystem.
-- [ ] `cargo test -p game-content` proves valid repository content compiles and malformed fields report the correct RON source/context.
-- [ ] `cargo run -p game-cli -- --validate-content` succeeds after content migration.
-- [ ] A compatibility fixture with fixed fleet, zero seasonal amplitude, static population, and disabled investments matches the pre-Slice-2 deterministic snapshots/events except for intentionally added read-only fields.
+- [x] `cargo test -p game-core` passes pure contract tests without a terminal or filesystem.
+- [x] `cargo test -p game-content` proves valid repository content compiles and malformed fields report the correct RON source/context.
+- [x] `cargo run -p game-cli -- --validate-content` succeeds after content migration.
+- [x] A compatibility fixture with fixed fleet, zero seasonal amplitude, static population, and disabled investments matches the pre-Slice-2 deterministic snapshots/events except for intentionally added read-only fields.
 
 ### Phase 2: Brownout Ladder on Static Population and Fixed Fleet
 
-- [ ] Add post-life-support stage classification and exact occupancy counters to the tick schedule.
-- [ ] Derive a stage-aware operating profile without mutating `MarketPolicy`.
-- [ ] Apply deterministic Throttled recipe/labor throughput, Emergency survival-demand filtering, energy-bid ramp/ceiling, and investment suppression.
-- [ ] Route quotes, funded demand, reserve reporting, settlement checks, and tank transfers through the shared stage-aware protection helper.
-- [ ] Emit typed transition events and expose stage/metric through snapshots and app event labels.
-- [ ] Extend app/TUI market and system views with textual stage/runway while retaining visible price/funded-demand consequences.
+- [x] Add post-life-support stage classification and exact occupancy counters to the tick schedule.
+- [x] Derive a stage-aware operating profile without mutating `MarketPolicy`.
+- [x] Apply deterministic Throttled recipe/labor throughput, Emergency survival-demand filtering, energy-bid ramp/ceiling, and investment suppression.
+- [x] Route quotes, funded demand, reserve reporting, settlement checks, and tank transfers through the shared stage-aware protection helper.
+- [x] Emit typed transition events and expose stage/metric through snapshots and app event labels.
+- [x] Extend app/TUI market and system views with textual stage/runway while retaining visible price/funded-demand consequences.
 
 Validation:
-- [ ] Table-driven core tests cover every threshold edge, direct multi-band shock, recovery hysteresis, no-event steady state, and occupancy totals.
-- [ ] Tests prove Emergency advertises only energy/survival goods, raises but caps the energy bid, and cannot spend protected energy.
-- [ ] Tests prove stage changes preserve anti-strand liquidation, reservation accounting, physical energy reconciliation, and validate-before-mutate atomicity.
-- [ ] Ratatui `TestBackend` tests render all four stages, transition text, and distress prices without requiring color.
+- [x] Table-driven core tests cover every threshold edge, direct multi-band shock, recovery hysteresis, no-event steady state, and occupancy totals.
+- [x] Tests prove Emergency advertises only energy/survival goods, raises but caps the energy bid, and cannot spend protected energy.
+- [x] Tests prove stage changes preserve anti-strand liquidation, reservation accounting, physical energy reconciliation, and validate-before-mutate atomicity.
+- [x] Ratatui `TestBackend` tests render all four stages, transition text, and distress prices without requiring color.
 
 ### Phase 3: Diagnostics, Player-Impact Probe, and Seasonal Supply
 

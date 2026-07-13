@@ -11,6 +11,8 @@
 - Physical energy-economy views for market stock, reserve claims, protected budgets, player tank and cargo-bay energy, route runway, and market health.
 - Energy-flow reconciliation and per-market solvency diagnostics, with pricing-mode override and identical-state scarcity/cost-aware A/B runs.
 - Deterministic funded partial-arrival recovery, processor structural-solvency reporting, authored physical refuel policies, and explicit normal/full/low/deficit energy displays.
+- A deterministic four-stage brownout ladder with stage transitions, runway, stage-aware throughput, demand, pricing, protection, immutable app views, and textual TUI visibility.
+- Validated world-dynamics content scaffolding for seasons, static/dynamic population configuration, fixed/dynamic fleets, all four investment kinds, governance, and aggregate history.
 
 ### Changed
 

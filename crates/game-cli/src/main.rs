@@ -224,7 +224,14 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
                 GameEvent::LifeSupport { unsupplied, .. } => {
                     activity.life_support_unsupplied += i128::from(unsupplied.0);
                 }
-                GameEvent::ReservationReleased { .. }
+                GameEvent::BrownoutTransition { .. }
+                | GameEvent::PopulationChanged { .. }
+                | GameEvent::TraderSpawned { .. }
+                | GameEvent::TraderRetired { .. }
+                | GameEvent::InvestmentCompleted { .. }
+                | GameEvent::InvestmentDeferred { .. }
+                | GameEvent::GovernorPolicyRejected { .. }
+                | GameEvent::ReservationReleased { .. }
                 | GameEvent::SaleDeferred { .. }
                 | GameEvent::PolicyChanged { .. }
                 | GameEvent::TickAdvanced(_)
@@ -276,21 +283,9 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<()> 
             })
             .count();
         let funded_demand_units = market
-            .targets
-            .iter()
-            .map(|(good, target)| {
-                let shortage = u64::from(*target)
-                    .saturating_sub(market.inventory.get(good).copied().unwrap_or(0));
-                session
-                    .quotes(&market.system_id, good)
-                    .ok()
-                    .filter(|(bid, _)| bid.0 > 0)
-                    .and_then(|(bid, _)| {
-                        u64::try_from(market.unreserved_energy_for_purchases.0 / bid.0).ok()
-                    })
-                    .unwrap_or(0)
-                    .min(shortage)
-            })
+            .demand
+            .values()
+            .map(|demand| u64::from(demand.funded))
             .sum::<u64>();
         let average_unit_cost = if market.cost_basis.is_empty() {
             0
