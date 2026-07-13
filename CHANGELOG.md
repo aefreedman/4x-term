@@ -37,3 +37,7 @@
 - Repository markets now use dynamic population, with Sable Junction tuned as a recoverable demographic stress case; app, TUI, and CLI views expose population trend, carrying cap, tier, sufficiency trajectory, and aggregate stage/population history.
 - The long 1,000-tick repository content acceptance is ignored by default with an explicit command; routine tests retain a 50-tick deterministic/activity smoke and short system-only/trader-only insertion-order checks.
 - Repository markets now enable all four tuned investment shapes with a shared default AI allocation; investment energy is reported as an explicit physical sink in reconciliation and market-flow views.
+
+### Fixed
+
+- Long-run dynamic-fleet diagnostics now skip brownout-suppressed zero-bid opportunities, and route subsidies retain cost-aware processor solvency ceilings.

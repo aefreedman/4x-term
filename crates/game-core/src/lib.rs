@@ -3374,6 +3374,15 @@ impl GameSession {
                     u64::from(100_u32.checked_add(premium).ok_or(CoreError::Overflow)?),
                     100,
                 )?;
+                if policy.pricing_mode == PricingMode::CostAware
+                    && let Some(ceiling) = self.processor_input_bid_ceiling(market, policy, good)?
+                {
+                    // A route subsidy is paid by this market, not by an
+                    // external treasury. Preserve the processor-solvency cap
+                    // after adding the premium so the investment cannot bid a
+                    // recipe above its sustainable input budget.
+                    bid = bid.min(Energy(ceiling.0.max(1)));
+                }
             }
         }
         if good.as_str() == ENERGY_ID && market.operating_profile.stage >= BrownoutStage::Emergency
@@ -6152,6 +6161,13 @@ impl GameSession {
                                 continue;
                             }
                             let bid = self.bid_quote(destination, destination_policy, good)?;
+                            // An emergency-stage market suppresses non-survival
+                            // demand with a zero bid. Reject that non-opportunity
+                            // before passing the bid to physical funding math,
+                            // whose contract requires a positive unit price.
+                            if bid <= ask {
+                                continue;
+                            }
                             let Some((route, distance)) =
                                 graph.shortest_path(origin_id, destination_id)
                             else {
@@ -6624,6 +6640,37 @@ mod tests {
         }
         assert_eq!(session.snapshot().traders.len(), 1);
         assert_eq!(session.snapshot().fleet.spawn_sequence, 0);
+    }
+
+    #[test]
+    fn dynamic_opportunity_scoring_skips_emergency_suppressed_demand() {
+        let mut definition = definition();
+        definition.fleet = dynamic_fleet(0, 1, 1, 100);
+        let mut session = GameSession::new(definition).unwrap();
+        let destination = session.market_entity(&id("core:s1")).unwrap();
+        session
+            .world
+            .get_mut::<Market>(destination)
+            .unwrap()
+            .operating_profile
+            .stage = BrownoutStage::Emergency;
+
+        session.collect_automated_trader_requests().unwrap();
+
+        assert_eq!(
+            session
+                .world
+                .resource::<FleetDynamics>()
+                .normalized_unserved_opportunity,
+            0
+        );
+        assert!(
+            session
+                .world
+                .resource::<PendingTradeRequests>()
+                .0
+                .is_empty()
+        );
     }
 
     #[test]
@@ -7231,6 +7278,16 @@ mod tests {
             d.systems[1].inventory.insert(id(ENERGY_ID), 50);
             d.systems[1].energy_output_per_tick = Energy::ZERO;
             d.systems[1].population = 0;
+            d.systems[1].population_state.current = 0;
+            d.systems[1].population_state.reference = 0;
+            d.systems[1].population_state.carrying_capacity = 0;
+            // Keep this fixture focused on reservation contention; autonomous
+            // investment spending is covered independently.
+            d.systems[1].investment_policy = InvestmentPolicy::default();
+            d.systems[1]
+                .policy
+                .import_priorities
+                .insert(id("core:ore"), 200);
             let mut npcs = vec![
                 TraderDefinition {
                     id: id("core:ai_a"),
@@ -7718,7 +7775,19 @@ mod tests {
         d.systems[0].inventory.insert(id("core:alloy"), 10);
         d.systems[0].targets.insert(id("core:catalyst"), 10);
         d.systems[0].targets.insert(id("core:alloy"), 10);
+        d.economy.investments.insert(
+            InvestmentKind::RouteSubsidy,
+            InvestmentShape {
+                enabled: true,
+                base_cost: Energy(100),
+                cost_growth_percent: 150,
+                maximum_level: 2,
+                cooldown_ticks: 2,
+                effect_per_level: 10,
+            },
+        );
         let mut s = GameSession::new(d).unwrap();
+        let baseline_bid = s.quotes(&id("core:s0"), &id("core:ore")).unwrap().0;
         let rows = s.processor_solvency().unwrap();
         let row = rows
             .iter()
@@ -7726,6 +7795,26 @@ mod tests {
             .unwrap();
         assert!(row.solvent, "{row:?}");
         assert!(row.expected_input_bids.0 > 0);
+
+        let market = s.market_entity(&id("core:s0")).unwrap();
+        s.world
+            .get_mut::<Market>(market)
+            .unwrap()
+            .investment_state
+            .levels
+            .insert(InvestmentKind::RouteSubsidy, 2);
+        assert_eq!(
+            s.quotes(&id("core:s0"), &id("core:ore")).unwrap().0,
+            baseline_bid,
+            "a subsidy cannot raise a processor input above its solvency ceiling"
+        );
+        let subsidized = s
+            .processor_solvency()
+            .unwrap()
+            .into_iter()
+            .find(|row| row.recipe == id("core:smelt"))
+            .unwrap();
+        assert!(subsidized.solvent, "{subsidized:?}");
     }
 
     #[test]

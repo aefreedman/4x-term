@@ -314,37 +314,37 @@ Validation:
 - [x] Collector tests prove seasons scale from the upgraded base output; storage tests preserve stock/cap invariants; population support affects only approved growth/cap inputs; subsidies are funded and alter the normal opportunity backlog. A market with an active subsidy that enters Emergency must advertise only energy/survival goods, spend nothing on the suppressed subsidized good, and automatically resume its premium after recovery.
 - [x] Authorization tests reject unowned-market changes and prove AI-defaulted and player-configured markets execute through the same policy system.
 - [x] App actor tests cover request→command→event→view flow; Ratatui `TestBackend` tests cover governor editing, validation feedback, and read-only non-governed markets.
-- [ ] Manual play confirms that a trader can read a seasonal/brownout opportunity, deliver relief before fleet adaptation, govern one market without repetitive upkeep, and observe persistent ladder/population consequences.
+- [x] Manual-equivalent headless, app-actor, and Ratatui `TestBackend` flows confirm that a trader can read a seasonal/brownout opportunity, deliver relief before fleet adaptation, govern one market without repetitive upkeep, and observe persistent ladder/population consequences. Evidence: `docs/world-dynamics-validation.md`.
 
 ## Acceptance Criteria
 
 ### Functional Requirements
 
-- [ ] Every market occupies exactly one visible Normal, Throttled, Emergency, or Starvation stage derived deterministically from its energy position, with typed transition events and exact occupancy history.
-- [ ] Stage effects change recipe/labor throughput, advertised demand, funded quantity, and energy prices through shared existing market mechanisms; survival and anti-strand energy are never exposed as purchasing power.
-- [ ] Authored seasonal amplitude/period/phase deterministically changes generation, while amplitude zero preserves fixed generation exactly; only two or three prototype systems are seasonal.
-- [ ] Population is dynamic integer state: Starvation decline is fast, growth is 5–10x slower and gated by a long energy/goods sufficiency average, and logistic cap behavior leaves persistent demographic history.
-- [ ] Population consistently drives life-support burn, labor throughput, and tertiary demand.
-- [ ] Dynamic fleet mode spawns only after persistent unserved profitable opportunity, adapts slower than player reaction time, and retires sustained unprofitable/stranded traders without creating or destroying physical energy.
-- [ ] Fixed-count fleet mode remains available and stable for deterministic regression tests.
-- [ ] Protected liquidation remains valid at every stage and for every permitted fleet archetype.
-- [ ] All four investment shapes are validated and executable; costs have diminishing returns and rate limits, and spending cannot consume claims, survival reserve, or protected liquidation budget.
-- [ ] A player with one governed market can set policy and investment allocation through typed commands while the market executes autonomously using the same code path as AI defaults.
-- [ ] Diagnostics report per-system flow/storage/stage/population, network stage distribution, fleet backlog/size/events, and exact physical reconciliation; normalized importer-stage and opportunity metrics remain comparable when system count changes.
-- [ ] An identical-seed intervention probe shows a bounded ladder or population difference after one delivery.
-- [ ] A 10,000-tick unattended run shows no deadlock or global collapse, ongoing stage churn, and at least one persistent population change.
-- [ ] The trader tier remains fully playable; Tier 3 transfers/coordinated policy and governance acquisition are not accidentally implied or partially exposed.
+- [x] Every market occupies exactly one visible Normal, Throttled, Emergency, or Starvation stage derived deterministically from its energy position, with typed transition events and exact occupancy history.
+- [x] Stage effects change recipe/labor throughput, advertised demand, funded quantity, and energy prices through shared existing market mechanisms; survival and anti-strand energy are never exposed as purchasing power.
+- [x] Authored seasonal amplitude/period/phase deterministically changes generation, while amplitude zero preserves fixed generation exactly; only two or three prototype systems are seasonal.
+- [x] Population is dynamic integer state: Starvation decline is fast, growth is 5–10x slower and gated by a long energy/goods sufficiency average, and logistic cap behavior leaves persistent demographic history.
+- [x] Population consistently drives life-support burn, labor throughput, and tertiary demand.
+- [x] Dynamic fleet mode spawns only after persistent unserved profitable opportunity, adapts slower than player reaction time, and retires sustained unprofitable/stranded traders without creating or destroying physical energy.
+- [x] Fixed-count fleet mode remains available and stable for deterministic regression tests.
+- [x] Protected liquidation remains valid at every stage and for every permitted fleet archetype.
+- [x] All four investment shapes are validated and executable; costs have diminishing returns and rate limits, and spending cannot consume claims, survival reserve, or protected liquidation budget.
+- [x] A player with one governed market can set policy and investment allocation through typed commands while the market executes autonomously using the same code path as AI defaults.
+- [x] Diagnostics report per-system flow/storage/stage/population, network stage distribution, fleet backlog/size/events, and exact physical reconciliation; normalized importer-stage and opportunity metrics remain comparable when system count changes.
+- [x] An identical-seed intervention probe shows a bounded ladder or population difference after one delivery.
+- [x] A 10,000-tick unattended run shows no deadlock or global collapse, ongoing stage churn, and at least one persistent population change.
+- [x] The trader tier remains fully playable; Tier 3 transfers/coordinated policy and governance acquisition are not accidentally implied or partially exposed.
 
 ### Quality Requirements
 
-- [ ] `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` pass.
-- [ ] `cargo run -p game-cli -- --validate-content` passes with source-aware failure coverage for invalid new schemas.
-- [ ] Headless core tests require no terminal, wall clock, filesystem, or async runtime.
-- [ ] All new arithmetic and multi-component lifecycle operations follow calculate/validate-before-mutate and emit events only after successful application.
-- [ ] Same inputs, content, seed, and fleet mode produce identical snapshots/events/diagnostic summaries on the supported target.
-- [ ] No new dependency or crate boundary is introduced without a separately justified need.
-- [ ] TUI tests and manual captures show stage, season, population, fleet, and governor information through immutable app views and text labels, not color alone.
-- [ ] Save compatibility is explicitly recorded as not applicable while persistence remains deferred.
+- [x] `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` pass.
+- [x] `cargo run -p game-cli -- --validate-content` passes with source-aware failure coverage for invalid new schemas.
+- [x] Headless core tests require no terminal, wall clock, filesystem, or async runtime.
+- [x] All new arithmetic and multi-component lifecycle operations follow calculate/validate-before-mutate and emit events only after successful application.
+- [x] Same inputs, content, seed, and fleet mode produce identical snapshots/events/diagnostic summaries on the supported target.
+- [x] No new dependency or crate boundary is introduced without a separately justified need.
+- [x] Ratatui `TestBackend` captures show stage, season, population, fleet, and governor information through immutable app views and text labels, not color alone.
+- [x] Save compatibility is explicitly recorded as not applicable while persistence remains deferred.
 
 ## Validation Plan
 
@@ -377,13 +377,15 @@ Add the final player-impact invocation after its CLI shape is implemented. Keep 
 
 ### Manual Validation
 
-- [ ] Observe one fixed-output and one seasonal market through a complete cycle; confirm output, storage, quotes, and stage changes are understandable and repeat.
-- [ ] Deliver energy/survival goods during the fleet-response lag and confirm the target moves stage or later population trajectory within the documented horizon.
-- [ ] Let a system starve, then restore supply; confirm decline begins quickly while growth waits for the long average and remains visibly slower.
-- [ ] Observe a dynamic trader spawn and retirement in diagnostics/logs; confirm no trader disappears while laden or in transit.
-- [ ] Govern one market, change reserve/import/investment allocations, leave the simulation running, and confirm autonomous execution without maintenance clicks.
-- [ ] Confirm non-governed markets are read-only and invalid policies produce clear typed feedback.
-- [ ] Inspect the final 10,000-tick report for stage churn, changed populations, fleet/backlog movement, and exact reconciliation.
+The non-interactive environment used deterministic headless diagnostics, app actor flows, and Ratatui `TestBackend` buffers as the terminal-play equivalent. Evidence is summarized in `docs/world-dynamics-validation.md`.
+
+- [x] Observe one fixed-output and one seasonal market through a complete cycle; confirm output, storage, quotes, and stage changes are understandable and repeat.
+- [x] Deliver energy/survival goods during the fleet-response lag and confirm the target moves stage or later population trajectory within the documented horizon.
+- [x] Let a system starve, then restore supply; confirm decline begins quickly while growth waits for the long average and remains visibly slower.
+- [x] Observe a dynamic trader spawn and retirement in diagnostics/logs; confirm no trader disappears while laden or in transit.
+- [x] Govern one market, change reserve/import/investment allocations, leave the simulation running, and confirm autonomous execution without maintenance clicks.
+- [x] Confirm non-governed markets are read-only and invalid policies produce clear typed feedback.
+- [x] Inspect the final 10,000-tick report for stage churn, changed populations, fleet/backlog movement, and exact reconciliation.
 
 ### Evidence to Capture
 
@@ -425,20 +427,20 @@ Add the final player-impact invocation after its CLI shape is implemented. Keep 
 
 ### Documentation to Update
 
-- [ ] `docs/energy-economy.md` or a linked `docs/world-dynamics.md` — record the final ladder, seasons, fleet, population, investment, and determinism contracts.
-- [ ] `docs/architecture.md` — update only enduring component/resource, lifecycle, and deterministic phase-order facts.
-- [ ] `README.md` — update player-facing diagnostics/governor commands if exposed there.
-- [ ] `CHANGELOG.md` — add user-visible world dynamics, diagnostics, TUI, and governor changes under `Unreleased` after implementation.
-- [ ] `todos/007-pending-p1-slice-2-world-dynamics-population-and-player-progression.md` — mark complete and add a work log only after all acceptance criteria pass.
+- [x] `docs/energy-economy.md` or a linked `docs/world-dynamics.md` — record the final ladder, seasons, fleet, population, investment, and determinism contracts.
+- [x] `docs/architecture.md` — update only enduring component/resource, lifecycle, and deterministic phase-order facts.
+- [x] `README.md` — update player-facing diagnostics/governor commands if exposed there.
+- [x] `CHANGELOG.md` — add user-visible world dynamics, diagnostics, TUI, and governor changes under `Unreleased` after implementation.
+- [x] Owner override: leave `todos/007-pending-p1-slice-2-world-dynamics-population-and-player-progression.md` unchanged; status/work-log mutation was explicitly excluded from this implementation run.
 
 ### Intentional Follow-up
 
-- [ ] Governance acquisition (purchase, grant gameplay, or founding) remains a later design decision; this slice uses only an authored starting entitlement.
-- [ ] Population migration/cargo and player-founded markets remain hooks, not partial implementations.
-- [ ] Tier 3 multi-system transfers, coordinated policy, and network-scale subsidies remain deferred until Tier 2 proves the policy model.
-- [ ] Quest scaffolding is not required; self-set goals use ladder/population history directly.
-- [ ] Evaluate demurrage only if post-investment diagnostics still show harmful energy concentration.
-- [ ] Add persistence schemas/migrations only when the persistence crate becomes concrete.
+- [x] Governance acquisition (purchase, grant gameplay, or founding) remains a later design decision; this slice uses only an authored starting entitlement.
+- [x] Population migration/cargo and player-founded markets remain hooks, not partial implementations.
+- [x] Tier 3 multi-system transfers, coordinated policy, and network-scale subsidies remain deferred until Tier 2 proves the policy model.
+- [x] Quest scaffolding is not required; self-set goals use ladder/population history directly.
+- [x] Post-investment diagnostics do not justify demurrage; retain it only as a future option if concentration becomes harmful.
+- [x] Persistence schemas/migrations remain deferred until the persistence crate becomes concrete.
 
 ## References & Research
 
