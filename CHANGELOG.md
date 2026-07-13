@@ -41,3 +41,4 @@
 ### Fixed
 
 - Long-run dynamic-fleet diagnostics now skip brownout-suppressed zero-bid opportunities, and route subsidies retain cost-aware processor solvency ceilings.
+- Logistic population growth now preserves compatible fractional carries exactly and uses unbiased round-half-to-even conversion for incompatible carrying-capacity changes, preventing both tiny-population stalls and premature growth.

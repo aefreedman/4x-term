@@ -407,8 +407,8 @@ impl PopulationTrend {
 pub struct LogisticGrowthCarry {
     /// Fractional numerator retained from the previous growth calculation.
     pub remainder: u64,
-    /// Denominator paired with `remainder`; both are rebased atomically when
-    /// carrying capacity changes.
+    /// Denominator paired with `remainder`. Capacity changes preserve an
+    /// exactly compatible denominator and otherwise convert the pair atomically.
     pub denominator: u64,
 }
 
@@ -1208,6 +1208,32 @@ pub fn proportional_population_delta(
     Ok(delta)
 }
 
+fn rebase_fraction_half_even(
+    remainder: u64,
+    old_denominator: u64,
+    new_denominator: u64,
+) -> Result<u64, CoreError> {
+    let scaled = u128::from(remainder)
+        .checked_mul(u128::from(new_denominator))
+        .ok_or(CoreError::Overflow)?;
+    let old_denominator = u128::from(old_denominator);
+    let quotient = scaled / old_denominator;
+    let conversion_remainder = scaled % old_denominator;
+    let twice_remainder = conversion_remainder
+        .checked_mul(2)
+        .ok_or(CoreError::Overflow)?;
+    let rounds_up = twice_remainder > old_denominator
+        || (twice_remainder == old_denominator && !quotient.is_multiple_of(2));
+    let rounded = quotient
+        .checked_add(u128::from(rounds_up))
+        .ok_or(CoreError::Overflow)?;
+    // A carry is strictly fractional. At the upper representable boundary,
+    // retain the nearest valid carry rather than creating an invalid pair.
+    u64::try_from(rounded)
+        .map_err(|_| CoreError::Overflow)
+        .map(|value| value.min(new_denominator - 1))
+}
+
 pub fn logistic_population_delta(
     population: u64,
     carrying_capacity: u64,
@@ -1222,21 +1248,40 @@ pub fn logistic_population_delta(
     {
         return Err(CoreError::InvalidWorldDynamics);
     }
-    let denominator = u128::from(carrying_capacity)
+    let active_denominator = u128::from(carrying_capacity)
         .checked_mul(1_000)
         .and_then(|value| value.checked_mul(u128::from(scale)))
         .ok_or(CoreError::Overflow)?;
-    let denominator = u64::try_from(denominator).map_err(|_| CoreError::Overflow)?;
-    let rebased_remainder = if carry.denominator == 0 || carry.denominator == denominator {
-        carry.remainder
-    } else {
-        u64::try_from(
-            u128::from(carry.remainder)
-                .checked_mul(u128::from(denominator))
-                .ok_or(CoreError::Overflow)?
-                / u128::from(carry.denominator),
+    let active_denominator = u64::try_from(active_denominator).map_err(|_| CoreError::Overflow)?;
+
+    // Preserve the finer denominator whenever either denominator exactly
+    // represents the other. This avoids any directional rounding under
+    // alternating compatible capacities. Incompatible pairs use checked
+    // round-half-to-even conversion rather than biased half-up conversion.
+    let (denominator, rebased_remainder, growth_multiplier) = if carry.denominator == 0 {
+        (active_denominator, 0, 1)
+    } else if carry.denominator.is_multiple_of(active_denominator) {
+        (
+            carry.denominator,
+            carry.remainder,
+            carry.denominator / active_denominator,
         )
-        .map_err(|_| CoreError::Overflow)?
+    } else if active_denominator.is_multiple_of(carry.denominator) {
+        let multiplier = active_denominator / carry.denominator;
+        let remainder = u128::from(carry.remainder)
+            .checked_mul(u128::from(multiplier))
+            .ok_or(CoreError::Overflow)?;
+        (
+            active_denominator,
+            u64::try_from(remainder).map_err(|_| CoreError::Overflow)?,
+            1,
+        )
+    } else {
+        (
+            active_denominator,
+            rebase_fraction_half_even(carry.remainder, carry.denominator, active_denominator)?,
+            1,
+        )
     };
     if population >= carrying_capacity {
         *carry = LogisticGrowthCarry {
@@ -1248,6 +1293,7 @@ pub fn logistic_population_delta(
     let numerator = u128::from(population)
         .checked_mul(u128::from(carrying_capacity - population))
         .and_then(|value| value.checked_mul(u128::from(rate_per_thousand)))
+        .and_then(|value| value.checked_mul(u128::from(growth_multiplier)))
         .and_then(|value| value.checked_add(u128::from(rebased_remainder)))
         .ok_or(CoreError::Overflow)?;
     let next_carry = LogisticGrowthCarry {
@@ -6906,9 +6952,9 @@ mod tests {
     }
 
     #[test]
-    fn laden_retirement_releases_once_cleans_up_and_conserves_cargo_and_energy() {
+    fn laden_sustained_unprofitable_trader_uses_anti_strand_cleanup_and_retires() {
         let mut definition = definition();
-        definition.fleet = dynamic_fleet(1, 1, 100, 100);
+        definition.fleet = dynamic_fleet(1, 1, 100, 2);
         definition.traders.push(TraderDefinition {
             id: id("core:trader_01"),
             name: "Trader 01".into(),
@@ -6942,11 +6988,15 @@ mod tests {
             .unwrap()
             .set_energy_stock(Energy::ZERO)
             .unwrap();
-        session
-            .world
-            .get_mut::<TraderLifecycle>(npc)
-            .unwrap()
-            .retirement = Some(TraderRetirementState::CleaningUp);
+        assert_eq!(
+            session
+                .world
+                .get::<TraderLifecycle>(npc)
+                .unwrap()
+                .retirement,
+            None,
+            "retirement must be triggered by sustained unprofitability"
+        );
         let initial = session.snapshot();
         let initial_energy = physical_energy(&initial);
         let initial_flow = i128::from(initial.energy_flow.net_external_delta().0);
@@ -6961,8 +7011,17 @@ mod tests {
                 .flat_map(|trader| trader.cargo.get(&id("core:ore")))
                 .sum::<u64>();
 
+        let retirement_window = 2_usize;
+        let destination_storage_cap = session
+            .world
+            .get::<Market>(destination)
+            .unwrap()
+            .energy_storage_cap;
+        let mut blocked_tank_return = false;
         let mut releases = 0;
         let mut liquidation_sale = false;
+        let mut observed_profitability_retirement = false;
+        let mut was_retiring = false;
         let mut retired = false;
         for _ in 0..20 {
             session.step().unwrap();
@@ -6978,6 +7037,42 @@ mod tests {
                 )
             });
             let snapshot = session.snapshot();
+            if let Some(trader) = snapshot
+                .traders
+                .iter()
+                .find(|trader| trader.id == id("core:trader_01"))
+            {
+                let is_retiring = trader.retirement.is_some();
+                if is_retiring && !was_retiring {
+                    assert_eq!(trader.profitability_window.len(), retirement_window);
+                    assert!(
+                        trader.profitability_window.iter().sum::<i64>() <= 0,
+                        "profitability retirement transitioned without a sustained loss"
+                    );
+                    assert!(
+                        usize::try_from(trader.failed_liquidation_ticks).unwrap()
+                            < retirement_window,
+                        "failed-liquidation trigger, not profitability, caused retirement"
+                    );
+                    observed_profitability_retirement = true;
+                    session
+                        .world
+                        .get_mut::<Market>(destination)
+                        .unwrap()
+                        .energy_storage_cap = destination_storage_cap;
+                } else if trader.profitability_window.len() == retirement_window - 1
+                    && !blocked_tank_return
+                {
+                    // Keep the retiring entity observable for one snapshot by
+                    // temporarily filling local tank-return headroom. Restoring
+                    // the cap immediately after the transition preserves the
+                    // bounded cleanup and conservation checks below.
+                    let mut market = session.world.get_mut::<Market>(destination).unwrap();
+                    market.energy_storage_cap = market.energy_stock().unwrap();
+                    blocked_tank_return = true;
+                }
+                was_retiring = is_retiring;
+            }
             assert!(!snapshot.traders.iter().any(|trader| {
                 !trader.player
                     && trader.travel.is_none()
@@ -6990,6 +7085,10 @@ mod tests {
             }
         }
         assert!(retired, "laden retirement did not finish within 20 ticks");
+        assert!(
+            observed_profitability_retirement,
+            "the profitability-triggered retirement transition was not observed"
+        );
         assert_eq!(releases, 1);
         assert!(
             liquidation_sale,
@@ -7728,6 +7827,85 @@ mod tests {
         assert_eq!(
             checked_mul_ratio_ceil(Energy(i64::MAX), 2, 1),
             Err(CoreError::Overflow)
+        );
+    }
+
+    #[test]
+    fn route_subsidy_raises_solvent_bid_and_canonical_dynamic_backlog() {
+        let mut definition = definition();
+        enable_investments(&mut definition);
+        definition.fleet = dynamic_fleet(0, 2, 1, 100);
+        definition.goods.push(GoodDefinition {
+            id: id("core:alloy"),
+            name: "Alloy".into(),
+            category: GoodCategory::Primary,
+            bootstrap_cost: Energy(20),
+        });
+        definition.recipes.push(RecipeDefinition {
+            id: id("core:smelt"),
+            name: "Smelt".into(),
+            layer: RecipeLayer::Primary,
+            inputs: vec![GoodAmount {
+                good: id("core:ore"),
+                quantity: 1,
+            }],
+            outputs: vec![RecipeOutput {
+                good: id("core:alloy"),
+                quantity: 1,
+                cost_weight: 1,
+            }],
+            operating_energy: Energy::ZERO,
+            margin_percent: Some(0),
+        });
+        definition.systems[1].recipes.push(id("core:smelt"));
+        definition.systems[1].inventory.insert(id("core:alloy"), 10);
+        definition.systems[1].targets.insert(id("core:alloy"), 10);
+
+        let mut unsubsidized = GameSession::new(definition.clone()).unwrap();
+        let mut subsidized = GameSession::new(definition).unwrap();
+        let destination = subsidized.market_entity(&id("core:s1")).unwrap();
+        subsidized
+            .world
+            .get_mut::<Market>(destination)
+            .unwrap()
+            .investment_state
+            .levels
+            .insert(InvestmentKind::RouteSubsidy, 1);
+
+        let ore = id("core:ore");
+        let normal_bid = unsubsidized.quotes(&id("core:s1"), &ore).unwrap().0;
+        let subsidized_bid = subsidized.quotes(&id("core:s1"), &ore).unwrap().0;
+        let ceiling = {
+            let market = subsidized.world.get::<Market>(destination).unwrap();
+            let policy = subsidized.world.get::<MarketPolicy>(destination).unwrap();
+            subsidized
+                .processor_input_bid_ceiling(market, policy, &ore)
+                .unwrap()
+                .unwrap()
+        };
+        assert!(subsidized_bid > normal_bid);
+        assert!(subsidized_bid <= ceiling);
+        let solvency = subsidized
+            .processor_solvency()
+            .unwrap()
+            .into_iter()
+            .find(|row| row.system == id("core:s1") && row.recipe == id("core:smelt"))
+            .unwrap();
+        assert!(solvency.solvent, "{solvency:?}");
+
+        unsubsidized.collect_automated_trader_requests().unwrap();
+        subsidized.collect_automated_trader_requests().unwrap();
+        let normal_backlog = unsubsidized
+            .world
+            .resource::<FleetDynamics>()
+            .normalized_unserved_opportunity;
+        let subsidized_backlog = subsidized
+            .world
+            .resource::<FleetDynamics>()
+            .normalized_unserved_opportunity;
+        assert!(
+            subsidized_backlog > normal_backlog,
+            "subsidy did not increase canonical fleet routing signal: normal={normal_backlog}, subsidized={subsidized_backlog}"
         );
     }
 
@@ -8820,6 +8998,12 @@ mod tests {
     }
 
     #[test]
+    fn incompatible_logistic_rebases_round_ties_to_even() {
+        assert_eq!(rebase_fraction_half_even(1, 4, 10).unwrap(), 2);
+        assert_eq!(rebase_fraction_half_even(3, 4, 10).unwrap(), 8);
+    }
+
+    #[test]
     fn logistic_population_delta_rejects_invalid_inputs_without_mutating_carry() {
         let mut carry = LogisticGrowthCarry {
             remainder: 17,
@@ -8861,6 +9045,150 @@ mod tests {
     }
 
     #[test]
+    fn logistic_growth_rebases_track_exact_reference_without_capacity_jumps_or_stalls() {
+        const COMMON_CAPACITY: u64 = 10_000;
+        const COMMON_DENOMINATOR: u128 = 10_000_000;
+        const CASES: &[(&str, &[u64], usize)] = &[
+            ("alternating extremes", &[2, 10_000], 10_000),
+            ("intermittent low caps", &[20, 25, 40, 100], 10_000),
+            ("intermittent high caps", &[125, 200, 250, 500], 10_000),
+        ];
+
+        for &(name, capacities, ticks) in CASES {
+            let mut actual_population = 1_u64;
+            let mut actual_carry = LogisticGrowthCarry::default();
+            let mut reference_population = 1_u64;
+            // All table capacities divide COMMON_CAPACITY, so this is an exact
+            // rational accumulator rather than a floating-point approximation.
+            let mut reference_remainder = 0_u128;
+
+            for tick in 0..ticks {
+                let capacity = capacities[tick % capacities.len()];
+                assert_eq!(COMMON_CAPACITY % capacity, 0, "{name}");
+                let before = actual_population;
+                let raw_numerator =
+                    u128::from(before) * u128::from(capacity.saturating_sub(before));
+                let delta =
+                    logistic_population_delta(before, capacity, 1, 1, &mut actual_carry).unwrap();
+                if before >= capacity {
+                    assert_eq!(delta, 0, "capacity changes cannot move population: {name}");
+                } else {
+                    let denominator = u128::from(capacity) * 1_000;
+                    let maximum_tick_growth = raw_numerator.div_ceil(denominator);
+                    assert!(
+                        u128::from(delta) <= maximum_tick_growth,
+                        "capacity rebase caused a discontinuous jump in {name} at tick {tick}"
+                    );
+                }
+                actual_population = actual_population.checked_add(delta).unwrap();
+
+                if reference_population < capacity {
+                    reference_remainder += u128::from(reference_population)
+                        * u128::from(capacity - reference_population)
+                        * u128::from(COMMON_CAPACITY / capacity);
+                    let reference_delta = u64::try_from(reference_remainder / COMMON_DENOMINATOR)
+                        .unwrap()
+                        .min(capacity - reference_population);
+                    reference_remainder %= COMMON_DENOMINATOR;
+                    reference_population += reference_delta;
+                }
+            }
+
+            assert!(
+                actual_population > 1,
+                "growth permanently stalled in {name}"
+            );
+            assert!(
+                actual_population.abs_diff(reference_population) <= 1,
+                "{name}: actual={actual_population}, exact={reference_population}"
+            );
+        }
+    }
+
+    #[test]
+    fn alternating_two_and_four_capacity_matches_exact_fraction_and_settlement_tick() {
+        const COMMON_DENOMINATOR: u128 = 4_000;
+        const EXACT_FIRST_SETTLEMENT_TICK: usize = 1_600;
+        const MAX_SETTLEMENT_TICK_ERROR: usize = 1;
+
+        let mut actual_population = 1_u64;
+        let mut actual_carry = LogisticGrowthCarry::default();
+        let mut exact_population = 1_u64;
+        let mut exact_remainder = 0_u128;
+        let mut actual_first_settlement = None;
+        let mut exact_first_settlement = None;
+        let mut maximum_cumulative_population_error = 0_u64;
+
+        for tick in 1..=2_000 {
+            let capacity = if tick % 2 == 1 { 2 } else { 4 };
+            let actual_delta =
+                logistic_population_delta(actual_population, capacity, 1, 1, &mut actual_carry)
+                    .unwrap();
+            actual_population += actual_delta;
+            if actual_population > 1 && actual_first_settlement.is_none() {
+                actual_first_settlement = Some(tick);
+            }
+
+            if exact_population < capacity {
+                let active_denominator = u128::from(capacity) * 1_000;
+                exact_remainder += u128::from(exact_population)
+                    * u128::from(capacity - exact_population)
+                    * (COMMON_DENOMINATOR / active_denominator);
+                let exact_delta = u64::try_from(exact_remainder / COMMON_DENOMINATOR)
+                    .unwrap()
+                    .min(capacity - exact_population);
+                exact_remainder %= COMMON_DENOMINATOR;
+                exact_population += exact_delta;
+                if exact_population > 1 && exact_first_settlement.is_none() {
+                    exact_first_settlement = Some(tick);
+                }
+            }
+
+            assert_eq!(
+                COMMON_DENOMINATOR % u128::from(actual_carry.denominator),
+                0,
+                "tick {tick}: owner carry cannot be compared exactly"
+            );
+            let owner_progress = u128::from(actual_population) * COMMON_DENOMINATOR
+                + u128::from(actual_carry.remainder)
+                    * (COMMON_DENOMINATOR / u128::from(actual_carry.denominator));
+            let exact_progress =
+                u128::from(exact_population) * COMMON_DENOMINATOR + exact_remainder;
+            assert_eq!(
+                owner_progress, exact_progress,
+                "tick {tick}: owner population/fraction diverged from exact rational progress"
+            );
+            maximum_cumulative_population_error = maximum_cumulative_population_error
+                .max(actual_population.abs_diff(exact_population));
+        }
+
+        assert!(
+            maximum_cumulative_population_error <= 1,
+            "owner cumulative population error exceeded one: {maximum_cumulative_population_error}"
+        );
+        assert_eq!(exact_first_settlement, Some(EXACT_FIRST_SETTLEMENT_TICK));
+        let actual_first_settlement = actual_first_settlement.unwrap();
+        assert!(
+            actual_first_settlement.abs_diff(EXACT_FIRST_SETTLEMENT_TICK)
+                <= MAX_SETTLEMENT_TICK_ERROR,
+            "owner settled at tick {actual_first_settlement}, exact tick is {EXACT_FIRST_SETTLEMENT_TICK}"
+        );
+    }
+
+    #[test]
+    fn tiny_population_remainder_progress_survives_repeated_rebases() {
+        let mut carry = LogisticGrowthCarry::default();
+        let first_growth_tick = (1..=2_000).find(|tick| {
+            let capacity = if tick % 2 == 0 { 10_000 } else { 2 };
+            logistic_population_delta(1, capacity, 1, 1, &mut carry).unwrap() > 0
+        });
+        assert!(
+            first_growth_tick.is_some(),
+            "alternating denominator rebases must not erase tiny-population progress"
+        );
+    }
+
+    #[test]
     fn logistic_growth_carry_rebases_atomically_across_capacity_changes() {
         let mut carry = LogisticGrowthCarry {
             remainder: 50_000,
@@ -8871,8 +9199,8 @@ mod tests {
             0,
             "a downward cap change accepts an old remainder larger than the new denominator"
         );
-        assert_eq!(carry.denominator, 10_000);
-        assert_eq!(carry.remainder, 5_025);
+        assert_eq!(carry.denominator, 100_000);
+        assert_eq!(carry.remainder, 50_250);
 
         assert_eq!(
             logistic_population_delta(5, 200, 1, 1, &mut carry).unwrap(),
