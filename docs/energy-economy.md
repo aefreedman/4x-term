@@ -105,7 +105,7 @@ Every ordinary quote, funded quantity, reservation, settlement, and tank withdra
 
 ### Deterministic seasons
 
-Each system has a compiled base generation rate and an integer triangle-wave definition with amplitude, period, and phase. The pure waveform is periodic, bounded to non-negative output, and uses checked integer arithmetic only. Amplitude zero returns the base rate exactly without evaluating phase arithmetic. The current brownout checkpoint still generates the base rate; the seasonal runtime writer remains deferred. Collector investment will change the base rate, and future seasonal output will always derive from that base. Repository defaults remain zero amplitude.
+Each system has a compiled base generation rate and an integer triangle-wave definition with amplitude, period, and phase. A nonzero amplitude requires an even period so the sampled wave reaches exact trough and crest extrema; fixed-output zero-amplitude definitions may use any valid period of at least two ticks. The pure waveform is periodic, bounded to non-negative output, and uses checked integer arithmetic only. Amplitude zero returns the base rate exactly without evaluating phase arithmetic. Effective output is derived from the mutable base before life support on every tick; collector investment will therefore change the base while seasons continue to derive from it. Snapshots expose base/effective output, integer phase, trend, and the next turning point. Exactly three repository systems have nonzero amplitudes; all others retain exact fixed-output compatibility.
 
 ### Population, fleet, investment, and governance scaffolding
 
@@ -128,7 +128,7 @@ Aggregate simulation history, not formatted UI history, owns stage occupancy/tra
 The headless core executes explicit deterministic phases for the current brownout checkpoint:
 
 1. complete travel and refresh/expire reservation state;
-2. generate the configured base output, cap storage, and record curtailment;
+2. derive deterministic seasonal effective output from the current base, generate it, cap storage, and record curtailment;
 3. assess mandatory life support;
 4. classify the brownout stage and derive the effective operating profile;
 5. execute sources and recipes with composed stage/labor throughput and operating energy;
@@ -157,7 +157,9 @@ Snapshots and the TUI distinguish market stock/cap, active claims, operating res
 The energy ledger separately tracks generation, life support, source/production/travel burn, curtailment, market↔tank and market↔energy-cargo transfers, and unsupplied life support. Per-market counters remain checked `Energy`; global reporting aggregates exactly in wider `i128` counters and never saturates or clamps. Reservation claim changes are non-physical and excluded. Diagnostics reconcile:
 
 ```text
-initial physical stock + generated − burned − curtailed = final physical stock
+initial physical stock + recorded external inflow + generated − burned − curtailed = final physical stock
 ```
 
-The CLI supports identical-seed scarcity versus cost-aware A/B runs and reports interval activity, stationary-laden traders, realized processor input cost, operating energy, output revenue, realized margin, structural processor solvency, reserves, claims, and storage. It displays market↔tank and market↔energy-cargo transfer dimensions separately while excluding those internal transfers from exact external-flow reconciliation.
+The CLI supports identical-seed scarcity versus cost-aware A/B runs and reports interval activity, per-system net stock flow/storage/stage history, network stage percentages, stationary-laden traders, seasonal phase and cycle amplitudes, realized processor input cost, operating energy, output revenue, realized margin, structural processor solvency, reserves, claims, and storage. Opportunity per system is explicitly reported as unavailable until the dynamic-fleet opportunity writer is activated. It displays market↔tank and market↔energy-cargo transfer dimensions separately while excluding those internal transfers from exact external-flow reconciliation.
+
+`--player-impact` runs two identical deterministic sessions and applies exactly one typed `RecordExternalDelivery` to the intervention session. Target, delivery tick, good, quantity, and bounded horizon are explicit CLI inputs. The core validates the full delivery before mutation, emits one recorded-delivery event, and accounts energy deliveries as external inflow in exact reconciliation. The probe reports the first target stage/population divergence or fails when none occurs within the requested horizon.

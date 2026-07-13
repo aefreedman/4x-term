@@ -663,12 +663,19 @@ fn compile(
                 "economy.ron:{system}: starting_energy must fit positive energy_storage_cap"
             ));
         }
-        if source.seasonal.amplitude_percent > 100
-            || source.seasonal.period_ticks < 2
-            || source.seasonal.phase_ticks >= source.seasonal.period_ticks
-        {
+        let seasonal_shape_valid = source.seasonal.amplitude_percent <= 100
+            && source.seasonal.period_ticks >= 2
+            && source.seasonal.phase_ticks < source.seasonal.period_ticks;
+        if !seasonal_shape_valid {
             errors.push(format!(
                 "economy.ron:{system}:seasonal: amplitude must be 0..=100, period >= 2, and phase < period"
+            ));
+        }
+        let seasonal_period_valid = source.seasonal.amplitude_percent == 0
+            || source.seasonal.period_ticks.is_multiple_of(2);
+        if !seasonal_period_valid {
+            errors.push(format!(
+                "economy.ron:{system}:seasonal: nonzero amplitude requires an even period"
             ));
         }
         let seasonal_generation = SeasonalGenerationState {
@@ -678,8 +685,11 @@ fn compile(
             phase_ticks: source.seasonal.phase_ticks,
             current_effective_output: energy_output_per_tick,
         };
-        if seasonal_generation.effective_output_at(0).is_err() {
-            errors.push(format!("economy.ron:{system}:seasonal: output overflows"));
+        if seasonal_shape_valid && seasonal_period_valid && seasonal_generation.validate().is_err()
+        {
+            errors.push(format!(
+                "economy.ron:{system}:seasonal: output bounds overflow"
+            ));
         }
         let reference = source.population_reference.unwrap_or(source.population);
         let cap = source.population_cap.unwrap_or(reference);
@@ -1741,9 +1751,18 @@ mod tests {
                 .values()
                 .all(|shape| !shape.enabled)
         );
+        assert_eq!(
+            loaded
+                .definition
+                .systems
+                .iter()
+                .filter(|system| system.seasonal_generation.amplitude_percent > 0)
+                .count(),
+            3,
+            "repository tuning keeps seasons focused on exactly three systems"
+        );
         assert!(loaded.definition.systems.iter().all(|system| {
-            system.seasonal_generation.amplitude_percent == 0
-                && system.seasonal_generation.base_output == system.energy_output_per_tick
+            system.seasonal_generation.base_output == system.energy_output_per_tick
                 && system.population_state.current == system.population
         }));
         assert!(matches!(
@@ -1792,6 +1811,29 @@ mod tests {
         ] {
             assert!(error.contains(context), "missing {context} in {error}");
         }
+    }
+
+    #[test]
+    fn nonzero_seasonal_amplitude_rejects_odd_period_with_source_context() {
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
+        let config = load(root().join("economy_config.ron")).unwrap();
+        let traders = load(root().join("traders.ron")).unwrap();
+        economy.markets[0].seasonal.amplitude_percent = 20;
+        economy.markets[0].seasonal.period_ticks = 3;
+        economy.markets[0].seasonal.phase_ticks = 0;
+
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(
+                "economy.ron:frontier:system_01:seasonal: nonzero amplitude requires an even period"
+            ),
+            "{error}"
+        );
     }
 
     #[test]

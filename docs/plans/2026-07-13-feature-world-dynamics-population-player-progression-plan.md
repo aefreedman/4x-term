@@ -254,18 +254,18 @@ Validation:
 
 ### Phase 3: Diagnostics, Player-Impact Probe, and Seasonal Supply
 
-- [ ] Extend `--economy-diagnostics` interval/final output with per-system net flow, storage percentage, current stage, stage occupancy, and transition counts; add network stage percentages, normalized fleet opportunity per system, and stage-cycle amplitude summaries.
-- [ ] Add an identical-seed differential runner with one recorded exogenous delivery or controlled delivery fixture, configurable target/tick/good/quantity, and an explicit divergence horizon.
-- [ ] Implement deterministic seasonal effective generation after baseline ladder diagnostics are stable.
-- [ ] Expose current base/effective output and seasonal phase/next turning point in app/TUI views so patterns are learnable.
-- [ ] Tune only two or three repository systems to nonzero amplitude; keep all others at zero.
-- [ ] Add formatter/output tests rather than asserting large complete diagnostic logs.
+- [x] Extend `--economy-diagnostics` interval/final output with per-system net flow, storage percentage, current stage, stage occupancy, and transition counts; add network stage percentages, normalized fleet opportunity per system, and stage-cycle amplitude summaries.
+- [x] Add an identical-seed differential runner with one recorded exogenous delivery or controlled delivery fixture, configurable target/tick/good/quantity, and an explicit divergence horizon.
+- [x] Implement deterministic seasonal effective generation after baseline ladder diagnostics are stable.
+- [x] Expose current base/effective output and seasonal phase/next turning point in app/TUI views so patterns are learnable.
+- [x] Tune only two or three repository systems to nonzero amplitude; keep all others at zero.
+- [x] Add formatter/output tests rather than asserting large complete diagnostic logs.
 
 Validation:
-- [ ] Seasonal helper tests cover amplitude zero, period/phase wrap, extrema, negative-generation prevention, overflow, and repeatability.
-- [ ] The player-impact fixture produces a ladder-stage or population difference within its authored bounded horizon while baseline and intervention runs otherwise begin identically.
-- [ ] Diagnostics reconcile external intervention inflow explicitly and retain exact normal physical-energy reconciliation.
-- [ ] Manual diagnostic inspection confirms recurring glut/famine timing is discoverable from the displayed phase and market prices.
+- [x] Seasonal helper tests cover amplitude zero, period/phase wrap, extrema, negative-generation prevention, overflow, and repeatability.
+- [x] The player-impact fixture produces a ladder-stage or population difference within its authored bounded horizon while baseline and intervention runs otherwise begin identically.
+- [x] Diagnostics reconcile external intervention inflow explicitly and retain exact normal physical-energy reconciliation.
+- [x] Manual diagnostic inspection confirms recurring glut/famine timing is discoverable from the displayed phase and market prices.
 
 ### Phase 4: Endogenous NPC Fleet Behind a Mode Flag
 

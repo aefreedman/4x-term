@@ -43,7 +43,7 @@ The terminal should be at least 70 columns by 24 rows. The prototype exposes cur
 Runtime content is stored under `content/`.
 
 - `economy_config.ron` controls global market buy/sell percentages, the untargeted-good discount, overall raw-source output, and idle NPC repositioning.
-- `economy.ron` controls per-system inventories, demand targets, recipes, and raw sources.
+- `economy.ron` controls per-system inventories, demand targets, recipes, raw sources, and deterministic seasonal generation.
 - `goods.ron` controls individual base prices.
 - `traders.ron` controls trader count, speed, starting funds, cargo capacity, naming, and distribution.
 
@@ -51,7 +51,17 @@ The initial nine NPC traders use `EvenlySpaced` distribution across the 20 syste
 
 ## Economy diagnostics
 
-Run `cargo run -p game-cli -- --economy-diagnostics 500` to inspect activity in 50-tick windows and final per-market cash flow, source/production volume, tertiary consumption, currency concentration, and NPC cargo/travel state. The report is intended for balancing and long-run deadlock investigation.
+Run `cargo run -p game-cli -- --economy-diagnostics 500` to inspect 50-tick and final per-system net flow, storage, brownout history, seasonal phase/output, network stage percentages, cycle amplitudes, physical-energy reconciliation, and NPC cargo/travel state.
+
+Run an identical-session player-impact probe with one explicitly recorded external delivery:
+
+```bash
+cargo run -p game-cli -- --player-impact \
+  --impact-target frontier:system_04 --impact-tick 300 \
+  --impact-good core:energy --impact-quantity 500 --impact-horizon 500
+```
+
+The probe requires a stage or population divergence within the bounded horizon and reconciles the intervention inflow separately.
 
 ## Validation
 
@@ -59,6 +69,7 @@ Run `cargo run -p game-cli -- --economy-diagnostics 500` to inspect activity in 
 cargo run -p game-cli -- --validate-content
 cargo run -p game-cli -- --headless
 cargo run -p game-cli -- --economy-diagnostics 500
+cargo run -p game-cli -- --player-impact --impact-target frontier:system_04 --impact-tick 300 --impact-good core:energy --impact-quantity 500 --impact-horizon 500
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features

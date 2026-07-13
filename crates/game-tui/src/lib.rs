@@ -471,6 +471,19 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
     if energy.bootstrap_risk_acknowledged {
         lines.push(Line::from("Bootstrap risk: ACKNOWLEDGED"));
     }
+    let season = energy.seasonal_generation;
+    lines.push(Line::from(format!(
+        "Season {}/{} base/effective · phase {}/{} {} · turn {} ({}t)",
+        season.base_output.0,
+        season.effective_output.0,
+        season.phase_ticks,
+        season.period_ticks,
+        season.trend.label(),
+        season
+            .next_turning_point_tick
+            .map_or_else(|| "beyond".into(), |tick| tick.to_string()),
+        season.ticks_until_turning_point,
+    )));
     if let Some(route) = &view.selected_route {
         let mode = if route.current_leg.is_some() {
             format!("Traveling to {}", route.destination_name)
@@ -656,13 +669,13 @@ mod tests {
     use super::*;
     use game_app::{
         CargoItemView, ConnectionView, EnergyHealth, MarketEnergyView, MarketRow, PlayerStatusView,
-        RouteLegView, RouteView, SystemListItem, TickRate,
+        RouteLegView, RouteView, SeasonalGenerationView, SystemListItem, TickRate,
     };
     use game_core::{
         BrownoutStage, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetDynamics, FleetMode,
         GameDefinition, GameSession, GoodCategory, GoodDefinition, Governance, InvestmentPolicy,
         MarketPolicy, PopulationState, Position3, RefuelPolicy, SeasonalGenerationState,
-        SystemDefinition, TraderDefinition,
+        SeasonalTrend, SystemDefinition, TraderDefinition,
     };
     use ratatui::backend::TestBackend;
     use std::cell::RefCell;
@@ -800,6 +813,15 @@ mod tests {
                 health: EnergyHealth::Healthy,
                 brownout_stage: BrownoutStage::Normal,
                 runway_ticks: 80,
+                seasonal_generation: SeasonalGenerationView {
+                    base_output: Energy(40),
+                    effective_output: Energy(32),
+                    phase_ticks: 0,
+                    period_ticks: 20,
+                    trend: SeasonalTrend::Rising,
+                    ticks_until_turning_point: 10,
+                    next_turning_point_tick: Some(10),
+                },
                 connections: vec![ConnectionView {
                     system_id: id("core:s1"),
                     system_name: "Brasshaven".into(),
@@ -824,6 +846,15 @@ mod tests {
                 health: EnergyHealth::Healthy,
                 brownout_stage: BrownoutStage::Normal,
                 runway_ticks: 80,
+                seasonal_generation: SeasonalGenerationView {
+                    base_output: Energy(40),
+                    effective_output: Energy(32),
+                    phase_ticks: 0,
+                    period_ticks: 20,
+                    trend: SeasonalTrend::Rising,
+                    ticks_until_turning_point: 10,
+                    next_turning_point_tick: Some(10),
+                },
             },
             market: vec![MarketRow {
                 good_id: id("core:ore"),
@@ -989,6 +1020,8 @@ mod tests {
             );
             assert!(rendered.contains(&format!("{}t runway", view.market_energy.runway_ticks)));
             assert!(rendered.contains(&format!("Normal → {}", stage.label())));
+            assert!(rendered.contains("Season 40/32 base/effective"));
+            assert!(rendered.contains("phase 0/20 rising · turn 10 (10t)"));
             if stage >= BrownoutStage::Emergency {
                 assert!(rendered.contains("0 E"), "suppressed distress bid missing");
             }

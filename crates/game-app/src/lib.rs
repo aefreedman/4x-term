@@ -2,7 +2,8 @@
 
 use game_core::{
     BrownoutStage, ContentId, CoreError, ENERGY_ID, Energy, GameCommand, GameEvent, GameSession,
-    MarketPolicy, ReservationStatus, route_travel_energy, ticks_for_distance, travel_energy,
+    MarketPolicy, ReservationStatus, SeasonalTrend, route_travel_energy, ticks_for_distance,
+    travel_energy,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
@@ -102,7 +103,19 @@ pub struct SystemListItem {
     pub health: EnergyHealth,
     pub brownout_stage: BrownoutStage,
     pub runway_ticks: u32,
+    pub seasonal_generation: SeasonalGenerationView,
     pub connections: Vec<ConnectionView>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SeasonalGenerationView {
+    pub base_output: Energy,
+    pub effective_output: Energy,
+    pub phase_ticks: u32,
+    pub period_ticks: u32,
+    pub trend: SeasonalTrend,
+    pub ticks_until_turning_point: u32,
+    pub next_turning_point_tick: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -141,6 +154,7 @@ pub struct MarketEnergyView {
     pub health: EnergyHealth,
     pub brownout_stage: BrownoutStage,
     pub runway_ticks: u32,
+    pub seasonal_generation: SeasonalGenerationView,
 }
 
 #[derive(Clone, Debug)]
@@ -468,6 +482,15 @@ fn build_view(
             health: energy_health(market),
             brownout_stage: market.brownout.stage,
             runway_ticks: market.brownout.ticks_of_burn,
+            seasonal_generation: SeasonalGenerationView {
+                base_output: market.seasonal_generation.base_output,
+                effective_output: market.seasonal_generation.current_effective_output,
+                phase_ticks: market.seasonal_phase.position_ticks,
+                period_ticks: market.seasonal_phase.period_ticks,
+                trend: market.seasonal_phase.trend,
+                ticks_until_turning_point: market.seasonal_phase.ticks_until_turning_point,
+                next_turning_point_tick: market.seasonal_phase.next_turning_point_tick,
+            },
             connections: session
                 .graph()
                 .neighbors(&market.system_id)
@@ -598,6 +621,15 @@ fn build_view(
             health: energy_health(selected_market),
             brownout_stage: selected_market.brownout.stage,
             runway_ticks: selected_market.brownout.ticks_of_burn,
+            seasonal_generation: SeasonalGenerationView {
+                base_output: selected_market.seasonal_generation.base_output,
+                effective_output: selected_market.seasonal_generation.current_effective_output,
+                phase_ticks: selected_market.seasonal_phase.position_ticks,
+                period_ticks: selected_market.seasonal_phase.period_ticks,
+                trend: selected_market.seasonal_phase.trend,
+                ticks_until_turning_point: selected_market.seasonal_phase.ticks_until_turning_point,
+                next_turning_point_tick: selected_market.seasonal_phase.next_turning_point_tick,
+            },
         },
         market,
         player: PlayerStatusView {
@@ -788,6 +820,18 @@ fn format_event(event: &GameEvent, labels: &EventLabels) -> String {
             labels.system(system),
             burned.0,
             unsupplied.0
+        ),
+        GameEvent::ExternalDeliveryRecorded {
+            system,
+            good,
+            quantity,
+            energy_inflow,
+            tick,
+        } => format!(
+            "Recorded external delivery of {quantity} {} to {} at tick {tick} ({} energy inflow)",
+            labels.good(good),
+            labels.system(system),
+            energy_inflow.0
         ),
         GameEvent::BrownoutTransition {
             system,
@@ -1219,6 +1263,25 @@ mod tests {
                 .iter()
                 .all(|event| !event.contains("core:"))
         );
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn views_project_seasonal_base_effective_phase_and_turning_point() {
+        let mut definition = definition();
+        definition.systems[0].seasonal_generation.amplitude_percent = 20;
+        definition.systems[0].seasonal_generation.period_ticks = 4;
+        definition.systems[0].seasonal_generation.phase_ticks = 0;
+        let handle = spawn(GameSession::new(definition).unwrap());
+        let initial = handle.views.borrow().clone();
+        let system = &initial.systems[0].seasonal_generation;
+        assert_eq!(system.base_output, Energy(10));
+        assert_eq!(system.effective_output, Energy(8));
+        assert_eq!(system.phase_ticks, 0);
+        assert_eq!(system.period_ticks, 4);
+        assert_eq!(system.trend, SeasonalTrend::Rising);
+        assert_eq!(system.next_turning_point_tick, Some(2));
+        assert_eq!(initial.market_energy.seasonal_generation, *system);
         handle.shutdown().await.unwrap();
     }
 

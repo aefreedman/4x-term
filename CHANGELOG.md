@@ -13,6 +13,8 @@
 - Deterministic funded partial-arrival recovery, processor structural-solvency reporting, authored physical refuel policies, and explicit normal/full/low/deficit energy displays.
 - A deterministic four-stage brownout ladder with stage transitions, runway, stage-aware throughput, demand, pricing, protection, immutable app views, and textual TUI visibility.
 - Validated world-dynamics content scaffolding for seasons, static/dynamic population configuration, fixed/dynamic fleets, all four investment kinds, governance, and aggregate history.
+- Deterministic seasonal generation on three prototype systems, with base/effective output, phase, trend, and next-turning-point visibility in immutable app views and the TUI.
+- A bounded identical-session player-impact probe with one typed, recorded external delivery and explicit reconciliation of intervention inflow.
 
 ### Changed
 
@@ -24,4 +26,7 @@
 - Automated traders now reposition to supply markets after unloading at demand-only destinations.
 - Global market spreads, untargeted demand, raw-source output, and idle trader repositioning are now designer-configurable in `content/economy_config.ron`.
 - Replaced generic currency reporting with physical energy-flow, production, reserve, funded-demand, realized processor cost/revenue/margin, storage, trader-tank, and separate physical-transfer diagnostics in the long-run `--economy-diagnostics` report.
+- Expanded interval and final economy diagnostics with per-system net flow/storage/stage history, network stage percentages, seasonal state, and cycle-amplitude summaries; diagnostics and player-impact probes now fail on reconciliation calculation errors or mismatches.
+- Nonzero seasonal amplitudes now require even periods so triangle waves reach exact sampled extrema, with source-aware content errors for invalid definitions.
+- Conflicting CLI execution modes are rejected instead of being resolved by argument-order precedence.
 - Cost-aware asks now compound sustainable cost-basis margin with bounded scarcity, while processor input bids use deterministic non-recursive solvency ceilings.

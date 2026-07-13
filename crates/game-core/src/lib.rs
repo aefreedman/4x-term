@@ -290,6 +290,23 @@ pub struct SeasonalGenerationState {
 }
 
 impl SeasonalGenerationState {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.base_output.0 < 0
+            || self.amplitude_percent > 100
+            || self.period_ticks < 2
+            || (self.amplitude_percent > 0 && !self.period_ticks.is_multiple_of(2))
+            || self.phase_ticks >= self.period_ticks
+        {
+            return Err(CoreError::InvalidWorldDynamics);
+        }
+        let maximum = i128::from(self.base_output.0)
+            .checked_mul(i128::from(100_u32 + self.amplitude_percent))
+            .ok_or(CoreError::Overflow)?
+            / 100;
+        i64::try_from(maximum).map_err(|_| CoreError::Overflow)?;
+        Ok(())
+    }
+
     pub fn effective_output_at(&self, tick: u64) -> Result<Energy, CoreError> {
         triangle_wave_output(
             self.base_output,
@@ -299,6 +316,35 @@ impl SeasonalGenerationState {
             tick,
         )
     }
+
+    pub fn phase_at(&self, tick: u64) -> Result<SeasonalPhaseSnapshot, CoreError> {
+        seasonal_phase(self.period_ticks, self.phase_ticks, tick)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SeasonalTrend {
+    Rising,
+    Falling,
+}
+
+impl SeasonalTrend {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rising => "rising",
+            Self::Falling => "falling",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SeasonalPhaseSnapshot {
+    pub position_ticks: u32,
+    pub period_ticks: u32,
+    pub trend: SeasonalTrend,
+    pub ticks_until_turning_point: u32,
+    pub next_turning_point_tick: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -611,17 +657,19 @@ pub fn triangle_wave_output(
     phase_ticks: u32,
     tick: u64,
 ) -> Result<Energy, CoreError> {
-    if base.0 < 0 || amplitude_percent > 100 || period_ticks < 2 || phase_ticks >= period_ticks {
+    if base.0 < 0
+        || amplitude_percent > 100
+        || period_ticks < 2
+        || (amplitude_percent > 0 && !period_ticks.is_multiple_of(2))
+        || phase_ticks >= period_ticks
+    {
         return Err(CoreError::InvalidWorldDynamics);
     }
     if amplitude_percent == 0 || base == Energy::ZERO {
         return Ok(base);
     }
     let period = u64::from(period_ticks);
-    let position = tick
-        .checked_add(u64::from(phase_ticks))
-        .ok_or(CoreError::Overflow)?
-        % period;
+    let position = (tick % period + u64::from(phase_ticks)) % period;
     // A deterministic triangle in [-period, +period], starting at its trough.
     let doubled = position.checked_mul(2).ok_or(CoreError::Overflow)?;
     let triangle = if doubled <= period {
@@ -648,6 +696,33 @@ pub fn triangle_wave_output(
     Ok(Energy(
         i64::try_from(output.max(0)).map_err(|_| CoreError::Overflow)?,
     ))
+}
+
+pub fn seasonal_phase(
+    period_ticks: u32,
+    phase_ticks: u32,
+    tick: u64,
+) -> Result<SeasonalPhaseSnapshot, CoreError> {
+    if period_ticks < 2 || phase_ticks >= period_ticks {
+        return Err(CoreError::InvalidWorldDynamics);
+    }
+    let period = u64::from(period_ticks);
+    let position = (tick % period + u64::from(phase_ticks)) % period;
+    let crest = u64::from(period_ticks.div_ceil(2));
+    let (trend, ticks_until_turning_point) = if position < crest {
+        (SeasonalTrend::Rising, crest - position)
+    } else {
+        (SeasonalTrend::Falling, period - position)
+    };
+    let ticks_until_turning_point =
+        u32::try_from(ticks_until_turning_point).map_err(|_| CoreError::Overflow)?;
+    Ok(SeasonalPhaseSnapshot {
+        position_ticks: u32::try_from(position).map_err(|_| CoreError::Overflow)?,
+        period_ticks,
+        trend,
+        ticks_until_turning_point,
+        next_turning_point_tick: tick.checked_add(u64::from(ticks_until_turning_point)),
+    })
 }
 
 pub fn classify_brownout(
@@ -878,6 +953,7 @@ pub struct MarketLedger {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct EnergyFlowLedger {
+    pub external_inflow: Energy,
     pub generated: Energy,
     pub life_support_burned: Energy,
     pub life_support_unsupplied: Energy,
@@ -893,7 +969,8 @@ pub struct EnergyFlowLedger {
 
 impl EnergyFlowLedger {
     pub fn net_external_delta(self) -> Result<Energy, CoreError> {
-        self.generated
+        self.external_inflow
+            .checked_add(self.generated)?
             .checked_sub(self.life_support_burned)?
             .checked_sub(self.source_burned)?
             .checked_sub(self.production_burned)?
@@ -906,6 +983,7 @@ impl EnergyFlowLedger {
 /// remain checked `Energy`; aggregation must never clamp to a plausible value.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct GlobalEnergyFlowLedger {
+    pub external_inflow: WideEnergy,
     pub generated: WideEnergy,
     pub life_support_burned: WideEnergy,
     pub life_support_unsupplied: WideEnergy,
@@ -935,7 +1013,7 @@ impl GlobalEnergyFlowLedger {
     #[must_use]
     pub fn net_external_delta(self) -> WideEnergy {
         WideEnergy(WideAmount(
-            i128::from(self.generated.0)
+            i128::from(self.external_inflow.0) + i128::from(self.generated.0)
                 - i128::from(self.life_support_burned.0)
                 - i128::from(self.source_burned.0)
                 - i128::from(self.production_burned.0)
@@ -950,6 +1028,7 @@ impl GlobalEnergyFlowLedger {
                 self.$field.0.0 += i128::from(flow.$field.0);
             };
         }
+        add!(external_inflow);
         add!(generated);
         add!(life_support_burned);
         add!(life_support_unsupplied);
@@ -1386,6 +1465,13 @@ pub enum GameEvent {
         burned: Energy,
         unsupplied: Energy,
     },
+    ExternalDeliveryRecorded {
+        system: ContentId,
+        good: ContentId,
+        quantity: u64,
+        energy_inflow: Energy,
+        tick: u64,
+    },
     BrownoutTransition {
         system: ContentId,
         from: BrownoutStage,
@@ -1500,6 +1586,13 @@ pub enum GameCommand {
         system: ContentId,
         policy: MarketPolicy,
     },
+    /// A core-owned, auditable boundary for diagnostics and future adapters.
+    /// This is deliberately not exposed through the player application API.
+    RecordExternalDelivery {
+        system: ContentId,
+        good: ContentId,
+        quantity: u64,
+    },
     CancelReservation,
 }
 
@@ -1559,7 +1652,7 @@ pub struct MarketDemandSnapshot {
     pub funded: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MarketSnapshot {
     pub system_id: ContentId,
     pub name: String,
@@ -1577,6 +1670,7 @@ pub struct MarketSnapshot {
     pub brownout: BrownoutState,
     pub operating_profile: MarketOperatingProfile,
     pub seasonal_generation: SeasonalGenerationState,
+    pub seasonal_phase: SeasonalPhaseSnapshot,
     pub population_state: PopulationState,
     pub investment_policy: InvestmentPolicy,
     pub investment_state: InvestmentState,
@@ -1587,7 +1681,7 @@ pub struct MarketSnapshot {
     pub ledger: MarketLedger,
     pub energy_flow: EnergyFlowLedger,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TraderSnapshot {
     pub id: ContentId,
     pub name: String,
@@ -1604,7 +1698,7 @@ pub struct TraderSnapshot {
     pub ledger: TradeLedger,
     pub player: bool,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CoreSnapshot {
     pub tick: u64,
     pub markets: Vec<MarketSnapshot>,
@@ -1898,11 +1992,13 @@ impl GameSession {
                     .carrying_capacity
                     .max(system.population);
             }
+            system.seasonal_generation.validate()?;
+            let initial_effective_output = system.seasonal_generation.effective_output_at(0)?;
+            system.seasonal_generation.current_effective_output = initial_effective_output;
             if system.energy_output_per_tick.0 < 0
                 || system.energy_storage_cap.0 <= 0
                 || system.protected_liquidation_budget.0 < 0
                 || system.seasonal_generation.base_output != system.energy_output_per_tick
-                || system.seasonal_generation.effective_output_at(0).is_err()
                 || system.population_state.current != system.population
                 || system.population_state.reference == 0
             {
@@ -2106,6 +2202,11 @@ impl GameSession {
             GameCommand::SetMarketPolicy { system, policy } => {
                 self.set_player_policy(&system, policy)
             }
+            GameCommand::RecordExternalDelivery {
+                system,
+                good,
+                quantity,
+            } => self.record_external_delivery(&system, &good, quantity),
             GameCommand::CancelReservation => {
                 let e = self.player_entity()?;
                 self.cancel_trader_reservation(e, ReservationStatus::Cancelled)
@@ -2119,6 +2220,64 @@ impl GameSession {
         }
         result
     }
+    fn record_external_delivery(
+        &mut self,
+        system: &ContentId,
+        good: &ContentId,
+        quantity: u64,
+    ) -> Result<(), CoreError> {
+        if quantity == 0 {
+            return Err(CoreError::ZeroQuantity);
+        }
+        let good_definition = self
+            .world
+            .resource::<Catalog>()
+            .goods
+            .get(good)
+            .cloned()
+            .ok_or_else(|| CoreError::Unknown {
+                kind: "good",
+                id: good.to_string(),
+            })?;
+        let entity = self.market_entity(system)?;
+        let mut next = self.world.get::<Market>(entity).unwrap().clone();
+        let energy_inflow = if good.as_str() == ENERGY_ID {
+            let quantity = i64::try_from(quantity).map_err(|_| CoreError::Overflow)?;
+            let stock = next.energy_stock()?.checked_add(Energy(quantity))?;
+            if stock > next.energy_storage_cap {
+                return Err(CoreError::InsufficientCapacity);
+            }
+            next.set_energy_stock(stock)?;
+            next.energy_flow.external_inflow = next
+                .energy_flow
+                .external_inflow
+                .checked_add(Energy(quantity))?;
+            Energy(quantity)
+        } else {
+            let stock = next.inventory.get(good).copied().unwrap_or(0);
+            let next_stock = stock.checked_add(quantity).ok_or(CoreError::Overflow)?;
+            let embodied = good_definition.bootstrap_cost.checked_mul(quantity)?;
+            let mut basis = next.cost_basis.get(good).copied().unwrap_or_default();
+            basis.add(quantity, embodied)?;
+            next.inventory.insert(good.clone(), next_stock);
+            next.cost_basis.insert(good.clone(), basis);
+            Energy::ZERO
+        };
+        *self.world.get_mut::<Market>(entity).unwrap() = next;
+        let tick = self.tick();
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::ExternalDeliveryRecorded {
+                system: system.clone(),
+                good: good.clone(),
+                quantity,
+                energy_inflow,
+                tick,
+            });
+        Ok(())
+    }
+
     pub fn step(&mut self) -> Result<(), CoreError> {
         self.advance_travel()?;
         self.refresh_enroute_reservations()?;
@@ -2254,6 +2413,7 @@ impl GameSession {
             .world
             .resource::<EconomyConfig>()
             .life_support_burn_per_capita;
+        let phase_tick = self.tick().saturating_sub(u64::from(self.tick() > 0));
         let mut markets = self
             .world
             .query_filtered::<(
@@ -2283,6 +2443,10 @@ impl GameSession {
                 brownout: m.brownout.clone(),
                 operating_profile: m.operating_profile.clone(),
                 seasonal_generation: m.seasonal_generation.clone(),
+                seasonal_phase: m
+                    .seasonal_generation
+                    .phase_at(phase_tick)
+                    .expect("validated seasonal phase"),
                 population_state: m.population_state.clone(),
                 investment_policy: m.investment_policy.clone(),
                 investment_state: m.investment_state.clone(),
@@ -3262,9 +3426,7 @@ impl GameSession {
             .iter(&self.world)
             .map(|(e, id, m)| {
                 let stock = m.energy_stock()?;
-                // Seasonal parameters are compiled in Phase 1, but the runtime
-                // writer remains deferred to the seasonal checkpoint.
-                let generated = m.seasonal_generation.base_output;
+                let generated = m.seasonal_generation.effective_output_at(self.tick())?;
                 let gross = stock.checked_add(generated)?;
                 let stored = Energy(gross.0.min(m.energy_storage_cap.0));
                 let curtailed = Energy(gross.0 - m.energy_storage_cap.0.min(gross.0));
@@ -4581,6 +4743,30 @@ mod tests {
     fn id(s: &str) -> ContentId {
         ContentId::new(s).unwrap()
     }
+    fn physical_energy(snapshot: &CoreSnapshot) -> i128 {
+        let markets = snapshot
+            .markets
+            .iter()
+            .map(|market| i128::from(market.energy_stock.0))
+            .sum::<i128>();
+        let tanks = snapshot
+            .traders
+            .iter()
+            .map(|trader| i128::from(trader.energy_tank.0))
+            .sum::<i128>();
+        let cargo = snapshot
+            .traders
+            .iter()
+            .map(|trader| {
+                trader
+                    .cargo
+                    .get(&id(ENERGY_ID))
+                    .copied()
+                    .map_or(0, i128::from)
+            })
+            .sum::<i128>();
+        markets + tanks + cargo
+    }
     fn definition() -> GameDefinition {
         let energy = id(ENERGY_ID);
         let ore = id("core:ore");
@@ -5680,6 +5866,60 @@ mod tests {
             "zero amplitude is exactly fixed output without tick overflow"
         );
         assert!(triangle_wave_output(Energy(1), 101, 2, 0, 0).is_err());
+        assert!(
+            triangle_wave_output(Energy(100), 20, 3, 0, 0).is_err(),
+            "nonzero seasonal amplitude requires an even period"
+        );
+        assert_eq!(
+            triangle_wave_output(Energy(100), 0, 3, 0, 1).unwrap(),
+            Energy(100),
+            "odd periods remain harmless for fixed-output seasons"
+        );
+        let odd_state = SeasonalGenerationState {
+            base_output: Energy(100),
+            amplitude_percent: 20,
+            period_ticks: 3,
+            phase_ticks: 0,
+            current_effective_output: Energy(100),
+        };
+        assert_eq!(odd_state.validate(), Err(CoreError::InvalidWorldDynamics));
+        assert_eq!(
+            triangle_wave_output(Energy(100), 100, 4, 0, 0).unwrap(),
+            Energy::ZERO,
+            "the maximum permitted amplitude cannot produce negative generation"
+        );
+        assert_eq!(
+            (0..4)
+                .map(|tick| triangle_wave_output(Energy(100), 20, 4, 1, tick).unwrap())
+                .collect::<Vec<_>>(),
+            vec![Energy(100), Energy(120), Energy(100), Energy(80)],
+            "an even period reaches exact extrema at the phase-shifted turning points"
+        );
+        assert_eq!(
+            triangle_wave_output(Energy(100), 20, 4, 1, 3).unwrap(),
+            triangle_wave_output(Energy(100), 20, 4, 1, 7).unwrap(),
+            "phase-shifted output repeats exactly after one period"
+        );
+        assert_eq!(
+            triangle_wave_output(Energy(100), 20, 4, 0, u64::MAX).unwrap(),
+            triangle_wave_output(Energy(100), 20, 4, 0, u64::MAX % 4).unwrap(),
+            "large ticks wrap before phase addition"
+        );
+        assert!(triangle_wave_output(Energy(i64::MAX), 100, 2, 0, 1).is_err());
+        let phase = seasonal_phase(4, 0, 0).unwrap();
+        assert_eq!(phase.trend, SeasonalTrend::Rising);
+        assert_eq!(phase.next_turning_point_tick, Some(2));
+        assert_eq!(
+            seasonal_phase(4, 0, 2).unwrap().trend,
+            SeasonalTrend::Falling
+        );
+        assert_eq!(
+            seasonal_phase(4, 0, u64::MAX)
+                .unwrap()
+                .next_turning_point_tick,
+            None,
+            "a turning point beyond the clock range is explicit"
+        );
 
         for (stage, labor, expected) in [(0, 100, 0), (1, 100, 1), (100, 100, 100)] {
             let mut production_carry = 0;
@@ -5733,6 +5973,104 @@ mod tests {
         assert_eq!(investment_cost(&shape, 1).unwrap(), Energy(150));
         assert_eq!(investment_cost(&shape, 2).unwrap(), Energy(225));
         assert!(investment_cost(&shape, 3).is_err());
+    }
+
+    #[test]
+    fn seasonal_generation_runs_before_life_support_and_is_projected() {
+        let mut d = definition();
+        d.systems[0].energy_output_per_tick = Energy(100);
+        d.systems[0].seasonal_generation = SeasonalGenerationState {
+            base_output: Energy(100),
+            amplitude_percent: 20,
+            period_ticks: 4,
+            phase_ticks: 0,
+            current_effective_output: Energy(100),
+        };
+        d.systems[0].energy_storage_cap = Energy(10_000);
+        d.systems[0].inventory.insert(id(ENERGY_ID), 1_000);
+        d.systems[0].population = 1;
+        let mut session = GameSession::new(d).unwrap();
+        session.step().unwrap();
+        let events = session.drain_events();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            GameEvent::EnergyGenerated { system, amount: Energy(80), .. }
+                if system == &id("core:s0")
+        )));
+        let market = session
+            .snapshot()
+            .markets
+            .into_iter()
+            .find(|market| market.system_id == id("core:s0"))
+            .unwrap();
+        assert_eq!(market.energy_stock, Energy(1_079));
+        assert_eq!(market.seasonal_generation.base_output, Energy(100));
+        assert_eq!(
+            market.seasonal_generation.current_effective_output,
+            Energy(80)
+        );
+        assert_eq!(market.seasonal_phase.position_ticks, 0);
+        assert_eq!(market.seasonal_phase.next_turning_point_tick, Some(2));
+    }
+
+    #[test]
+    fn recorded_external_delivery_is_atomic_and_reconciles_a_stage_intervention() {
+        let mut d = definition();
+        d.systems[0].energy_output_per_tick = Energy::ZERO;
+        d.systems[0].seasonal_generation.base_output = Energy::ZERO;
+        d.systems[0].seasonal_generation.current_effective_output = Energy::ZERO;
+        d.systems[0].inventory.insert(id(ENERGY_ID), 7);
+        d.systems[0].population = 1;
+        let mut baseline = GameSession::new(d.clone()).unwrap();
+        let mut intervention = GameSession::new(d).unwrap();
+        let initial_physical = physical_energy(&intervention.snapshot());
+        intervention
+            .submit(GameCommand::RecordExternalDelivery {
+                system: id("core:s0"),
+                good: id(ENERGY_ID),
+                quantity: 10,
+            })
+            .unwrap();
+        baseline.step().unwrap();
+        intervention.step().unwrap();
+        let baseline_market = baseline.snapshot().markets.remove(0);
+        let intervention_snapshot = intervention.snapshot();
+        let intervention_market = intervention_snapshot.markets[0].clone();
+        assert_eq!(baseline_market.brownout.stage, BrownoutStage::Emergency);
+        assert_eq!(intervention_market.brownout.stage, BrownoutStage::Normal);
+        assert_eq!(
+            i128::from(intervention_snapshot.energy_flow.external_inflow.0),
+            10_i128
+        );
+        assert_eq!(
+            i128::from(intervention_snapshot.energy_flow.net_external_delta().0),
+            physical_energy(&intervention_snapshot) - initial_physical
+        );
+        assert_eq!(
+            intervention
+                .drain_events()
+                .iter()
+                .filter(|event| matches!(event, GameEvent::ExternalDeliveryRecorded { .. }))
+                .count(),
+            1
+        );
+
+        let before = intervention.snapshot().markets[0].energy_stock;
+        assert_eq!(
+            intervention.submit(GameCommand::RecordExternalDelivery {
+                system: id("core:s0"),
+                good: id(ENERGY_ID),
+                quantity: 20_000,
+            }),
+            Err(CoreError::InsufficientCapacity)
+        );
+        assert_eq!(intervention.snapshot().markets[0].energy_stock, before);
+        assert!(
+            !intervention
+                .drain_events()
+                .iter()
+                .any(|event| matches!(event, GameEvent::ExternalDeliveryRecorded { .. }))
+        );
     }
 
     #[test]
