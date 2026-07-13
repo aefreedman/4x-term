@@ -1088,6 +1088,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
         let burned = i128::from(flow.life_support_burned.0)
             + i128::from(flow.source_burned.0)
             + i128::from(flow.production_burned.0)
+            + i128::from(flow.investment_burned.0)
             + i128::from(flow.travel_burned.0);
         let target_count = market.targets.len();
         let stocked_targets = market
@@ -1325,6 +1326,7 @@ fn reconcile_energy(
             i128::from(flow.life_support_burned.0),
             i128::from(flow.source_burned.0),
             i128::from(flow.production_burned.0),
+            i128::from(flow.investment_burned.0),
             i128::from(flow.travel_burned.0),
         ],
         "burned energy total",

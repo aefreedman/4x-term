@@ -43,10 +43,15 @@
     tier_thresholds: [1, 5, 10],
   ),
   investments: [
-    (kind: Collector, enabled: false, base_cost: 1000, cost_growth_percent: 150, maximum_level: 0, cooldown_ticks: 100, effect_per_level: 0),
-    (kind: Storage, enabled: false, base_cost: 1000, cost_growth_percent: 150, maximum_level: 0, cooldown_ticks: 100, effect_per_level: 0),
-    (kind: PopulationSupport, enabled: false, base_cost: 1000, cost_growth_percent: 150, maximum_level: 0, cooldown_ticks: 100, effect_per_level: 0),
-    (kind: RouteSubsidy, enabled: false, base_cost: 1000, cost_growth_percent: 150, maximum_level: 0, cooldown_ticks: 100, effect_per_level: 0),
+    (kind: Collector, enabled: true, base_cost: 4000, cost_growth_percent: 150, maximum_level: 4, cooldown_ticks: 100, effect_per_level: 2),
+    (kind: Storage, enabled: true, base_cost: 4000, cost_growth_percent: 150, maximum_level: 4, cooldown_ticks: 100, effect_per_level: 500),
+    (kind: PopulationSupport, enabled: true, base_cost: 4500, cost_growth_percent: 175, maximum_level: 4, cooldown_ticks: 200, effect_per_level: 2),
+    (kind: RouteSubsidy, enabled: true, base_cost: 4500, cost_growth_percent: 175, maximum_level: 4, cooldown_ticks: 100, effect_per_level: 10),
   ],
-  default_investment_allocation: [],
+  default_investment_allocation: [
+    (kind: Collector, percent: 30),
+    (kind: Storage, percent: 25),
+    (kind: PopulationSupport, percent: 25),
+    (kind: RouteSubsidy, percent: 20),
+  ],
 )

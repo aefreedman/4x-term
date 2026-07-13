@@ -421,6 +421,9 @@ pub struct PopulationState {
     /// The authored/investment-adjusted upper bound from which history derives
     /// the current carrying capacity.
     pub support_capacity: u64,
+    /// Per-market percentage bonus applied only to the approved gated logistic
+    /// growth rate by population-support investment.
+    pub growth_rate_bonus_percent: u32,
     /// Oldest-to-newest fixed-point percentage samples (0..=100). Its length
     /// is bounded by `MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS`.
     pub sufficiency_samples: VecDeque<u32>,
@@ -458,10 +461,56 @@ pub struct InvestmentPolicy {
     pub allocation_percent: BTreeMap<InvestmentKind, u32>,
 }
 
+/// Player-facing investment controls. Core retains ownership of the complete
+/// investment policy and merges only these approved allocations.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct GovernorInvestmentPolicy {
+    pub allocation_percent: BTreeMap<InvestmentKind, u32>,
+}
+
+impl From<GovernorInvestmentPolicy> for InvestmentPolicy {
+    fn from(value: GovernorInvestmentPolicy) -> Self {
+        Self {
+            allocation_percent: value.allocation_percent,
+        }
+    }
+}
+
+impl InvestmentPolicy {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        let total = self
+            .allocation_percent
+            .values()
+            .try_fold(0_u32, |sum, value| {
+                if *value > 100 {
+                    return Err(CoreError::InvalidInvestmentPolicy);
+                }
+                sum.checked_add(*value).ok_or(CoreError::Overflow)
+            })?;
+        if total > 100 {
+            return Err(CoreError::InvalidInvestmentPolicy);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InvestmentStatus {
+    Disabled,
+    DisabledByStage(BrownoutStage),
+    Unallocated,
+    CoolingDown { until_tick: u64 },
+    MaximumLevel,
+    InsufficientFunds { available: Energy, cost: Energy },
+    Ready { cost: Energy },
+    Completed { tick: u64, cost: Energy },
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InvestmentState {
     pub levels: BTreeMap<InvestmentKind, u32>,
     pub cooldown_until: BTreeMap<InvestmentKind, u64>,
+    pub status: BTreeMap<InvestmentKind, InvestmentStatus>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -571,6 +620,15 @@ impl Default for MarketPolicy {
             default_target: 10,
         }
     }
+}
+
+/// Player-facing market controls. Pricing mode, liquidation policy, and
+/// default targets intentionally remain core-owned and are absent here.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct GovernorMarketPolicy {
+    pub producer_margin_percent: u32,
+    pub operating_reserve_ticks: u32,
+    pub import_priorities: BTreeMap<ContentId, u32>,
 }
 
 impl MarketPolicy {
@@ -929,7 +987,7 @@ fn valid_logistic_growth_carry(carry: LogisticGrowthCarry, config: &PopulationCo
     let denominator_per_capita = u64::from(config.logistic_scale).checked_mul(1_000);
     carry.remainder < carry.denominator
         && denominator_per_capita.is_some_and(|unit| {
-            carry.denominator % unit == 0 && carry.denominator / unit <= config.maximum_cap
+            carry.denominator.is_multiple_of(unit) && carry.denominator / unit <= config.maximum_cap
         })
 }
 
@@ -972,6 +1030,7 @@ pub fn validate_population_config(config: &PopulationConfig) -> Result<(), CoreE
 
 pub fn validate_investment_shapes(
     shapes: &BTreeMap<InvestmentKind, InvestmentShape>,
+    population: &PopulationConfig,
 ) -> Result<(), CoreError> {
     for kind in [
         InvestmentKind::Collector,
@@ -983,11 +1042,97 @@ pub fn validate_investment_shapes(
         if shape.base_cost.0 <= 0
             || shape.cost_growth_percent < 100
             || shape.cooldown_ticks == 0
-            || (shape.enabled && (shape.maximum_level == 0 || shape.effect_per_level == 0))
+            || shape.maximum_level > 10_000
+            || (shape.enabled
+                && (shape.maximum_level == 0
+                    || shape.effect_per_level == 0
+                    || shape
+                        .effect_per_level
+                        .checked_mul(shape.maximum_level)
+                        .is_none()))
         {
             return Err(CoreError::InvalidWorldDynamics);
         }
+        for level in 0..shape.maximum_level {
+            investment_cost(shape, level)?;
+        }
+        if !shape.enabled {
+            continue;
+        }
+        let cumulative = shape
+            .effect_per_level
+            .checked_mul(shape.maximum_level)
+            .ok_or(CoreError::InvalidWorldDynamics)?;
+        match kind {
+            InvestmentKind::RouteSubsidy => {
+                100_u32
+                    .checked_add(cumulative)
+                    .ok_or(CoreError::InvalidWorldDynamics)?;
+            }
+            InvestmentKind::PopulationSupport => {
+                let multiplier = 100_u32
+                    .checked_add(cumulative)
+                    .ok_or(CoreError::InvalidWorldDynamics)?;
+                let effective_growth = u128::from(population.growth_per_thousand)
+                    .checked_mul(u128::from(multiplier))
+                    .ok_or(CoreError::InvalidWorldDynamics)?
+                    / 100;
+                let effective_growth =
+                    u32::try_from(effective_growth).map_err(|_| CoreError::InvalidWorldDynamics)?;
+                population
+                    .maximum_cap
+                    .checked_add(u64::from(cumulative))
+                    .ok_or(CoreError::InvalidWorldDynamics)?;
+                let left = population.maximum_cap / 2;
+                let right = population.maximum_cap - left;
+                let maximum_denominator = u128::from(population.maximum_cap)
+                    .checked_mul(1_000)
+                    .and_then(|value| value.checked_mul(u128::from(population.logistic_scale)))
+                    .ok_or(CoreError::InvalidWorldDynamics)?;
+                u128::from(left)
+                    .checked_mul(u128::from(right))
+                    .and_then(|value| value.checked_mul(u128::from(effective_growth)))
+                    .and_then(|value| value.checked_add(maximum_denominator.saturating_sub(1)))
+                    .ok_or(CoreError::InvalidWorldDynamics)?;
+            }
+            InvestmentKind::Collector | InvestmentKind::Storage => {}
+        }
     }
+    Ok(())
+}
+
+/// Validates effects whose safety depends on an authored market's starting
+/// generation or storage state.
+pub fn validate_market_investment_bounds(
+    shapes: &BTreeMap<InvestmentKind, InvestmentShape>,
+    seasonal_generation: &SeasonalGenerationState,
+    energy_storage_cap: Energy,
+) -> Result<(), CoreError> {
+    let cumulative = |kind| -> Result<Energy, CoreError> {
+        let shape = shapes.get(&kind).ok_or(CoreError::InvalidWorldDynamics)?;
+        if !shape.enabled {
+            return Ok(Energy::ZERO);
+        }
+        let amount = u64::from(shape.effect_per_level)
+            .checked_mul(u64::from(shape.maximum_level))
+            .ok_or(CoreError::InvalidWorldDynamics)?;
+        Ok(Energy(
+            i64::try_from(amount).map_err(|_| CoreError::InvalidWorldDynamics)?,
+        ))
+    };
+    let collector = cumulative(InvestmentKind::Collector)?;
+    let mut maximum_generation = seasonal_generation.clone();
+    maximum_generation.base_output = maximum_generation
+        .base_output
+        .checked_add(collector)
+        .map_err(|_| CoreError::InvalidWorldDynamics)?;
+    maximum_generation.validate().map_err(|error| match error {
+        CoreError::Overflow => CoreError::InvalidWorldDynamics,
+        other => other,
+    })?;
+    energy_storage_cap
+        .checked_add(cumulative(InvestmentKind::Storage)?)
+        .map_err(|_| CoreError::InvalidWorldDynamics)?;
     Ok(())
 }
 
@@ -1202,6 +1347,7 @@ pub struct EnergyFlowLedger {
     pub life_support_unsupplied: Energy,
     pub source_burned: Energy,
     pub production_burned: Energy,
+    pub investment_burned: Energy,
     pub travel_burned: Energy,
     pub curtailed: Energy,
     pub market_to_tank: Energy,
@@ -1217,6 +1363,7 @@ impl EnergyFlowLedger {
             .checked_sub(self.life_support_burned)?
             .checked_sub(self.source_burned)?
             .checked_sub(self.production_burned)?
+            .checked_sub(self.investment_burned)?
             .checked_sub(self.travel_burned)?
             .checked_sub(self.curtailed)
     }
@@ -1232,6 +1379,7 @@ pub struct GlobalEnergyFlowLedger {
     pub life_support_unsupplied: WideEnergy,
     pub source_burned: WideEnergy,
     pub production_burned: WideEnergy,
+    pub investment_burned: WideEnergy,
     pub travel_burned: WideEnergy,
     pub curtailed: WideEnergy,
     pub market_to_tank: WideEnergy,
@@ -1260,6 +1408,7 @@ impl GlobalEnergyFlowLedger {
                 - i128::from(self.life_support_burned.0)
                 - i128::from(self.source_burned.0)
                 - i128::from(self.production_burned.0)
+                - i128::from(self.investment_burned.0)
                 - i128::from(self.travel_burned.0)
                 - i128::from(self.curtailed.0),
         ))
@@ -1277,6 +1426,7 @@ impl GlobalEnergyFlowLedger {
         add!(life_support_unsupplied);
         add!(source_burned);
         add!(production_burned);
+        add!(investment_burned);
         add!(travel_burned);
         add!(curtailed);
         add!(market_to_tank);
@@ -1717,6 +1867,28 @@ struct EventBuffer(Vec<GameEvent>);
 #[derive(Resource, Default)]
 struct Clock(u64);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GovernorRejectionReason {
+    Unauthorized,
+    InvalidPolicy,
+    InvalidInvestmentAllocation,
+    UnknownMarket,
+    Arithmetic,
+}
+
+impl GovernorRejectionReason {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Unauthorized => "not authorized for this market",
+            Self::InvalidPolicy => "invalid market policy",
+            Self::InvalidInvestmentAllocation => "invalid investment allocation",
+            Self::UnknownMarket => "unknown market",
+            Self::Arithmetic => "policy arithmetic failed",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GameEvent {
     TickAdvanced(u64),
@@ -1776,7 +1948,7 @@ pub enum GameEvent {
     },
     GovernorPolicyRejected {
         system: ContentId,
-        reason: String,
+        reason: GovernorRejectionReason,
     },
     Produced {
         system: ContentId,
@@ -1857,6 +2029,18 @@ pub enum GameCommand {
         system: ContentId,
         policy: MarketPolicy,
     },
+    SetInvestmentPolicy {
+        system: ContentId,
+        policy: InvestmentPolicy,
+    },
+    SetGovernorMarketPolicy {
+        system: ContentId,
+        policy: GovernorMarketPolicy,
+    },
+    SetGovernorInvestmentPolicy {
+        system: ContentId,
+        policy: GovernorInvestmentPolicy,
+    },
     /// A core-owned, auditable boundary for diagnostics and future adapters.
     /// This is deliberately not exposed through the player application API.
     RecordExternalDelivery {
@@ -1905,6 +2089,8 @@ pub enum CoreError {
     InvalidPolicy,
     #[error("player is not authorized to govern this market")]
     UnauthorizedMarketPolicy,
+    #[error("invalid investment allocation")]
+    InvalidInvestmentPolicy,
     #[error("invalid physical definition")]
     InvalidPhysicalDefinition,
     #[error("refuel policy forbids this transfer")]
@@ -1976,6 +2162,7 @@ pub struct TraderSnapshot {
 pub struct CoreSnapshot {
     pub tick: u64,
     pub markets: Vec<MarketSnapshot>,
+    pub investment_shapes: BTreeMap<InvestmentKind, InvestmentShape>,
     pub traders: Vec<TraderSnapshot>,
     pub reservations: Vec<TradeReservation>,
     pub energy_flow: GlobalEnergyFlowLedger,
@@ -2247,7 +2434,10 @@ impl GameSession {
             .checked_mul(1)?;
         definition.economy.brownouts.validate()?;
         validate_population_config(&definition.economy.population)?;
-        validate_investment_shapes(&definition.economy.investments)?;
+        validate_investment_shapes(
+            &definition.economy.investments,
+            &definition.economy.population,
+        )?;
         validate_fleet_definition(&definition.fleet, &definition.traders)?;
         let graph = SystemGraph::build(&definition.systems)?;
         let catalog = Catalog {
@@ -2274,12 +2464,18 @@ impl GameSession {
         world.insert_resource(PendingTradeRequests::default());
         for mut system in definition.systems {
             system.policy.validate()?;
+            system.investment_policy.validate()?;
             // Additive Slice-2 defaults keep older fixed-output/static-population
             // fixtures source-compatible when they adjust the legacy fields.
             if system.seasonal_generation.amplitude_percent == 0 {
                 system.seasonal_generation.base_output = system.energy_output_per_tick;
                 system.seasonal_generation.current_effective_output = system.energy_output_per_tick;
             }
+            validate_market_investment_bounds(
+                &world.resource::<EconomyConfig>().investments,
+                &system.seasonal_generation,
+                system.energy_storage_cap,
+            )?;
             let population_config = world.resource::<EconomyConfig>().population.clone();
             if population_config.static_population {
                 system.population_state.current = system.population;
@@ -2509,6 +2705,18 @@ impl GameSession {
             })
     }
     pub fn submit(&mut self, command: GameCommand) -> Result<(), CoreError> {
+        let governor_system = match &command {
+            GameCommand::SetMarketPolicy { system, .. }
+            | GameCommand::SetInvestmentPolicy { system, .. }
+            | GameCommand::SetGovernorMarketPolicy { system, .. }
+            | GameCommand::SetGovernorInvestmentPolicy { system, .. } => Some(system.clone()),
+            _ => None,
+        };
+        let investment_command = matches!(
+            &command,
+            GameCommand::SetInvestmentPolicy { .. }
+                | GameCommand::SetGovernorInvestmentPolicy { .. }
+        );
         let result = match command {
             GameCommand::Buy { good, quantity } => {
                 let e = self.player_entity()?;
@@ -2546,6 +2754,15 @@ impl GameSession {
             GameCommand::SetMarketPolicy { system, policy } => {
                 self.set_player_policy(&system, policy)
             }
+            GameCommand::SetInvestmentPolicy { system, policy } => {
+                self.set_player_investment_policy(&system, policy)
+            }
+            GameCommand::SetGovernorMarketPolicy { system, policy } => {
+                self.set_player_governor_policy(&system, policy)
+            }
+            GameCommand::SetGovernorInvestmentPolicy { system, policy } => {
+                self.set_player_investment_policy(&system, policy.into())
+            }
             GameCommand::RecordExternalDelivery {
                 system,
                 good,
@@ -2557,10 +2774,24 @@ impl GameSession {
             }
         };
         if let Err(error) = &result {
-            self.world
-                .resource_mut::<EventBuffer>()
-                .0
-                .push(GameEvent::Rejected(error.to_string()));
+            let event = governor_system.map_or_else(
+                || GameEvent::Rejected(error.to_string()),
+                |system| GameEvent::GovernorPolicyRejected {
+                    system,
+                    reason: match error {
+                        CoreError::UnauthorizedMarketPolicy => {
+                            GovernorRejectionReason::Unauthorized
+                        }
+                        CoreError::InvalidInvestmentPolicy if investment_command => {
+                            GovernorRejectionReason::InvalidInvestmentAllocation
+                        }
+                        CoreError::Unknown { .. } => GovernorRejectionReason::UnknownMarket,
+                        CoreError::Overflow => GovernorRejectionReason::Arithmetic,
+                        _ => GovernorRejectionReason::InvalidPolicy,
+                    },
+                },
+            );
+            self.world.resource_mut::<EventBuffer>().0.push(event);
         }
         result
     }
@@ -2631,6 +2862,7 @@ impl GameSession {
         self.execute_sources_and_recipes()?;
         self.settle_idle_laden()?;
         self.rebalance_idle_npc_tanks()?;
+        self.execute_autonomous_investments()?;
         self.collect_automated_trader_requests()?;
         self.resolve_pending_trade_requests()?;
         self.evaluate_dynamic_fleet()?;
@@ -2875,6 +3107,7 @@ impl GameSession {
         CoreSnapshot {
             tick: self.tick(),
             markets,
+            investment_shapes: self.world.resource::<EconomyConfig>().investments.clone(),
             traders,
             reservations,
             energy_flow,
@@ -3114,6 +3347,35 @@ impl GameSession {
             return Ok(Energy::ZERO);
         }
         let mut bid = self.normal_bid_quote(market, policy, good)?;
+        let survival_good = self
+            .world
+            .resource::<EconomyConfig>()
+            .brownouts
+            .survival_goods
+            .contains(good);
+        if !survival_good {
+            let level = market
+                .investment_state
+                .levels
+                .get(&InvestmentKind::RouteSubsidy)
+                .copied()
+                .unwrap_or(0);
+            if level > 0 {
+                let effect = self
+                    .world
+                    .resource::<EconomyConfig>()
+                    .investments
+                    .get(&InvestmentKind::RouteSubsidy)
+                    .ok_or(CoreError::InvalidWorldDynamics)?
+                    .effect_per_level;
+                let premium = effect.checked_mul(level).ok_or(CoreError::Overflow)?;
+                bid = checked_mul_ratio_ceil(
+                    bid,
+                    u64::from(100_u32.checked_add(premium).ok_or(CoreError::Overflow)?),
+                    100,
+                )?;
+            }
+        }
         if good.as_str() == ENERGY_ID && market.operating_profile.stage >= BrownoutStage::Emergency
         {
             let brownouts = &self.world.resource::<EconomyConfig>().brownouts;
@@ -3612,11 +3874,7 @@ impl GameSession {
         Ok(())
     }
 
-    fn set_player_policy(
-        &mut self,
-        system: &ContentId,
-        policy: MarketPolicy,
-    ) -> Result<(), CoreError> {
+    fn player_governs(&mut self, system: &ContentId) -> Result<Entity, CoreError> {
         let player_entity = self.player_entity()?;
         let player = self.world.get::<StableId>(player_entity).unwrap().0.clone();
         let market_entity = self.market_entity(system)?;
@@ -3627,7 +3885,53 @@ impl GameSession {
         if !authorized {
             return Err(CoreError::UnauthorizedMarketPolicy);
         }
+        Ok(market_entity)
+    }
+
+    fn set_player_policy(
+        &mut self,
+        system: &ContentId,
+        policy: MarketPolicy,
+    ) -> Result<(), CoreError> {
+        let market_entity = self.player_governs(system)?;
         self.apply_market_policy(system, market_entity, policy)
+    }
+
+    fn set_player_governor_policy(
+        &mut self,
+        system: &ContentId,
+        policy: GovernorMarketPolicy,
+    ) -> Result<(), CoreError> {
+        let market_entity = self.player_governs(system)?;
+        let mut merged = self
+            .world
+            .get::<MarketPolicy>(market_entity)
+            .unwrap()
+            .clone();
+        merged.producer_margin_percent = policy.producer_margin_percent;
+        merged.operating_reserve_ticks = policy.operating_reserve_ticks;
+        merged.import_priorities = policy.import_priorities;
+        self.apply_market_policy(system, market_entity, merged)
+    }
+
+    fn set_player_investment_policy(
+        &mut self,
+        system: &ContentId,
+        policy: InvestmentPolicy,
+    ) -> Result<(), CoreError> {
+        let market_entity = self.player_governs(system)?;
+        policy.validate()?;
+        self.world
+            .get_mut::<Market>(market_entity)
+            .unwrap()
+            .investment_policy = policy;
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::PolicyChanged {
+                system: system.clone(),
+            });
+        Ok(())
     }
 
     // Internal autonomous governance can call this only after its own authority
@@ -3639,6 +3943,13 @@ impl GameSession {
         policy: MarketPolicy,
     ) -> Result<(), CoreError> {
         policy.validate()?;
+        if policy
+            .import_priorities
+            .keys()
+            .any(|good| !self.world.resource::<Catalog>().goods.contains_key(good))
+        {
+            return Err(CoreError::InvalidPolicy);
+        }
         let market = self.world.get::<Market>(market_entity).unwrap();
         let emergency_ceiling = self
             .world
@@ -3687,6 +3998,175 @@ impl GameSession {
             .push(GameEvent::PolicyChanged {
                 system: system.clone(),
             });
+        Ok(())
+    }
+
+    fn execute_autonomous_investments(&mut self) -> Result<(), CoreError> {
+        let tick = self.tick();
+        let (life, shapes, population_maximum) = {
+            let config = self.world.resource::<EconomyConfig>();
+            (
+                config.life_support_burn_per_capita,
+                config.investments.clone(),
+                config.population.maximum_cap,
+            )
+        };
+        let mut markets = self
+            .world
+            .query_filtered::<(Entity, &StableId, &Market, &MarketPolicy), With<SystemMarker>>()
+            .iter(&self.world)
+            .map(|(entity, id, market, policy)| {
+                (entity, id.0.clone(), market.clone(), policy.clone())
+            })
+            .collect::<Vec<_>>();
+        markets.sort_by(|left, right| left.1.cmp(&right.1));
+
+        let mut prepared = Vec::new();
+        let mut events = Vec::new();
+        for (entity, system, mut market, policy) in markets {
+            market.investment_policy.validate()?;
+            let available = market.unreserved_energy_for_purchases(&policy, life)?;
+            let mut ranked = Vec::new();
+            for kind in [
+                InvestmentKind::Collector,
+                InvestmentKind::Storage,
+                InvestmentKind::PopulationSupport,
+                InvestmentKind::RouteSubsidy,
+            ] {
+                let shape = shapes.get(&kind).ok_or(CoreError::InvalidWorldDynamics)?;
+                let level = market
+                    .investment_state
+                    .levels
+                    .get(&kind)
+                    .copied()
+                    .unwrap_or(0);
+                let allocation = market
+                    .investment_policy
+                    .allocation_percent
+                    .get(&kind)
+                    .copied()
+                    .unwrap_or(0);
+                let status = if !shape.enabled {
+                    InvestmentStatus::Disabled
+                } else if !market.operating_profile.investment_allowed {
+                    InvestmentStatus::DisabledByStage(market.operating_profile.stage)
+                } else if level >= shape.maximum_level {
+                    InvestmentStatus::MaximumLevel
+                } else if market
+                    .investment_state
+                    .cooldown_until
+                    .get(&kind)
+                    .copied()
+                    .unwrap_or(0)
+                    > tick
+                {
+                    InvestmentStatus::CoolingDown {
+                        until_tick: market.investment_state.cooldown_until[&kind],
+                    }
+                } else if allocation == 0 {
+                    InvestmentStatus::Unallocated
+                } else {
+                    let cost = investment_cost(shape, level)?;
+                    if available < cost {
+                        InvestmentStatus::InsufficientFunds { available, cost }
+                    } else {
+                        ranked.push((std::cmp::Reverse(allocation), kind, cost));
+                        InvestmentStatus::Ready { cost }
+                    }
+                };
+                market.investment_state.status.insert(kind, status);
+            }
+            ranked.sort();
+            if let Some((_, kind, cost)) = ranked.into_iter().next() {
+                let shape = shapes.get(&kind).ok_or(CoreError::InvalidWorldDynamics)?;
+                let level = market
+                    .investment_state
+                    .levels
+                    .get(&kind)
+                    .copied()
+                    .unwrap_or(0);
+                let next_level = level.checked_add(1).ok_or(CoreError::Overflow)?;
+                let next_stock = market.energy_stock()?.checked_sub(cost)?;
+                let cooldown_until = tick
+                    .checked_add(u64::from(shape.cooldown_ticks))
+                    .ok_or(CoreError::Overflow)?;
+                match kind {
+                    InvestmentKind::Collector => {
+                        let effect = Energy(i64::from(shape.effect_per_level));
+                        let next_base =
+                            market.seasonal_generation.base_output.checked_add(effect)?;
+                        market.energy_output_per_tick = next_base;
+                        market.seasonal_generation.base_output = next_base;
+                    }
+                    InvestmentKind::Storage => {
+                        market.energy_storage_cap = market
+                            .energy_storage_cap
+                            .checked_add(Energy(i64::from(shape.effect_per_level)))?;
+                    }
+                    InvestmentKind::PopulationSupport => {
+                        market.population_state.support_capacity = market
+                            .population_state
+                            .support_capacity
+                            .checked_add(u64::from(shape.effect_per_level))
+                            .ok_or(CoreError::Overflow)?
+                            .min(population_maximum);
+                        market.population_state.growth_rate_bonus_percent = market
+                            .population_state
+                            .growth_rate_bonus_percent
+                            .checked_add(shape.effect_per_level)
+                            .ok_or(CoreError::Overflow)?;
+                    }
+                    InvestmentKind::RouteSubsidy => {}
+                }
+                market.set_energy_stock(next_stock)?;
+                market.energy_flow.investment_burned =
+                    market.energy_flow.investment_burned.checked_add(cost)?;
+                market.investment_state.levels.insert(kind, next_level);
+                market
+                    .investment_state
+                    .cooldown_until
+                    .insert(kind, cooldown_until);
+                market
+                    .investment_state
+                    .status
+                    .insert(kind, InvestmentStatus::Completed { tick, cost });
+                let remaining = market.unreserved_energy_for_purchases(&policy, life)?;
+                for (other_kind, status) in &mut market.investment_state.status {
+                    if *other_kind == kind {
+                        continue;
+                    }
+                    if let InvestmentStatus::Ready { cost: other_cost } = *status
+                        && remaining < other_cost
+                    {
+                        *status = InvestmentStatus::InsufficientFunds {
+                            available: remaining,
+                            cost: other_cost,
+                        };
+                    }
+                }
+                events.push(GameEvent::InvestmentCompleted {
+                    system: system.clone(),
+                    kind,
+                    level: next_level,
+                    cost,
+                });
+            }
+            prepared.push((entity, market));
+        }
+        let completed = u64::try_from(events.len()).map_err(|_| CoreError::Overflow)?;
+        let next_completed = self
+            .world
+            .resource::<AggregateDynamicsHistory>()
+            .investments_completed
+            .checked_add(completed)
+            .ok_or(CoreError::Overflow)?;
+        for (entity, market) in prepared {
+            *self.world.get_mut::<Market>(entity).unwrap() = market;
+        }
+        self.world
+            .resource_mut::<AggregateDynamicsHistory>()
+            .investments_completed = next_completed;
+        self.world.resource_mut::<EventBuffer>().0.extend(events);
         Ok(())
     }
 
@@ -4063,10 +4543,21 @@ impl GameSession {
                         >= config.growth_sufficiency_percent
                     && next.population < next.population_state.carrying_capacity
                 {
+                    let effective_growth_rate = u32::try_from(
+                        u128::from(config.growth_per_thousand)
+                            .checked_mul(u128::from(
+                                100_u32
+                                    .checked_add(next.population_state.growth_rate_bonus_percent)
+                                    .ok_or(CoreError::Overflow)?,
+                            ))
+                            .ok_or(CoreError::Overflow)?
+                            / 100,
+                    )
+                    .map_err(|_| CoreError::Overflow)?;
                     let growth = logistic_population_delta(
                         next.population,
                         next.population_state.carrying_capacity,
-                        config.growth_per_thousand,
+                        effective_growth_rate,
                         config.logistic_scale,
                         &mut next.population_state.growth_carry,
                     )?;
@@ -5543,6 +6034,10 @@ impl GameSession {
             quantity: u32,
         }
         let graph = self.graph().clone();
+        let life = self
+            .world
+            .resource::<EconomyConfig>()
+            .life_support_burn_per_capita;
         let markets = self
             .world
             .query_filtered::<(&StableId, &Market, &MarketPolicy), With<SystemMarker>>()
@@ -5592,9 +6087,16 @@ impl GameSession {
                     }
                     let affordable = u32::try_from(t.energy_tank.checked_sub(burn)?.0 / ask.0)
                         .unwrap_or(u32::MAX);
-                    let quantity = u32::try_from((*stock).min(u64::from(t.cargo_capacity)))
+                    let requested = u32::try_from((*stock).min(u64::from(t.cargo_capacity)))
                         .unwrap_or(u32::MAX)
                         .min(affordable);
+                    let quantity = m.funded_quantity_for_purchases(
+                        p,
+                        life,
+                        requested,
+                        bid,
+                        Energy::ZERO,
+                    )?;
                     if quantity > 0 {
                         let Some(score) = profitable_opportunity_score(
                             bid,
@@ -5673,11 +6175,18 @@ impl GameSession {
                                     ),
                             )
                             .unwrap_or(u32::MAX);
-                            let quantity =
+                            let requested =
                                 u32::try_from((*stock).min(u64::from(archetype.cargo_capacity)))
                                     .unwrap_or(u32::MAX)
                                     .min(affordable)
                                     .min(advertised);
+                            let quantity = destination.funded_quantity_for_purchases(
+                                destination_policy,
+                                life,
+                                requested,
+                                bid,
+                                Energy::ZERO,
+                            )?;
                             if let Some(score) = profitable_opportunity_score(
                                 bid,
                                 ask,
@@ -6115,6 +6624,70 @@ mod tests {
         }
         assert_eq!(session.snapshot().traders.len(), 1);
         assert_eq!(session.snapshot().fleet.spawn_sequence, 0);
+    }
+
+    #[test]
+    fn subsidized_dynamic_opportunity_requires_canonical_destination_funding() {
+        let mut definition = definition();
+        enable_investments(&mut definition);
+        definition.fleet = dynamic_fleet(0, 1, 1, 100);
+        let mut session = GameSession::new(definition).unwrap();
+        let destination = session.market_entity(&id("core:s1")).unwrap();
+        {
+            let mut market = session.world.get_mut::<Market>(destination).unwrap();
+            market
+                .investment_state
+                .levels
+                .insert(InvestmentKind::RouteSubsidy, 1);
+            let protected = market.protected_liquidation_budget;
+            market.reserved_energy = Energy(10);
+            market
+                .set_energy_stock(protected.checked_add(Energy(10)).unwrap())
+                .unwrap();
+        }
+
+        session.collect_automated_trader_requests().unwrap();
+        assert_eq!(
+            session
+                .world
+                .resource::<FleetDynamics>()
+                .normalized_unserved_opportunity,
+            0
+        );
+        session.evaluate_dynamic_fleet().unwrap();
+        assert_eq!(
+            session
+                .world
+                .query_filtered::<Entity, (With<Trader>, Without<PlayerControlled>)>()
+                .iter(&session.world)
+                .count(),
+            0,
+            "an advertised but zero-funded subsidy must not spawn a donor"
+        );
+
+        {
+            let mut market = session.world.get_mut::<Market>(destination).unwrap();
+            market.reserved_energy = Energy::ZERO;
+            market.set_energy_stock(Energy(1_000)).unwrap();
+        }
+        session.collect_automated_trader_requests().unwrap();
+        assert!(
+            session
+                .world
+                .resource::<FleetDynamics>()
+                .normalized_unserved_opportunity
+                > 0
+        );
+        session.evaluate_dynamic_fleet().unwrap();
+        assert_eq!(
+            session
+                .world
+                .query_filtered::<Entity, (With<Trader>, Without<PlayerControlled>)>()
+                .iter(&session.world)
+                .count(),
+            1,
+            "restored destination funding makes the opportunity spawnable"
+        );
     }
 
     #[test]
@@ -6594,7 +7167,10 @@ mod tests {
         assert_eq!(format!("{:?}", s.snapshot()), before);
         assert!(matches!(
             s.drain_events().as_slice(),
-            [GameEvent::Rejected(_)]
+            [GameEvent::GovernorPolicyRejected {
+                reason: GovernorRejectionReason::InvalidPolicy,
+                ..
+            }]
         ));
 
         let trader = s.player_entity().unwrap();
@@ -6618,7 +7194,10 @@ mod tests {
         assert_eq!(format!("{:?}", s.snapshot()), before);
         assert!(matches!(
             s.drain_events().as_slice(),
-            [GameEvent::Rejected(_)]
+            [GameEvent::GovernorPolicyRejected {
+                reason: GovernorRejectionReason::Arithmetic,
+                ..
+            }]
         ));
     }
 
@@ -7524,6 +8103,129 @@ mod tests {
     }
 
     #[test]
+    fn investment_max_effect_validation_accepts_boundaries_and_rejects_first_invalid() {
+        let base_shape = |effect_per_level| InvestmentShape {
+            enabled: true,
+            base_cost: Energy(1),
+            cost_growth_percent: 100,
+            maximum_level: 1,
+            cooldown_ticks: 1,
+            effect_per_level,
+        };
+        let mut shapes = default_investment_shapes();
+        let mut population = PopulationConfig::default();
+
+        shapes.insert(InvestmentKind::RouteSubsidy, base_shape(u32::MAX - 100));
+        validate_investment_shapes(&shapes, &population).unwrap();
+        shapes.insert(InvestmentKind::RouteSubsidy, base_shape(u32::MAX - 99));
+        assert_eq!(
+            validate_investment_shapes(&shapes, &population),
+            Err(CoreError::InvalidWorldDynamics)
+        );
+
+        shapes.insert(InvestmentKind::RouteSubsidy, base_shape(1));
+        population.growth_per_thousand = 200;
+        let maximum_growth_bonus = u32::MAX / 2 - 100;
+        shapes.insert(
+            InvestmentKind::PopulationSupport,
+            base_shape(maximum_growth_bonus),
+        );
+        validate_investment_shapes(&shapes, &population).unwrap();
+        shapes.insert(
+            InvestmentKind::PopulationSupport,
+            base_shape(maximum_growth_bonus + 1),
+        );
+        assert_eq!(
+            validate_investment_shapes(&shapes, &population),
+            Err(CoreError::InvalidWorldDynamics)
+        );
+
+        population.growth_per_thousand = 1;
+        population.maximum_cap = u64::MAX / 1_000;
+        shapes.insert(
+            InvestmentKind::PopulationSupport,
+            base_shape(u32::MAX - 100),
+        );
+        assert_eq!(
+            validate_investment_shapes(&shapes, &population),
+            Err(CoreError::InvalidWorldDynamics),
+            "the maximum logistic numerator must remain within u128"
+        );
+
+        shapes.insert(InvestmentKind::PopulationSupport, base_shape(1));
+        shapes.insert(InvestmentKind::Collector, base_shape(1));
+        shapes.insert(InvestmentKind::Storage, base_shape(1));
+        let maximum_seasonal_base = i64::MAX / 2;
+        let seasonal = SeasonalGenerationState {
+            base_output: Energy(maximum_seasonal_base - 1),
+            amplitude_percent: 100,
+            period_ticks: 2,
+            phase_ticks: 0,
+            current_effective_output: Energy::ZERO,
+        };
+        validate_market_investment_bounds(&shapes, &seasonal, Energy(i64::MAX - 1)).unwrap();
+        let first_invalid_collector = SeasonalGenerationState {
+            base_output: Energy(maximum_seasonal_base),
+            ..seasonal.clone()
+        };
+        assert_eq!(
+            validate_market_investment_bounds(
+                &shapes,
+                &first_invalid_collector,
+                Energy(i64::MAX - 1),
+            ),
+            Err(CoreError::InvalidWorldDynamics)
+        );
+        assert_eq!(
+            validate_market_investment_bounds(&shapes, &seasonal, Energy(i64::MAX)),
+            Err(CoreError::InvalidWorldDynamics)
+        );
+    }
+
+    #[test]
+    fn maximum_valid_collector_purchase_executes_the_following_consuming_phase() {
+        let mut d = definition();
+        enable_investments(&mut d);
+        d.economy
+            .investments
+            .get_mut(&InvestmentKind::Collector)
+            .unwrap()
+            .cooldown_ticks = 1;
+        d.systems[0].investment_policy = InvestmentPolicy {
+            allocation_percent: BTreeMap::from([(InvestmentKind::Collector, 100)]),
+        };
+        let mut session = GameSession::new(d).unwrap();
+        session.step().unwrap();
+        session.step().unwrap();
+        assert_eq!(
+            session
+                .snapshot()
+                .markets
+                .into_iter()
+                .find(|market| market.system_id == id("core:s0"))
+                .unwrap()
+                .investment_state
+                .levels[&InvestmentKind::Collector],
+            2
+        );
+        session.step().unwrap();
+        let market = session
+            .snapshot()
+            .markets
+            .into_iter()
+            .find(|market| market.system_id == id("core:s0"))
+            .unwrap();
+        assert_eq!(
+            market.seasonal_generation.current_effective_output,
+            Energy(2)
+        );
+        assert_eq!(
+            market.investment_state.status[&InvestmentKind::Collector],
+            InvestmentStatus::MaximumLevel
+        );
+    }
+
+    #[test]
     fn seasonal_generation_runs_before_life_support_and_is_projected() {
         let mut d = definition();
         d.systems[0].energy_output_per_tick = Energy(100);
@@ -8003,8 +8705,10 @@ mod tests {
 
     #[test]
     fn population_window_accepts_documented_maximum_and_rejects_first_value_above_it() {
-        let mut config = PopulationConfig::default();
-        config.sufficiency_window = MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS;
+        let mut config = PopulationConfig {
+            sufficiency_window: MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS,
+            ..PopulationConfig::default()
+        };
         assert_eq!(validate_population_config(&config), Ok(()));
         config.sufficiency_window = MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS + 1;
         assert_eq!(
@@ -8322,6 +9026,398 @@ mod tests {
         assert_eq!(left.update_populations(), Err(CoreError::Overflow));
         assert_eq!(format!("{:?}", left.snapshot()), before);
         assert!(left.drain_events().is_empty());
+    }
+
+    fn enable_investments(definition: &mut GameDefinition) {
+        definition.economy.life_support_burn_per_capita = Energy::ZERO;
+        for (kind, effect) in [
+            (InvestmentKind::Collector, 1),
+            (InvestmentKind::Storage, 100),
+            (InvestmentKind::PopulationSupport, 5),
+            (InvestmentKind::RouteSubsidy, 10),
+        ] {
+            definition.economy.investments.insert(
+                kind,
+                InvestmentShape {
+                    enabled: true,
+                    base_cost: Energy(100),
+                    cost_growth_percent: 150,
+                    maximum_level: 2,
+                    cooldown_ticks: 2,
+                    effect_per_level: effect,
+                },
+            );
+        }
+        for system in &mut definition.systems {
+            system.energy_output_per_tick = Energy::ZERO;
+            system.seasonal_generation.base_output = Energy::ZERO;
+            system.seasonal_generation.current_effective_output = Energy::ZERO;
+        }
+    }
+
+    #[test]
+    fn autonomous_investments_use_stable_ties_exact_costs_cooldowns_caps_and_protection() {
+        let mut d = definition();
+        enable_investments(&mut d);
+        d.systems[0].investment_policy = InvestmentPolicy {
+            allocation_percent: BTreeMap::from([
+                (InvestmentKind::Collector, 50),
+                (InvestmentKind::Storage, 50),
+            ]),
+        };
+        let mut session = GameSession::new(d).unwrap();
+        let entity = session.market_entity(&id("core:s0")).unwrap();
+
+        session.execute_autonomous_investments().unwrap();
+        let first = session.world.get::<Market>(entity).unwrap();
+        assert_eq!(first.investment_state.levels[&InvestmentKind::Collector], 1);
+        assert!(
+            !first
+                .investment_state
+                .levels
+                .contains_key(&InvestmentKind::Storage)
+        );
+        assert_eq!(first.energy_stock().unwrap(), Energy(900));
+        assert_eq!(first.seasonal_generation.base_output, Energy(1));
+
+        session.execute_autonomous_investments().unwrap();
+        let second = session.world.get::<Market>(entity).unwrap();
+        assert_eq!(second.investment_state.levels[&InvestmentKind::Storage], 1);
+        assert_eq!(second.energy_storage_cap, Energy(2_100));
+        assert_eq!(second.energy_stock().unwrap(), Energy(800));
+        session.world.resource_mut::<Clock>().0 = 2;
+        session.execute_autonomous_investments().unwrap();
+        let third = session.world.get::<Market>(entity).unwrap();
+        assert_eq!(third.investment_state.levels[&InvestmentKind::Collector], 2);
+        assert_eq!(third.energy_stock().unwrap(), Energy(650));
+        assert_eq!(third.seasonal_generation.base_output, Energy(2));
+        session.world.resource_mut::<Clock>().0 = 4;
+        session.execute_autonomous_investments().unwrap();
+        assert_eq!(
+            session
+                .world
+                .get::<Market>(entity)
+                .unwrap()
+                .investment_state
+                .status[&InvestmentKind::Collector],
+            InvestmentStatus::MaximumLevel
+        );
+
+        let mut constrained = definition();
+        enable_investments(&mut constrained);
+        constrained.systems[0].inventory.insert(id(ENERGY_ID), 119);
+        constrained.systems[0].investment_policy = InvestmentPolicy {
+            allocation_percent: BTreeMap::from([(InvestmentKind::Collector, 100)]),
+        };
+        let mut constrained = GameSession::new(constrained).unwrap();
+        let constrained_entity = constrained.market_entity(&id("core:s0")).unwrap();
+        constrained.execute_autonomous_investments().unwrap();
+        let market = constrained.world.get::<Market>(constrained_entity).unwrap();
+        assert_eq!(market.energy_stock().unwrap(), Energy(119));
+        assert_eq!(market.protected_liquidation_budget, Energy(20));
+        assert_eq!(
+            market.investment_state.status[&InvestmentKind::Collector],
+            InvestmentStatus::InsufficientFunds {
+                available: Energy(99),
+                cost: Energy(100),
+            }
+        );
+
+        {
+            let mut market = constrained
+                .world
+                .get_mut::<Market>(constrained_entity)
+                .unwrap();
+            market.set_energy_stock(Energy(1_000)).unwrap();
+            market.operating_profile.stage = BrownoutStage::Emergency;
+            market.operating_profile.investment_allowed = false;
+        }
+        constrained.execute_autonomous_investments().unwrap();
+        let market = constrained.world.get::<Market>(constrained_entity).unwrap();
+        assert_eq!(market.energy_stock().unwrap(), Energy(1_000));
+        assert_eq!(
+            market.investment_state.status[&InvestmentKind::Collector],
+            InvestmentStatus::DisabledByStage(BrownoutStage::Emergency)
+        );
+    }
+
+    #[test]
+    fn selected_investment_spend_recomputes_other_ready_statuses() {
+        let mut d = definition();
+        enable_investments(&mut d);
+        d.systems[0].investment_policy = InvestmentPolicy {
+            allocation_percent: BTreeMap::from([
+                (InvestmentKind::Collector, 50),
+                (InvestmentKind::Storage, 50),
+            ]),
+        };
+        let mut session = GameSession::new(d).unwrap();
+        let entity = session.market_entity(&id("core:s0")).unwrap();
+        {
+            let mut market = session.world.get_mut::<Market>(entity).unwrap();
+            market.protected_liquidation_budget = Energy::ZERO;
+            market.set_energy_stock(Energy(100)).unwrap();
+        }
+
+        session.execute_autonomous_investments().unwrap();
+        let market = session.world.get::<Market>(entity).unwrap();
+        assert_eq!(market.energy_stock().unwrap(), Energy::ZERO);
+        assert!(matches!(
+            market.investment_state.status[&InvestmentKind::Collector],
+            InvestmentStatus::Completed {
+                tick: 0,
+                cost: Energy(100)
+            }
+        ));
+        assert_eq!(
+            market.investment_state.status[&InvestmentKind::Storage],
+            InvestmentStatus::InsufficientFunds {
+                available: Energy::ZERO,
+                cost: Energy(100),
+            }
+        );
+    }
+
+    #[test]
+    fn investment_effects_are_atomic_and_subsidy_suppression_resumes_without_reauthorization() {
+        let mut d = definition();
+        enable_investments(&mut d);
+        d.economy
+            .investments
+            .get_mut(&InvestmentKind::Collector)
+            .unwrap()
+            .effect_per_level = 10;
+        d.systems[0].seasonal_generation.amplitude_percent = 20;
+        d.systems[0].seasonal_generation.period_ticks = 4;
+        d.systems[0].investment_policy = InvestmentPolicy {
+            allocation_percent: BTreeMap::from([(InvestmentKind::Collector, 100)]),
+        };
+        let mut session = GameSession::new(d).unwrap();
+        session.step().unwrap();
+        let first = session.snapshot().markets.remove(0);
+        assert_eq!(first.seasonal_generation.base_output, Energy(10));
+        assert_eq!(
+            first.seasonal_generation.current_effective_output,
+            Energy::ZERO
+        );
+        session.step().unwrap();
+        let second = session.snapshot().markets.remove(0);
+        assert_eq!(
+            second.seasonal_generation.current_effective_output,
+            Energy(10)
+        );
+
+        let mut population = definition();
+        enable_investments(&mut population);
+        population.systems[0].investment_policy = InvestmentPolicy {
+            allocation_percent: BTreeMap::from([(InvestmentKind::PopulationSupport, 100)]),
+        };
+        let mut population = GameSession::new(population).unwrap();
+        let population_entity = population.market_entity(&id("core:s0")).unwrap();
+        let before_population = population
+            .world
+            .get::<Market>(population_entity)
+            .unwrap()
+            .population;
+        population.execute_autonomous_investments().unwrap();
+        let supported = population.world.get::<Market>(population_entity).unwrap();
+        assert_eq!(supported.population, before_population);
+        assert_eq!(supported.population_state.support_capacity, 6);
+        assert_eq!(supported.population_state.growth_rate_bonus_percent, 5);
+        assert_eq!(supported.population_state.carrying_capacity, 1);
+
+        let mut subsidy = definition();
+        enable_investments(&mut subsidy);
+        subsidy.economy.life_support_burn_per_capita = Energy(1);
+        let mut subsidy = GameSession::new(subsidy).unwrap();
+        let destination = subsidy.market_entity(&id("core:s1")).unwrap();
+        let ore = id("core:ore");
+        let normal_bid = subsidy.quotes(&id("core:s1"), &ore).unwrap().0;
+        {
+            let mut market = subsidy.world.get_mut::<Market>(destination).unwrap();
+            market
+                .investment_state
+                .levels
+                .insert(InvestmentKind::RouteSubsidy, 1);
+        }
+        let premium_bid = subsidy.quotes(&id("core:s1"), &ore).unwrap().0;
+        assert!(premium_bid > normal_bid);
+        {
+            let mut market = subsidy.world.get_mut::<Market>(destination).unwrap();
+            market.set_energy_stock(Energy(6)).unwrap();
+        }
+        subsidy.classify_brownouts().unwrap();
+        assert_eq!(
+            subsidy
+                .world
+                .get::<Market>(destination)
+                .unwrap()
+                .brownout
+                .stage,
+            BrownoutStage::Emergency
+        );
+        assert_eq!(
+            subsidy.quotes(&id("core:s1"), &ore).unwrap().0,
+            Energy::ZERO
+        );
+        assert_eq!(
+            subsidy.market_demand(&id("core:s1"), &ore).unwrap(),
+            MarketDemandSnapshot::default()
+        );
+        assert_eq!(
+            subsidy
+                .world
+                .get::<Market>(destination)
+                .unwrap()
+                .reserved_energy,
+            Energy::ZERO
+        );
+        {
+            let mut market = subsidy.world.get_mut::<Market>(destination).unwrap();
+            market.set_energy_stock(Energy(1_000)).unwrap();
+        }
+        subsidy.world.resource_mut::<Clock>().0 = 1;
+        subsidy.classify_brownouts().unwrap();
+        assert_eq!(
+            subsidy
+                .world
+                .get::<Market>(destination)
+                .unwrap()
+                .brownout
+                .stage,
+            BrownoutStage::Throttled
+        );
+        assert_eq!(subsidy.quotes(&id("core:s1"), &ore).unwrap().0, premium_bid);
+        let player = subsidy.player_entity().unwrap();
+        let quantity = subsidy
+            .create_reservation(player, &id("core:s1"), &ore, 2)
+            .unwrap();
+        assert_eq!(
+            subsidy
+                .world
+                .get::<Market>(destination)
+                .unwrap()
+                .reserved_energy,
+            premium_bid.checked_mul(u64::from(quantity)).unwrap()
+        );
+
+        let mut opportunity_definition = definition();
+        enable_investments(&mut opportunity_definition);
+        opportunity_definition.fleet = dynamic_fleet(0, 2, 1, 2);
+        let mut without_subsidy = GameSession::new(opportunity_definition.clone()).unwrap();
+        let mut with_subsidy = GameSession::new(opportunity_definition).unwrap();
+        let opportunity_destination = with_subsidy.market_entity(&id("core:s1")).unwrap();
+        with_subsidy
+            .world
+            .get_mut::<Market>(opportunity_destination)
+            .unwrap()
+            .investment_state
+            .levels
+            .insert(InvestmentKind::RouteSubsidy, 1);
+        without_subsidy.collect_automated_trader_requests().unwrap();
+        with_subsidy.collect_automated_trader_requests().unwrap();
+        assert!(
+            with_subsidy
+                .world
+                .resource::<FleetDynamics>()
+                .normalized_unserved_opportunity
+                > without_subsidy
+                    .world
+                    .resource::<FleetDynamics>()
+                    .normalized_unserved_opportunity
+        );
+
+        let mut overflow = definition();
+        enable_investments(&mut overflow);
+        overflow.systems[0].seasonal_generation.base_output = Energy(i64::MAX);
+        overflow.systems[0]
+            .seasonal_generation
+            .current_effective_output = Energy(i64::MAX);
+        overflow.systems[0].energy_output_per_tick = Energy(i64::MAX);
+        overflow.systems[0].investment_policy = InvestmentPolicy {
+            allocation_percent: BTreeMap::from([(InvestmentKind::Collector, 100)]),
+        };
+        assert!(matches!(
+            GameSession::new(overflow),
+            Err(CoreError::InvalidWorldDynamics)
+        ));
+    }
+
+    #[test]
+    fn governor_policy_edits_merge_only_approved_fields() {
+        let mut d = definition();
+        d.systems[0].policy.pricing_mode = PricingMode::Scarcity;
+        d.systems[0].policy.liquidation_threshold_percent = 175;
+        d.systems[0].policy.liquidation_discount_percent = 40;
+        d.systems[0].policy.default_target = 77;
+        let mut session = GameSession::new(d).unwrap();
+        session
+            .submit(GameCommand::SetGovernorMarketPolicy {
+                system: id("core:s0"),
+                policy: GovernorMarketPolicy {
+                    producer_margin_percent: 25,
+                    operating_reserve_ticks: 4,
+                    import_priorities: BTreeMap::from([(id("core:ore"), 125)]),
+                },
+            })
+            .unwrap();
+        let policy = &session.snapshot().markets[0].policy;
+        assert_eq!(policy.producer_margin_percent, 25);
+        assert_eq!(policy.operating_reserve_ticks, 4);
+        assert_eq!(policy.import_priorities[&id("core:ore")], 125);
+        assert_eq!(policy.pricing_mode, PricingMode::Scarcity);
+        assert_eq!(policy.liquidation_threshold_percent, 175);
+        assert_eq!(policy.liquidation_discount_percent, 40);
+        assert_eq!(policy.default_target, 77);
+    }
+
+    #[test]
+    fn governor_authorization_is_typed_and_ai_and_player_use_the_same_executor() {
+        let mut d = definition();
+        enable_investments(&mut d);
+        d.systems[1].governance = Governance::default();
+        for system in &mut d.systems {
+            system.investment_policy = InvestmentPolicy {
+                allocation_percent: BTreeMap::from([(InvestmentKind::Storage, 100)]),
+            };
+        }
+        let mut session = GameSession::new(d).unwrap();
+        assert_eq!(
+            session.submit(GameCommand::SetInvestmentPolicy {
+                system: id("core:s1"),
+                policy: InvestmentPolicy::default(),
+            }),
+            Err(CoreError::UnauthorizedMarketPolicy)
+        );
+        assert!(matches!(
+            session.drain_events().as_slice(),
+            [GameEvent::GovernorPolicyRejected {
+                reason: GovernorRejectionReason::Unauthorized,
+                ..
+            }]
+        ));
+        session
+            .submit(GameCommand::SetInvestmentPolicy {
+                system: id("core:s0"),
+                policy: InvestmentPolicy {
+                    allocation_percent: BTreeMap::from([(InvestmentKind::Storage, 100)]),
+                },
+            })
+            .unwrap();
+        session.drain_events();
+        session.execute_autonomous_investments().unwrap();
+        let snapshot = session.snapshot();
+        assert!(snapshot.markets.iter().all(|market| {
+            market.investment_state.levels.get(&InvestmentKind::Storage) == Some(&1)
+        }));
+        assert_eq!(
+            session
+                .drain_events()
+                .iter()
+                .filter(|event| matches!(event, GameEvent::InvestmentCompleted { .. }))
+                .count(),
+            2
+        );
     }
 
     #[test]

@@ -301,19 +301,19 @@ Validation:
 
 ### Phase 6: Investments, Governor Commands, and UI
 
-- [ ] Enable collectors and storage first through the common investment executor; verify diminishing returns, cap/cost arithmetic, stage gating, and rate limits.
-- [ ] Enable population support and route subsidy through the same typed shape and atomic spending path.
-- [ ] Add authored/default AI investment allocations and one optional starting player governorship; keep acquisition gameplay deferred.
-- [ ] Extend typed core/app commands for authorized policy/allocation edits and typed rejection feedback.
-- [ ] Build a TUI governor surface for the governed market's reserve, margin, import priorities, and investment allocation; do not expose direct ECS mutation or per-tick upkeep actions.
-- [ ] Expose investment levels, next costs, cooldown/status, subsidy premium, population tier, and ladder-history score inputs through immutable views.
-- [ ] Update repository content tuning, documentation, and `CHANGELOG.md` under `Unreleased` only after the complete player-facing flow is accepted.
+- [x] Enable collectors and storage first through the common investment executor; verify diminishing returns, cap/cost arithmetic, stage gating, and rate limits.
+- [x] Enable population support and route subsidy through the same typed shape and atomic spending path.
+- [x] Add authored/default AI investment allocations and one optional starting player governorship; keep acquisition gameplay deferred.
+- [x] Extend typed core/app commands for authorized policy/allocation edits and typed rejection feedback.
+- [x] Build a TUI governor surface for the governed market's reserve, margin, import priorities, and investment allocation; do not expose direct ECS mutation or per-tick upkeep actions.
+- [x] Expose investment levels, next costs, cooldown/status, subsidy premium, population tier, and ladder-history score inputs through immutable views.
+- [x] Update repository content tuning, documentation, and `CHANGELOG.md` under `Unreleased` only after the complete player-facing flow is accepted.
 
 Validation:
-- [ ] Investment tests cover exact cost progression, simultaneous allocation ties, insufficient energy, protected-fund exclusion, stage disablement, cooldown/rate limit, maximum level, overflow, and atomic rollback.
-- [ ] Collector tests prove seasons scale from the upgraded base output; storage tests preserve stock/cap invariants; population support affects only approved growth/cap inputs; subsidies are funded and alter the normal opportunity backlog. A market with an active subsidy that enters Emergency must advertise only energy/survival goods, spend nothing on the suppressed subsidized good, and automatically resume its premium after recovery.
-- [ ] Authorization tests reject unowned-market changes and prove AI-defaulted and player-configured markets execute through the same policy system.
-- [ ] App actor tests cover request→command→event→view flow; Ratatui `TestBackend` tests cover governor editing, validation feedback, and read-only non-governed markets.
+- [x] Investment tests cover exact cost progression, simultaneous allocation ties, insufficient energy, protected-fund exclusion, stage disablement, cooldown/rate limit, maximum level, overflow, and atomic rollback.
+- [x] Collector tests prove seasons scale from the upgraded base output; storage tests preserve stock/cap invariants; population support affects only approved growth/cap inputs; subsidies are funded and alter the normal opportunity backlog. A market with an active subsidy that enters Emergency must advertise only energy/survival goods, spend nothing on the suppressed subsidized good, and automatically resume its premium after recovery.
+- [x] Authorization tests reject unowned-market changes and prove AI-defaulted and player-configured markets execute through the same policy system.
+- [x] App actor tests cover request→command→event→view flow; Ratatui `TestBackend` tests cover governor editing, validation feedback, and read-only non-governed markets.
 - [ ] Manual play confirms that a trader can read a seasonal/brownout opportunity, deliver relief before fleet adaptation, govern one market without repetitive upkeep, and observe persistent ladder/population consequences.
 
 ## Acceptance Criteria

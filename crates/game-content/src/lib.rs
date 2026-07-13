@@ -9,7 +9,7 @@ use game_core::{
     RefuelPolicy, SeasonalGenerationState, SourceDefinition, SystemDefinition, SystemGraph,
     TraderDefinition, compute_protected_liquidation_budget, route_travel_energy,
     scaled_source_output, ticks_for_distance, validate_investment_shapes,
-    validate_population_config,
+    validate_market_investment_bounds, validate_population_config,
 };
 #[cfg(test)]
 use game_core::{liquidation_target_energy, liquidation_unit_price};
@@ -572,7 +572,8 @@ fn compile(
     let default_policy = compile_policy_defaults(&config, &good_ids, &mut errors);
     let brownouts = compile_brownouts(&config.brownouts, &good_ids, &mut errors);
     let population_config = compile_population_config(&config.population, &good_ids, &mut errors);
-    let investments = compile_investment_shapes(&config.investments, &mut errors);
+    let investments =
+        compile_investment_shapes(&config.investments, &population_config, &mut errors);
     let default_investment_policy = compile_investment_policy(
         &config.default_investment_allocation,
         "economy_config.ron:default_investment_allocation",
@@ -690,6 +691,19 @@ fn compile(
         {
             errors.push(format!(
                 "economy.ron:{system}:seasonal: output bounds overflow"
+            ));
+        }
+        if seasonal_shape_valid
+            && seasonal_period_valid
+            && validate_market_investment_bounds(
+                &compiled_config.investments,
+                &seasonal_generation,
+                Energy(source.energy_storage_cap),
+            )
+            .is_err()
+        {
+            errors.push(format!(
+                "economy.ron:{system}:investments: maximum collector/storage effect exceeds generation or storage bounds"
             ));
         }
         let reference = source.population_reference.unwrap_or(source.population);
@@ -1130,6 +1144,7 @@ fn compile_population_config(
 
 fn compile_investment_shapes(
     sources: &[InvestmentShapeSource],
+    population: &PopulationConfig,
     errors: &mut Vec<String>,
 ) -> BTreeMap<InvestmentKind, InvestmentShape> {
     let mut result = BTreeMap::new();
@@ -1154,8 +1169,8 @@ fn compile_investment_shapes(
             ));
         }
     }
-    if validate_investment_shapes(&result).is_err() {
-        errors.push("economy_config.ron:investments: all four shapes require valid costs, curves, levels, cooldowns, and effects".into());
+    if validate_investment_shapes(&result, population).is_err() {
+        errors.push("economy_config.ron:investments: all four shapes require valid costs, curves, levels, cooldowns, and kind-safe maximum effects".into());
     }
     result
 }
@@ -1790,8 +1805,18 @@ mod tests {
                 .economy
                 .investments
                 .values()
-                .all(|shape| !shape.enabled)
+                .all(|shape| shape.enabled
+                    && shape.maximum_level > 0
+                    && shape.effect_per_level > 0)
         );
+        assert!(loaded.definition.systems.iter().all(|system| {
+            system
+                .investment_policy
+                .allocation_percent
+                .values()
+                .sum::<u32>()
+                == 100
+        }));
         assert_eq!(
             loaded
                 .definition
@@ -1852,6 +1877,54 @@ mod tests {
         ] {
             assert!(error.contains(context), "missing {context} in {error}");
         }
+    }
+
+    #[test]
+    fn investment_effect_bound_errors_retain_source_context() {
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let economy = load(root().join("economy.ron")).unwrap();
+        let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+        let traders = load(root().join("traders.ron")).unwrap();
+        let route = config
+            .investments
+            .iter_mut()
+            .find(|shape| matches!(shape.kind, InvestmentKindSource::RouteSubsidy))
+            .unwrap();
+        route.maximum_level = 1;
+        route.effect_per_level = u32::MAX - 99;
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("economy_config.ron:investments"),
+            "missing config source context in {error}"
+        );
+
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
+        let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+        let traders = load(root().join("traders.ron")).unwrap();
+        let storage = config
+            .investments
+            .iter_mut()
+            .find(|shape| matches!(shape.kind, InvestmentKindSource::Storage))
+            .unwrap();
+        storage.enabled = true;
+        storage.maximum_level = 1;
+        storage.effect_per_level = 1;
+        economy.markets[0].energy_storage_cap = i64::MAX;
+        let system = economy.markets[0].system.clone();
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!("economy.ron:{system}:investments")),
+            "missing market source context in {error}"
+        );
     }
 
     #[test]

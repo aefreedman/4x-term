@@ -17,6 +17,8 @@
 - A bounded identical-session player-impact probe with one typed, recorded external delivery and explicit reconciliation of intervention inflow.
 - A deterministic endogenous NPC fleet with normalized persistent opportunity, market-funded slow spawning, bounded profitability, conservation-safe deferred retirement, typed lifecycle events, and fleet diagnostics.
 - Dynamic population hysteresis with a validated 10,000-sample maximum for efficient bounded energy/goods sufficiency history, fast starvation decline, slower gated logistic recovery, atomically denominator-paired carry, population-scaled life support/labor/tertiary demand, tier milestones, and an explicit 10,000-tick metastability acceptance harness.
+- A common autonomous investment executor for collectors, storage, population support, and canonically funded route subsidies, with diminishing checked costs, stable allocation ties, cooldowns, maximum levels, protected-surplus spending, typed status, and Emergency/Starvation suppression with automatic subsidy recovery.
+- One authored starting player governorship plus default AI allocations, typed authorized policy/allocation requests and rejection feedback, immutable governor views, and TUI controls for reserve horizon, margin, import priorities, and autonomous investment allocations.
 
 ### Changed
 
@@ -34,3 +36,4 @@
 - Cost-aware asks now compound sustainable cost-basis margin with bounded scarcity, while processor input bids use deterministic non-recursive solvency ceilings.
 - Repository markets now use dynamic population, with Sable Junction tuned as a recoverable demographic stress case; app, TUI, and CLI views expose population trend, carrying cap, tier, sufficiency trajectory, and aggregate stage/population history.
 - The long 1,000-tick repository content acceptance is ignored by default with an explicit command; routine tests retain a 50-tick deterministic/activity smoke and short system-only/trader-only insertion-order checks.
+- Repository markets now enable all four tuned investment shapes with a shared default AI allocation; investment energy is reported as an explicit physical sink in reconciliation and market-flow views.

@@ -33,17 +33,21 @@ Controls:
 - `n`: enter the quantity used by buy and sell commands
 - `b` / `x`: buy or sell the selected quantity of the selected good
 - `Enter`: travel to the selected system
+- `[` / `]`: decrease or increase the governed market's reserve horizon
+- `,` / `.`: decrease or increase the governed market's producer margin
+- `I` / `i`: decrease or increase the selected good's governed import priority
+- `-` / `+`: decrease or increase the selected autonomous investment allocation
 - `?`: show or hide help
 - `q`: quit
 
-The terminal should be at least 70 columns by 24 rows. The prototype exposes current market information for all systems.
+The terminal should be at least 70 columns by 24 rows. The prototype exposes current market information for all systems. Frontier System 01 is the player's authored starting governorship; every other market remains read-only. Governance edits policy through typed application requests, while investments execute autonomously each tick rather than through upkeep clicks.
 
 ## Designer configuration
 
 Runtime content is stored under `content/`.
 
-- `economy_config.ron` controls global market buy/sell percentages, the untargeted-good discount, overall raw-source output, and idle NPC repositioning.
-- `economy.ron` controls per-system inventories, demand targets, recipes, raw sources, and deterministic seasonal generation.
+- `economy_config.ron` controls global market policy, brownouts, population, all four diminishing-cost investment shapes, default AI allocations, raw-source output, and idle NPC repositioning.
+- `economy.ron` controls per-system inventories, demand targets, recipes, raw sources, deterministic seasonal generation, optional investment-allocation overrides, and the optional starting governor.
 - `goods.ron` controls individual base prices.
 - `traders.ron` controls fixed/dynamic fleet mode, initial and maximum count, response/retirement windows, speed, physical starting tank, cargo capacity, naming, and distribution.
 
