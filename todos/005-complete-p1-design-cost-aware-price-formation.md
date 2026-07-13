@@ -1,9 +1,11 @@
 ---
-status: pending
+status: complete
 priority: p1
 issue_id: 005
 tags: [economy, pricing, markets, design]
 dependencies: []
+resolution: superseded
+superseded_by: 006
 ---
 # Design Cost-Aware Price Formation
 
@@ -152,8 +154,20 @@ Next design session should:
 - A cost floor is an invariant candidate, not a complete market model.
 - More robust tests should follow the model decision rather than substitute for it.
 
+### 2026-07-12 - Superseded by cost-aware energy pricing
+
+**By:** OpenAI
+
+**Actions:**
+- Replaced the isolated pricing mock with production embodied-energy cost basis, sustainable asks, processor bid ceilings, funded demand, and scarcity A/B diagnostics under todo 006.
+- Validated non-negative structural processor margins and exact physical-energy reconciliation over 1,000 ticks.
+
+**Learnings:**
+- Cost-aware pricing must be integrated with physical funding and settlement; a standalone cost floor cannot prove buyer liquidity or processor solvency.
+
 ## Notes
 
+- Superseded by todo 006 and `docs/energy-economy.md`.
 - Preserve the current scarcity model as a comparison baseline until an alternative is validated.
 - Do not treat the 1,000-cycle cost-floor mock as evidence of buyer liquidity or market equilibrium.
 - The unrelated untracked `.obsidian/` directory must remain untouched.

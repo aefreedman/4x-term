@@ -182,7 +182,7 @@ Use separate stable identifiers for:
 
 Stable content IDs are validated string newtypes using a namespace-qualified form such as `core:system_01`. Mappings between stable IDs and ECS entities belong in core resources or persistence reconstruction code.
 
-Currency balances use an integer `Money` newtype representing minor units; floating-point values are not used for balances or transactions. Three-dimensional map coordinates and derived Euclidean distances use finite `f64` values in prototype distance units.
+The economy uses a checked integer `Energy` newtype for physical energy stock, tank amounts, prices, costs, reservations, and settlements; floating-point values are not used for economic arithmetic. A market's `core:energy` inventory line is its only purchasing balance, while trader tanks and cargo-bay energy remain distinct physical stores. Three-dimensional map coordinates and derived Euclidean distances use finite `f64` values in prototype distance units. The enduring economy contract, deterministic phase order, and reconciliation rules are documented in [Energy-Denominated Economy](energy-economy.md).
 
 ## Application boundary
 
@@ -251,7 +251,7 @@ Requirements:
 - Content definitions are immutable after compilation unless explicit hot-reload support is added.
 - Format-specific parsing is isolated behind loader adapters.
 
-A registry resource in the ECS world can hold compiled definitions and map stable content IDs to runtime templates. Population-level parameters that designers tune together—such as NPC trader count, common speed, starting funds/capacity, naming, and distribution—belong in dedicated validated configuration files such as `content/traders.ron`, rather than being duplicated across individual entity definitions.
+A registry resource in the ECS world can hold compiled definitions and map stable content IDs to runtime templates. Population-level parameters that designers tune together—such as NPC trader count, common speed, starting tank energy/capacity, cargo capacity, travel burn, naming, and distribution—belong in dedicated validated configuration files such as `content/traders.ron`, rather than being duplicated across individual entity definitions.
 
 ## Persistence
 

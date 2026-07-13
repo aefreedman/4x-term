@@ -319,7 +319,7 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
         .split(vertical[0]);
     let right = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(6)])
+        .constraints([Constraint::Length(10), Constraint::Min(6)])
         .split(top[1]);
     render_systems(frame, top[0], view, ui);
     render_details(frame, right[0], view, ui);
@@ -401,7 +401,14 @@ fn render_systems(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui:
             } else {
                 Style::default()
             };
-            ListItem::new(system.name.clone()).style(style)
+            ListItem::new(format!(
+                "{} E {}/{} {}",
+                system.name,
+                system.energy_stock.0,
+                system.energy_capacity.0,
+                system.health.label()
+            ))
+            .style(style)
         })
         .collect::<Vec<_>>();
     frame.render_widget(
@@ -440,6 +447,27 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
             )),
         ]
     });
+    let energy = &view.market_energy;
+    lines.push(Line::from(format!(
+        "Energy {}/{} · {}",
+        energy.stock.0,
+        energy.capacity.0,
+        energy.health.label()
+    )));
+    lines.push(Line::from(format!(
+        "Claims {} · operating {} · protected {} · purchasing {}",
+        energy.reserved_claims.0,
+        energy.operating_reserve.0,
+        energy.protected_liquidation_budget.0,
+        energy.unreserved_purchasing_energy.0
+    )));
+    lines.push(Line::from(format!(
+        "Flow +{} / -{} · curtailed {} · life-support deficit {}",
+        energy.generated.0, energy.burned.0, energy.curtailed.0, energy.unsupplied_life_support.0,
+    )));
+    if energy.bootstrap_risk_acknowledged {
+        lines.push(Line::from("Bootstrap risk: ACKNOWLEDGED"));
+    }
     if let Some(route) = &view.selected_route {
         let mode = if route.current_leg.is_some() {
             format!("Traveling to {}", route.destination_name)
@@ -504,8 +532,10 @@ fn render_market(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
             Cell::from(row.name.clone()),
             Cell::from(row.inventory.to_string()),
             Cell::from(row.target.to_string()),
-            Cell::from(format!("¤{}", row.buy_quote.0)),
-            Cell::from(format!("¤{}", row.sell_quote.0)),
+            Cell::from(row.unit_cost.0.to_string()),
+            Cell::from(row.funded_demand.to_string()),
+            Cell::from(format!("{} E", row.buy_quote.0)),
+            Cell::from(format!("{} E", row.sell_quote.0)),
         ])
         .style(if index == ui.market_index {
             Style::default().bg(Color::DarkGray)
@@ -513,16 +543,26 @@ fn render_market(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
             Style::default()
         })
     });
-    let header = Row::new(["Good", "Stock", "Target", "Market buys", "Market sells"])
-        .style(Style::default().add_modifier(Modifier::BOLD));
+    let header = Row::new([
+        "Good",
+        "Stock",
+        "Target",
+        "Cost",
+        "Funded",
+        "Market buys",
+        "Market sells",
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD));
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(36),
+            Constraint::Percentage(28),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
             Constraint::Length(7),
-            Constraint::Length(7),
-            Constraint::Length(12),
-            Constraint::Length(12),
+            Constraint::Length(9),
+            Constraint::Length(9),
         ],
     )
     .header(header)
@@ -554,17 +594,24 @@ fn render_player(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
                 if p.traveling { " (traveling)" } else { "" }
             )),
             Span::raw(format!(
-                "Funds: ¤{}  Net: ¤{}  Rank: #{}",
-                p.currency.0, p.net_worth.0, p.net_worth_rank
+                "Tank {}/{} E  Total value {} E  Rank #{}",
+                p.tank_energy.0, p.tank_capacity.0, p.total_energy_value.0, p.energy_value_rank
             )),
         ]),
         Line::from(format!(
-            "Cargo {}/{} (¤{}): {}",
-            p.cargo_used, p.cargo_capacity, p.cargo_value.0, cargo
+            "Cargo bay {}/{} (bay energy {}, value {} E): {}",
+            p.cargo_used, p.cargo_capacity, p.bay_energy, p.cargo_energy_value.0, cargo
         )),
         Line::from(format!(
-            "Sales ¤{} | Profit ¤{} | Trades {} | Economy share {:.1}%",
-            p.sales_revenue, p.realized_profit, p.transactions, p.net_worth_share_percent
+            "Sales {} E | Gain {} E | Trades {} | Energy share {:.1}% | Route {} | Runway {}",
+            p.sales_energy.0,
+            p.realized_energy_gain.0,
+            p.transactions,
+            p.energy_value_share_percent,
+            p.route_energy_required
+                .map_or_else(|| "—".into(), |value| format!("{} E", value.0)),
+            p.runway_jumps
+                .map_or_else(|| "—".into(), |value| format!("{value} jumps"))
         )),
     ];
     frame.render_widget(
@@ -605,12 +652,12 @@ fn render_events(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
 mod tests {
     use super::*;
     use game_app::{
-        CargoItemView, ConnectionView, MarketRow, PlayerStatusView, RouteLegView, RouteView,
-        SystemListItem, TickRate,
+        CargoItemView, ConnectionView, EnergyHealth, MarketEnergyView, MarketRow, PlayerStatusView,
+        RouteLegView, RouteView, SystemListItem, TickRate,
     };
     use game_core::{
-        ContentId, GameDefinition, GameSession, GoodCategory, GoodDefinition, Money, Position3,
-        SystemDefinition, TraderDefinition,
+        ContentId, ENERGY_ID, EconomyConfig, Energy, GameDefinition, GameSession, GoodCategory,
+        GoodDefinition, MarketPolicy, Position3, RefuelPolicy, SystemDefinition, TraderDefinition,
     };
     use ratatui::backend::TestBackend;
     use std::cell::RefCell;
@@ -659,6 +706,7 @@ mod tests {
 
     fn test_session() -> GameSession {
         let ore = id("core:ore");
+        let energy = id(ENERGY_ID);
         let systems = (0..2)
             .map(|index| SystemDefinition {
                 id: id(&format!("core:s{index}")),
@@ -668,32 +716,48 @@ mod tests {
                     y: 0.0,
                     z: 0.0,
                 },
-                inventory: BTreeMap::from([(ore.clone(), 10)]),
+                inventory: BTreeMap::from([(energy.clone(), 1_000), (ore.clone(), 10)]),
                 targets: BTreeMap::from([(ore.clone(), 10)]),
-                currency: Money(1_000),
                 recipes: vec![],
                 sources: vec![],
+                energy_output_per_tick: Energy(10),
+                energy_storage_cap: Energy(2_000),
+                population: 1,
+                policy: MarketPolicy::default(),
+                protected_liquidation_budget: Energy(10),
+                bootstrap_risk_acknowledged: false,
             })
             .collect();
         GameSession::new(GameDefinition {
-            goods: vec![GoodDefinition {
-                id: ore,
-                name: "Ore".into(),
-                category: GoodCategory::Raw,
-                base_price: Money(10),
-            }],
+            goods: vec![
+                GoodDefinition {
+                    id: energy,
+                    name: "Energy".into(),
+                    category: GoodCategory::Energy,
+                    bootstrap_cost: Energy(1),
+                },
+                GoodDefinition {
+                    id: ore,
+                    name: "Ore".into(),
+                    category: GoodCategory::Raw,
+                    bootstrap_cost: Energy(10),
+                },
+            ],
             recipes: vec![],
             systems,
             traders: vec![TraderDefinition {
                 id: id("core:player"),
                 name: "Player".into(),
                 system: id("core:s0"),
-                currency: Money(100),
+                energy_tank: Energy(100),
+                energy_tank_capacity: Energy(1_000),
                 cargo_capacity: 10,
                 speed: 1.0,
+                travel_burn_per_distance: Energy(1),
+                refuel_policy: RefuelPolicy::DepositAndWithdraw,
                 player: true,
             }],
-            economy: game_core::EconomyConfig::default(),
+            economy: EconomyConfig::default(),
         })
         .unwrap()
     }
@@ -707,6 +771,9 @@ mod tests {
                 id: id("core:s0"),
                 name: "Aster".into(),
                 coordinates: (0.0, 0.0, 0.0),
+                energy_stock: Energy(800),
+                energy_capacity: Energy(1_000),
+                health: EnergyHealth::Healthy,
                 connections: vec![ConnectionView {
                     system_id: id("core:s1"),
                     system_name: "Brasshaven".into(),
@@ -716,18 +783,36 @@ mod tests {
             }],
             selected_system: id("core:s0"),
             selected_route: None,
+            market_energy: MarketEnergyView {
+                stock: Energy(800),
+                capacity: Energy(1_000),
+                reserved_claims: Energy(20),
+                operating_reserve: Energy(100),
+                protected_liquidation_budget: Energy(50),
+                unreserved_purchasing_energy: Energy(630),
+                generated: Energy(40),
+                burned: Energy(25),
+                curtailed: Energy(0),
+                unsupplied_life_support: Energy(0),
+                bootstrap_risk_acknowledged: false,
+                health: EnergyHealth::Healthy,
+            },
             market: vec![MarketRow {
                 good_id: id("core:ore"),
                 name: "Ore".into(),
                 inventory: 10,
                 target: 10,
-                buy_quote: Money(9),
-                sell_quote: Money(11),
+                buy_quote: Energy(9),
+                sell_quote: Energy(11),
+                unit_cost: Energy(8),
+                funded_demand: 3,
             }],
             player: PlayerStatusView {
                 location: id("core:s0"),
                 location_name: "Aster Reach".into(),
-                currency: Money(100),
+                tank_energy: Energy(100),
+                tank_capacity: Energy(250),
+                bay_energy: 0,
                 cargo: vec![CargoItemView {
                     good_id: id("core:ore"),
                     good_name: "Ferrite Ore".into(),
@@ -735,16 +820,18 @@ mod tests {
                 }],
                 cargo_used: 2,
                 cargo_capacity: 10,
-                cargo_value: Money(0),
-                net_worth: Money(100),
-                purchase_cost: 0,
-                sales_revenue: 0,
-                realized_profit: 0,
+                cargo_energy_value: Energy(18),
+                total_energy_value: Energy(118),
+                purchase_energy: Energy(18),
+                sales_energy: Energy(0),
+                realized_energy_gain: Energy(-18),
                 units_moved: 0,
                 transactions: 0,
-                net_worth_rank: 1,
-                net_worth_share_percent: 100.0,
+                energy_value_rank: 1,
+                energy_value_share_percent: 100.0,
                 sales_share_percent: 0.0,
+                route_energy_required: None,
+                runway_jumps: Some(5),
                 traveling: false,
             },
             events: vec![],
@@ -801,14 +888,55 @@ mod tests {
         );
     }
 
+    fn rendered_view(view: &ApplicationView) -> String {
+        let backend = TestBackend::new(100, 35);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, view, &UiState::default()))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn test_backend_displays_normal_full_low_and_deficit_energy_states() {
+        for (stock, health, deficit, label) in [
+            (Energy(800), EnergyHealth::Healthy, Energy(0), "healthy"),
+            (Energy(1_000), EnergyHealth::Full, Energy(0), "full"),
+            (Energy(120), EnergyHealth::Low, Energy(0), "low"),
+            (Energy(0), EnergyHealth::Deficit, Energy(7), "deficit"),
+        ] {
+            let mut view = test_view();
+            view.systems[0].energy_stock = stock;
+            view.systems[0].health = health;
+            view.market_energy.stock = stock;
+            view.market_energy.health = health;
+            view.market_energy.unsupplied_life_support = deficit;
+            let rendered = rendered_view(&view);
+            assert!(
+                rendered.contains(&format!("Energy {}/1000 · {label}", stock.0)),
+                "missing {label} energy display"
+            );
+            assert!(rendered.contains(&format!("life-support deficit {}", deficit.0)));
+        }
+    }
+
     #[test]
     fn renders_normal_constrained_and_edge_case_views() {
         let base = test_view();
         let mut edge = base.clone();
         edge.systems[0].name =
             "A very long frontier system name that must be clipped safely".into();
-        edge.player.currency = Money(i64::MAX);
-        edge.player.net_worth = Money(i64::MAX);
+        edge.player.tank_energy = Energy(i64::MAX);
+        edge.player.total_energy_value = Energy(i64::MAX);
+        edge.market_energy.health = EnergyHealth::Deficit;
+        edge.market_energy.unsupplied_life_support = Energy(5);
+        edge.market_energy.bootstrap_risk_acknowledged = true;
         edge.player.traveling = true;
         edge.selected_route = Some(RouteView {
             destination_id: id("core:s1"),
@@ -839,6 +967,7 @@ mod tests {
         for (width, height, view, ui) in [
             (100, 35, &base, UiState::default()),
             (70, 24, &edge, UiState::default()),
+            (100, 35, &edge, UiState::default()),
             (100, 35, &edge, help),
             (100, 35, &edge, quantity),
             (40, 10, &base, UiState::default()),
@@ -860,8 +989,14 @@ mod tests {
                 for label in [
                     "Systems",
                     "System / Route",
+                    "Energy 800/1000",
+                    "Claims 20",
+                    "operating 100",
+                    "protected 50",
                     "Market",
                     "Player / Trade",
+                    "Tank ",
+                    "Cargo bay 2/10",
                     "Events",
                     "Controls",
                 ] {
@@ -871,6 +1006,21 @@ mod tests {
                     !rendered.contains("core:"),
                     "internal content IDs leaked into the rendered interface"
                 );
+                if width >= 100 && !ui.help_visible && ui.quantity_input.is_none() {
+                    assert!(rendered.contains("Funded"));
+                }
+                assert!(!rendered.contains("Funds:"));
+                assert!(!rendered.contains('¤'));
+                if view.market_energy.health == EnergyHealth::Deficit {
+                    assert!(rendered.contains("deficit"));
+                }
+                if view.market_energy.bootstrap_risk_acknowledged
+                    && width >= 100
+                    && !ui.help_visible
+                    && ui.quantity_input.is_none()
+                {
+                    assert!(rendered.contains("Bootstrap risk: ACKNOWLEDGED"));
+                }
                 if ui.help_visible {
                     assert!(rendered.contains("Help"));
                 }

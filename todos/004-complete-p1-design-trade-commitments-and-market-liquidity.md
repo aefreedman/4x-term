@@ -1,9 +1,11 @@
 ---
-status: pending
+status: complete
 priority: p1
 issue_id: 004
 tags: [economy, npc-traders, simulation, design]
 dependencies: []
+resolution: superseded
+superseded_by: 006
 ---
 # Design Trade Commitments and Market Liquidity
 
@@ -173,8 +175,20 @@ Keep this todo pending until the economic actor and commitment model is selected
 - A cost floor can prevent processor accounting losses when output sells, but does not prove that buyers can afford or clear that output.
 - Funded quantity reservations prevent the observed ¤313 market from advertising a 30-unit purchase at ¤13; it can fund only 24 units, leaving no cash-backed quantity for a competing reservation.
 
+### 2026-07-12 - Superseded by the physical energy economy
+
+**By:** OpenAI
+
+**Actions:**
+- Replaced the design mocks with production funded reservations, deterministic contention, partial settlement, and universal anti-strand behavior under todo 006.
+- Validated the integrated economy with workspace tests and a reconciled 1,000-tick diagnostic run that retained post-tick-300 activity and no stationary-laden NPCs.
+
+**Learnings:**
+- Funded claims, explicit partial settlement, and protected liquidation must share one physical-energy settlement path; a partial-sale-only patch would not have solved contention or stranding.
+
 ## Notes
 
+- Superseded by todo 006 and `docs/energy-economy.md`.
 - Do not implement a partial-sale-only fix without first deciding the market commitment and liquidity model.
 - Preserve the existing validate-before-mutate transaction guarantees.
 - The unrelated untracked `.obsidian/` directory must remain untouched.
