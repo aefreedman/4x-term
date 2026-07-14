@@ -66,6 +66,29 @@ impl SystemSortKey {
         Self::Population,
         Self::RouteTicks,
     ];
+
+    /// Advances to the next visible Systems table column.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Name => Self::Risk,
+            Self::Risk => Self::Runway,
+            Self::Runway => Self::EnergyFillPercent,
+            Self::EnergyFillPercent => Self::Population,
+            Self::Population => Self::RouteTicks,
+            Self::RouteTicks => Self::Name,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Name => "Name",
+            Self::Risk => "Risk",
+            Self::Runway => "Runway",
+            Self::EnergyFillPercent => "Energy",
+            Self::Population => "Population",
+            Self::RouteTicks => "Route",
+        }
+    }
 }
 
 /// Ordering direction for a [`SystemSortKey`].
@@ -81,6 +104,20 @@ impl SortDirection {
         match self {
             Self::Ascending => ordering,
             Self::Descending => ordering.reverse(),
+        }
+    }
+
+    pub const fn toggled(self) -> Self {
+        match self {
+            Self::Ascending => Self::Descending,
+            Self::Descending => Self::Ascending,
+        }
+    }
+
+    pub const fn symbol(self) -> &'static str {
+        match self {
+            Self::Ascending => "↑",
+            Self::Descending => "↓",
         }
     }
 }
@@ -143,6 +180,8 @@ pub struct UiState {
     pub activity: Activity,
     pub input_layer: InputLayer,
     pub selected_system: Option<ContentId>,
+    pub system_sort: SystemSortKey,
+    pub sort_direction: SortDirection,
     pub system_index: usize,
     pub market_index: usize,
     pub investment_index: usize,
@@ -159,6 +198,8 @@ impl Default for UiState {
             activity: Activity::Systems,
             input_layer: InputLayer::Root,
             selected_system: None,
+            system_sort: SystemSortKey::Name,
+            sort_direction: SortDirection::Ascending,
             system_index: 0,
             market_index: 0,
             investment_index: 0,

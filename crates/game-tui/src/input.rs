@@ -22,6 +22,7 @@ pub enum InputAction {
     Sell,
     BeginTravel,
     Sort,
+    ToggleSortDirection,
     Decrease,
     Increase,
 }
@@ -63,6 +64,7 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
             KeyCode::Down | KeyCode::Char('j') => InputAction::MoveDown,
             KeyCode::Enter => InputAction::BeginTravel,
             KeyCode::Char('o') => InputAction::Sort,
+            KeyCode::Char('d') => InputAction::ToggleSortDirection,
             _ => InputAction::None,
         },
         Activity::Trade => match code {

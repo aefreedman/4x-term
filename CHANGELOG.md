@@ -22,6 +22,7 @@
 
 ### Changed
 
+- Replaced the all-at-once terminal dashboard with a responsive activity shell and an ID-stable, sortable Systems table with compact and regular inspectors.
 - Route previews, active travel, direct connections, and player location now use readable system names with jump, distance, and timing summaries instead of exposing internal content IDs.
 - Event log entries now resolve system, trader, good, and production-process IDs to readable display names.
 - Player cargo now displays readable good names instead of internal content IDs.

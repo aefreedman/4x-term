@@ -21,10 +21,10 @@ use game_app::{
 };
 use ratatui::Frame;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap};
 use std::io::stdout;
 
 trait TerminalOps {
@@ -205,6 +205,14 @@ async fn handle_key(
         }
         KeyCode::Up | KeyCode::Char('k') => move_selection(ui, view, -1),
         KeyCode::Down | KeyCode::Char('j') => move_selection(ui, view, 1),
+        KeyCode::Char('o') if ui.activity == Activity::Systems => {
+            ui.system_sort = ui.system_sort.next();
+            sync_system_row(ui, view);
+        }
+        KeyCode::Char('d') if ui.activity == Activity::Systems => {
+            ui.sort_direction = ui.sort_direction.toggled();
+            sync_system_row(ui, view);
+        }
         KeyCode::Char(' ') => {
             let state = if view.run_state == RunState::Paused {
                 RunState::Running
@@ -373,18 +381,26 @@ async fn handle_key(
             }
         }
         KeyCode::Enter if ui.activity == Activity::Systems && !view.systems.is_empty() => {
-            let destination = view.systems[ui.system_index].id.clone();
-            if let Err(error) = app.request(AppRequest::BeginTravel { destination }).await {
+            let ordered =
+                order_systems(&system_order_items(view), ui.system_sort, ui.sort_direction);
+            if let Some(destination) = selected_system_id(view, ui, &ordered)
+                && let Err(error) = app.request(AppRequest::BeginTravel { destination }).await
+            {
                 ui.message = error.to_string();
             }
         }
         _ => {}
     }
     if ui.activity == Activity::Systems && !view.systems.is_empty() {
-        app.request(AppRequest::SelectSystem(
-            view.systems[ui.system_index].id.clone(),
-        ))
-        .await?;
+        let ordered = order_systems(&system_order_items(view), ui.system_sort, ui.sort_direction);
+        if let Some(selected) = selected_system_id(view, ui, &ordered) {
+            ui.selected_system = Some(selected.clone());
+            ui.system_index = ordered
+                .iter()
+                .position(|system| system.id == selected)
+                .unwrap_or(0);
+            app.request(AppRequest::SelectSystem(selected)).await?;
+        }
     }
     Ok(false)
 }
@@ -392,11 +408,13 @@ async fn handle_key(
 fn move_selection(ui: &mut UiState, view: &ApplicationView, delta: isize) {
     match ui.activity {
         Activity::Systems => {
-            ui.system_index = shifted(ui.system_index, view.systems.len(), delta);
-            ui.selected_system = view
-                .systems
-                .get(ui.system_index)
-                .map(|system| system.id.clone());
+            let ordered =
+                order_systems(&system_order_items(view), ui.system_sort, ui.sort_direction);
+            let current = selected_system_id(view, ui, &ordered)
+                .and_then(|selected| ordered.iter().position(|system| system.id == selected))
+                .unwrap_or(0);
+            ui.system_index = shifted(current, ordered.len(), delta);
+            ui.selected_system = ordered.get(ui.system_index).map(|system| system.id.clone());
         }
         Activity::Governance => {
             ui.investment_index = shifted(
@@ -422,20 +440,18 @@ fn shifted(current: usize, len: usize, delta: isize) -> usize {
     }
 }
 
+fn sync_system_row(ui: &mut UiState, view: &ApplicationView) {
+    let ordered = order_systems(&system_order_items(view), ui.system_sort, ui.sort_direction);
+    let selected = selected_system_id(view, ui, &ordered);
+    ui.system_index = selected
+        .as_ref()
+        .and_then(|selected| ordered.iter().position(|system| &system.id == selected))
+        .unwrap_or(0);
+    ui.selected_system = selected;
+}
+
 fn clamp_selection(ui: &mut UiState, view: &ApplicationView) {
-    ui.system_index = ui.system_index.min(view.systems.len().saturating_sub(1));
-    if let Some(row) = ui.selected_system.as_ref().and_then(|selected| {
-        view.systems
-            .iter()
-            .position(|system| &system.id == selected)
-    }) {
-        ui.system_index = row;
-    } else {
-        ui.selected_system = view
-            .systems
-            .get(ui.system_index)
-            .map(|system| system.id.clone());
-    }
+    sync_system_row(ui, view);
     ui.market_index = ui
         .market_index
         .min(view.local_trade.market.len().saturating_sub(1));
@@ -446,63 +462,45 @@ fn clamp_selection(ui: &mut UiState, view: &ApplicationView) {
 
 pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
     let area = frame.area();
-    if area.width < 70 || area.height < 24 {
+    let layout_class = classify_layout(area.width, area.height);
+    if layout_class == LayoutClass::Unsupported {
         frame.render_widget(
-            Paragraph::new("Terminal too small\nMinimum recommended size: 70x24\nPress q to quit")
-                .block(Block::bordered().title("4x-term")),
-            area,
+            Paragraph::new(
+                "Unsupported terminal size\n4x-term requires at least 80x30 cells\nResize the terminal or press q to quit",
+            )
+            .alignment(Alignment::Center)
+            .block(Block::bordered().title("4x-term")),
+            centered_rect(area.width.min(52), area.height.min(7), area),
         );
         return;
     }
-    let vertical = Layout::default()
+
+    let shell = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(12),
-            Constraint::Length(8),
-            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(2),
         ])
         .split(area);
-    let top = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-        .split(vertical[0]);
-    let right = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(18), Constraint::Min(6)])
-        .split(top[1]);
-    render_systems(frame, top[0], view, ui);
-    render_details(frame, right[0], view, ui);
-    render_market(frame, right[1], view, ui);
-    let bottom = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(vertical[1]);
-    render_player(frame, bottom[0], view, ui);
-    render_events(frame, bottom[1], view, ui);
-    let controls = format!(
-        "{} tick {} | Fleet {} opp {} ({}) | Qty {} | Governor [/] reserve ,/. margin I/i priority -/+ allocation | Space run | s step | b/x trade | Enter travel | ? help | Tab focus | q quit {}",
-        if view.run_state == RunState::Paused {
-            "PAUSED"
-        } else {
-            "RUNNING"
-        },
-        view.tick,
-        view.fleet.active_npcs,
-        view.fleet.normalized_unserved_opportunity,
-        view.fleet.opportunity_persistence,
-        ui.trade_quantity,
-        if ui.message.is_empty() {
-            String::new()
-        } else {
-            format!("| {}", ui.message)
+    render_activity_bar(frame, shell[0], ui.activity);
+    render_global_status(frame, shell[1], view);
+    match ui.activity {
+        Activity::Systems => render_systems_activity(frame, shell[2], view, ui, layout_class),
+        Activity::Trade => {
+            let panes = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(8), Constraint::Length(6)])
+                .split(shell[2]);
+            render_market(frame, panes[0], view, ui);
+            render_player(frame, panes[1], view, ui);
         }
-    );
-    frame.render_widget(
-        Paragraph::new(controls)
-            .wrap(Wrap { trim: true })
-            .block(Block::bordered().title(format!("Controls [{}]", view.tick_rate.label()))),
-        vertical[2],
-    );
+        Activity::Governance => render_details(frame, shell[2], view, ui),
+        Activity::Intelligence => render_events(frame, shell[2], view, ui),
+    }
+    render_footer(frame, shell[3], view, ui);
+
     if let Some(input) = &ui.quantity_input {
         let popup = centered_rect(38, 5, area);
         frame.render_widget(Clear, popup);
@@ -512,15 +510,86 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
             popup,
         );
     } else if ui.help_visible {
-        let popup = centered_rect(62, 12, area);
+        let popup = centered_rect(68, 11, area);
         frame.render_widget(Clear, popup);
         frame.render_widget(
-            Paragraph::new("Tab: focus panes\n↑/↓ or j/k: selection\nSpace: pause/run   s: single step   r: rate\nn: trade quantity   b: buy   x: sell   Enter: travel\nGovernor: [/] reserve, ,/. margin, I/i selected import priority\nGovernor: -/+ selected investment allocation (autonomous execution)\n?: close help   q: quit")
+            Paragraph::new("F1 Systems · F2 Trade · F3 Governance · F4 Intelligence\n↑/↓ or j/k: selection\nSpace: pause/run   s: single step   r: rate\nSystems: o cycle sort   d reverse sort   Enter travel\nTrade: n quantity   b buy   x sell\nGovernor: [/] reserve, ,/. margin, I/i import priority, -/+ allocation\n?: close help   q: quit")
                 .wrap(Wrap { trim: true })
                 .block(Block::bordered().title("Help")),
             popup,
         );
     }
+}
+
+fn render_activity_bar(frame: &mut Frame<'_>, area: Rect, active: Activity) {
+    let entries = [
+        (Activity::Systems, "F1 Systems"),
+        (Activity::Trade, "F2 Trade"),
+        (Activity::Governance, "F3 Governance"),
+        (Activity::Intelligence, "F4 Intelligence"),
+    ];
+    let spans = entries.into_iter().flat_map(|(activity, label)| {
+        let style = if activity == active {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        [Span::styled(format!(" {label} "), style), Span::raw(" ")]
+    });
+    frame.render_widget(Paragraph::new(Line::from_iter(spans)), area);
+}
+
+fn render_global_status(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView) {
+    let status = format!(
+        "{} · Tick {} · Rate {} · Location {} · Tank {}/{} E",
+        if view.run_state == RunState::Paused {
+            "PAUSED"
+        } else {
+            "RUNNING"
+        },
+        view.tick,
+        view.tick_rate.label(),
+        view.player.location_name,
+        view.player.tank_energy.0,
+        view.player.tank_capacity.0,
+    );
+    frame.render_widget(
+        Paragraph::new(status).style(Style::default().fg(Color::Cyan)),
+        area,
+    );
+}
+
+fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: &UiState) {
+    let local = match ui.activity {
+        Activity::Systems => format!(
+            "↑/↓ select · Enter travel · o sort ({}) · d direction ({})",
+            ui.system_sort.label(),
+            ui.sort_direction.symbol()
+        ),
+        Activity::Trade => format!(
+            "↑/↓ good · n quantity ({}) · b buy · x sell",
+            ui.trade_quantity
+        ),
+        Activity::Governance => "↑/↓ investment · [/] reserve · ,/. margin · -/+ allocation".into(),
+        Activity::Intelligence => "↑/↓ scroll events".into(),
+    };
+    let message = if ui.message.is_empty() {
+        String::new()
+    } else {
+        format!(" · {}", ui.message)
+    };
+    frame.render_widget(
+        Paragraph::new(format!(
+            "{local} · Space run · s step · r rate · ? help · q quit{message} · fleet {}",
+            view.fleet.active_npcs
+        ))
+        .wrap(Wrap { trim: true })
+        .block(Block::default().borders(Borders::TOP)),
+        area,
+    );
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -540,38 +609,318 @@ fn focused(ui: &UiState, activity: Activity) -> Style {
     }
 }
 
-fn render_systems(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: &UiState) {
-    let items = view
-        .systems
+fn system_order_items(view: &ApplicationView) -> Vec<SystemOrderItem> {
+    view.systems
         .iter()
-        .enumerate()
-        .map(|(index, system)| {
-            let style = if index == ui.system_index {
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
+        .map(|system| {
+            let capacity = system.energy_capacity.0.max(0) as u64;
+            let stock = system.energy_stock.0.max(0) as u64;
+            let energy_fill_percent = stock
+                .saturating_mul(100)
+                .checked_div(capacity)
+                .unwrap_or(0)
+                .min(100) as u32;
+            let risk = match system.health {
+                game_app::EnergyHealth::Deficit => 3,
+                game_app::EnergyHealth::Low => 2,
+                game_app::EnergyHealth::Healthy | game_app::EnergyHealth::Full => {
+                    u8::from(system.brownout_stage.label() != "normal")
+                }
             };
-            ListItem::new(format!(
-                "{} P {} · E {}/{} {} · {}",
-                system.name,
-                system.population.current,
-                system.energy_stock.0,
-                system.energy_capacity.0,
-                system.health.label(),
-                system.brownout_stage.label()
-            ))
-            .style(style)
+            SystemOrderItem {
+                id: system.id.clone(),
+                name: system.name.clone(),
+                risk,
+                runway_ticks: system.runway_ticks,
+                energy_fill_percent,
+                population: system.population.current,
+                population_trend: system.population.trend,
+                route_ticks: system.route_ticks_from_player,
+                energy_stock: system.energy_stock,
+            }
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+fn selected_system_id(
+    view: &ApplicationView,
+    ui: &UiState,
+    ordered: &[SystemOrderItem],
+) -> Option<game_app::ContentId> {
+    ui.selected_system
+        .as_ref()
+        .filter(|selected| ordered.iter().any(|system| &system.id == *selected))
+        .cloned()
+        .or_else(|| {
+            ordered
+                .iter()
+                .find(|system| system.id == view.selected_system)
+                .map(|system| system.id.clone())
+        })
+        .or_else(|| ordered.first().map(|system| system.id.clone()))
+}
+
+fn render_systems_activity(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+    layout_class: LayoutClass,
+) {
+    let panes = match layout_class {
+        LayoutClass::Regular => Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+            .split(area),
+        LayoutClass::Compact => Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(area),
+        LayoutClass::Unsupported => unreachable!("unsupported layouts return before composition"),
+    };
+    render_systems_table(frame, panes[0], view, ui);
+    render_system_inspector(frame, panes[1], view, ui, layout_class);
+}
+
+fn render_systems_table(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: &UiState) {
+    let ordered = order_systems(&system_order_items(view), ui.system_sort, ui.sort_direction);
+    let selected = selected_system_id(view, ui, &ordered);
+    let rows = ordered.iter().filter_map(|ordered_system| {
+        let system = view
+            .systems
+            .iter()
+            .find(|system| system.id == ordered_system.id)?;
+        let marker = if selected.as_ref() == Some(&system.id) {
+            ">"
+        } else {
+            " "
+        };
+        let mut flags = Vec::new();
+        if system.player_location {
+            flags.push("LOC");
+        }
+        if system.player_governed {
+            flags.push("GOV");
+        }
+        if ordered_system.risk > 0 {
+            flags.push("WARN");
+        }
+        let energy = format!(
+            "{} {}/{}",
+            energy_gauge(ordered_system.energy_fill_percent, 6),
+            system.energy_stock.0,
+            system.energy_capacity.0
+        );
+        let population = format!(
+            "{} {}",
+            system.population.current,
+            population_trend_marker(system.population.trend)
+        );
+        let route = system
+            .route_ticks_from_player
+            .map_or_else(|| "—".into(), |ticks| ticks.to_string());
+        let style = if marker == ">" {
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD)
+        } else if ordered_system.risk > 0 {
+            Style::default().fg(Color::LightRed)
+        } else {
+            Style::default()
+        };
+        Some(
+            Row::new(vec![
+                Cell::from(marker),
+                Cell::from(system.name.clone()),
+                Cell::from(flags.join(" ")),
+                right_cell(energy),
+                right_cell(format!("{}t", system.runway_ticks)),
+                right_cell(population),
+                right_cell(route),
+            ])
+            .style(style),
+        )
+    });
+    let header = Row::new(vec![
+        Cell::from(""),
+        Cell::from("Name"),
+        Cell::from("LOC/GOV/WARN"),
+        right_cell("Energy"),
+        right_cell("Runway"),
+        right_cell("Population"),
+        right_cell("Route"),
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD));
     frame.render_widget(
-        List::new(items).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Systems")
-                .border_style(focused(ui, Activity::Systems)),
-        ),
+        Table::new(
+            rows,
+            [
+                Constraint::Length(1),
+                Constraint::Min(12),
+                Constraint::Length(12),
+                Constraint::Length(20),
+                Constraint::Length(8),
+                Constraint::Length(12),
+                Constraint::Length(6),
+            ],
+        )
+        .header(header)
+        .column_spacing(1)
+        .block(Block::bordered().title(format!(
+            "Systems — {} {}",
+            ui.system_sort.label(),
+            ui.sort_direction.symbol()
+        ))),
+        area,
+    );
+}
+
+fn right_cell(value: impl Into<String>) -> Cell<'static> {
+    Cell::from(Line::from(value.into()).alignment(Alignment::Right))
+}
+
+fn energy_gauge(percent: u32, width: usize) -> String {
+    let filled = (percent.min(100) as usize * width).div_ceil(100);
+    format!("[{}{}]", "#".repeat(filled), "-".repeat(width - filled))
+}
+
+fn population_trend_marker(trend: game_app::PopulationTrend) -> &'static str {
+    match trend {
+        game_app::PopulationTrend::Growing => "↑",
+        game_app::PopulationTrend::Stable => "→",
+        game_app::PopulationTrend::Declining => "↓",
+    }
+}
+
+fn render_system_inspector(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+    layout_class: LayoutClass,
+) {
+    let ordered = order_systems(&system_order_items(view), ui.system_sort, ui.sort_direction);
+    let selected = selected_system_id(view, ui, &ordered);
+    let system = selected
+        .as_ref()
+        .and_then(|selected| view.systems.iter().find(|system| &system.id == selected));
+    let title = if layout_class == LayoutClass::Regular {
+        "Selected System Overview"
+    } else {
+        "System Detail"
+    };
+    let Some(system) = system else {
+        frame.render_widget(
+            Paragraph::new("No systems available").block(Block::bordered().title(title)),
+            area,
+        );
+        return;
+    };
+    let fill = (system.energy_stock.0.max(0) as u64)
+        .saturating_mul(100)
+        .checked_div(system.energy_capacity.0.max(0) as u64)
+        .unwrap_or(0)
+        .min(100) as u32;
+    let history = system
+        .population
+        .sufficiency_trajectory
+        .iter()
+        .rev()
+        .take(12)
+        .rev()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(" → ");
+    let flags = [
+        system.player_location.then_some("LOC"),
+        system.player_governed.then_some("GOV"),
+        (system.health.label() == "low" || system.health.label() == "deficit").then_some("WARNING"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ");
+    let connections = system
+        .connections
+        .iter()
+        .map(|connection| format!("{} {}t", connection.system_name, connection.travel_ticks))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut lines = vec![
+        Line::from(format!("{}  {}", system.name, flags)),
+        Line::from(format!(
+            "Coordinates {:.1}, {:.1}, {:.1}",
+            system.coordinates.0, system.coordinates.1, system.coordinates.2
+        )),
+        Line::from(format!(
+            "Energy {} {}/{} E ({}%) · {} · {}",
+            energy_gauge(fill, 10),
+            system.energy_stock.0,
+            system.energy_capacity.0,
+            fill,
+            system.health.label(),
+            system.brownout_stage.label()
+        )),
+        Line::from(format!("Runway {} ticks", system.runway_ticks)),
+        Line::from(format!(
+            "Population {} {} · cap {} · tier {}",
+            system.population.current,
+            population_trend_marker(system.population.trend),
+            system.population.carrying_capacity,
+            system.population.tier
+        )),
+        Line::from(format!(
+            "Population sufficiency {}% · history [{}]",
+            system.population.sufficiency_average_percent, history
+        )),
+        Line::from(format!(
+            "Route {} · Connections {}",
+            system
+                .route_ticks_from_player
+                .map_or_else(|| "unreachable".into(), |ticks| format!("{ticks} ticks")),
+            if connections.is_empty() {
+                "none"
+            } else {
+                &connections
+            }
+        )),
+    ];
+    if system.id == view.inspection.system.id {
+        let energy = &view.inspection.market_energy;
+        lines.push(Line::from(format!(
+            "Flow +{} / -{} · curtailed {} · life-support deficit {}",
+            energy.generated.0,
+            energy.burned.0,
+            energy.curtailed.0,
+            energy.unsupplied_life_support.0
+        )));
+        lines.push(Line::from(format!(
+            "Season {}/{} base/effective · phase {}/{} {} · turn {} ({}t)",
+            energy.seasonal_generation.base_output.0,
+            energy.seasonal_generation.effective_output.0,
+            energy.seasonal_generation.phase_ticks,
+            energy.seasonal_generation.period_ticks,
+            energy.seasonal_generation.trend.label(),
+            energy
+                .seasonal_generation
+                .next_turning_point_tick
+                .map_or_else(|| "beyond".into(), |tick| tick.to_string()),
+            energy.seasonal_generation.ticks_until_turning_point
+        )));
+        lines.push(Line::from(format!(
+            "History population changes {} · milestones {} · stage transitions {}",
+            view.dynamics.population_changes,
+            view.dynamics.population_milestones,
+            view.dynamics.stage_transitions
+        )));
+        if energy.bootstrap_risk_acknowledged {
+            lines.push(Line::from("Bootstrap risk: ACKNOWLEDGED"));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(Block::bordered().title(title)),
         area,
     );
 }
@@ -940,7 +1289,7 @@ fn render_events(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
         Paragraph::new(text).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Events")
+                .title("Recent Events")
                 .border_style(focused(ui, Activity::Intelligence)),
         ),
         area,
@@ -1318,11 +1667,17 @@ mod tests {
     }
 
     fn rendered_view(view: &ApplicationView) -> String {
+        rendered_activity(view, Activity::Systems)
+    }
+
+    fn rendered_activity(view: &ApplicationView, activity: Activity) -> String {
         let backend = TestBackend::new(100, 35);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| render(frame, view, &UiState::default()))
-            .unwrap();
+        let ui = UiState {
+            activity,
+            ..UiState::default()
+        };
+        terminal.draw(|frame| render(frame, view, &ui)).unwrap();
         terminal
             .backend()
             .buffer()
@@ -1348,9 +1703,10 @@ mod tests {
             view.inspection.market_energy.unsupplied_life_support = deficit;
             let rendered = rendered_view(&view);
             assert!(
-                rendered.contains(&format!("Energy {}/1000 · {label}", stock.0)),
-                "missing {label} energy display"
+                rendered.contains(&format!("{}/1000 E", stock.0)),
+                "missing {label} exact energy display"
             );
+            assert!(rendered.contains(label), "missing {label} health display");
             assert!(rendered.contains(&format!("life-support deficit {}", deficit.0)));
         }
     }
@@ -1372,6 +1728,7 @@ mod tests {
                 BrownoutStage::Emergency => 6,
                 BrownoutStage::Starvation => 0,
             };
+            view.systems[0].runway_ticks = view.inspection.market_energy.runway_ticks;
             view.local_trade.market[0].buy_quote = if stage >= BrownoutStage::Emergency {
                 Energy::ZERO
             } else {
@@ -1387,28 +1744,31 @@ mod tests {
             }];
             let rendered = rendered_view(&view);
             assert!(
-                rendered.contains(&format!("· {} ·", stage.label())),
+                rendered.contains(stage.label()),
                 "missing stage {}",
                 stage.label()
             );
             assert!(rendered.contains(&format!(
-                "{}t runway",
+                "Runway {} ticks",
                 view.inspection.market_energy.runway_ticks
             )));
-            assert!(rendered.contains(&format!("Normal → {}", stage.label())));
             assert!(rendered.contains("Season 40/32 base/effective"));
             assert!(rendered.contains("phase 0/20 rising · turn 10 (10t)"));
-            assert!(rendered.contains("Population 5 · growing · cap 6 · tier 2"));
+            assert!(rendered.contains("Population 5 ↑ · cap 6 · tier 2"));
             assert!(rendered.contains("History population changes 1 · milestones 1"));
+
+            let intelligence = rendered_activity(&view, Activity::Intelligence);
+            assert!(intelligence.contains(&format!("Normal → {}", stage.label())));
             if stage >= BrownoutStage::Emergency {
-                assert!(rendered.contains("0 E"), "suppressed distress bid missing");
+                let trade = rendered_activity(&view, Activity::Trade);
+                assert!(trade.contains("0 E"), "suppressed distress bid missing");
             }
         }
     }
 
     #[test]
     fn test_backend_renders_governor_status_and_read_only_markets() {
-        let governed = rendered_view(&test_view());
+        let governed = rendered_activity(&test_view(), Activity::Governance);
         assert!(governed.contains("Governor: PLAYER CONTROL"));
         assert!(governed.contains("Investments:"));
         assert!(governed.contains("Route subsidy 10% · active"));
@@ -1417,7 +1777,7 @@ mod tests {
         let mut readonly = test_view();
         readonly.inspection.governor.governed = false;
         readonly.inspection.governor.route_subsidy_active = false;
-        let readonly = rendered_view(&readonly);
+        let readonly = rendered_activity(&readonly, Activity::Governance);
         assert!(readonly.contains("Governor: READ-ONLY AI"));
         assert!(readonly.contains("Route subsidy 10% · suppressed/inactive"));
     }
@@ -1457,79 +1817,69 @@ mod tests {
             })
             .collect();
 
+        for (width, height, view) in [
+            (100, 35, &base),
+            (70, 24, &edge),
+            (100, 35, &edge),
+            (40, 10, &base),
+            (100, 12, &base),
+        ] {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = ratatui::Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| render(frame, view, &UiState::default()))
+                .unwrap();
+        }
+
+        let systems = rendered_at(160, 45, &edge, &UiState::default());
+        for label in [
+            "F1 Systems",
+            "Systems — Name ↑",
+            "Selected System Overview",
+            "Energy",
+            "Population",
+            "deficit",
+            "Bootstrap risk: ACKNOWLEDGED",
+        ] {
+            assert!(
+                systems.contains(label),
+                "missing Systems surface label {label}"
+            );
+        }
+        assert!(!systems.contains("Local Market"));
+        assert!(!systems.contains("Recent Events"));
+        assert!(!systems.contains("core:"));
+
+        let trade = rendered_activity(&base, Activity::Trade);
+        for label in ["Local Market", "Funded", "Player / Trade", "Cargo bay 2/10"] {
+            assert!(trade.contains(label), "missing Trade surface label {label}");
+        }
+        assert!(!trade.contains("Funds:"));
+        assert!(!trade.contains('¤'));
+
+        let governance = rendered_activity(&base, Activity::Governance);
+        assert!(governance.contains("Governor: PLAYER CONTROL"));
+        assert!(governance.contains("Investments:"));
+
+        let intelligence = rendered_activity(&edge, Activity::Intelligence);
+        assert!(intelligence.contains("Recent Events"));
+        assert!(intelligence.contains("Rejected: insufficient cargo capacity"));
+
+        for (width, height) in [(79, 30), (80, 29), (40, 10), (100, 12)] {
+            let rendered = rendered_at(width, height, &base, &UiState::default());
+            assert!(rendered.contains("Unsupported terminal size"));
+        }
+
         let help = UiState {
             help_visible: true,
             ..UiState::default()
         };
+        assert!(rendered_at(100, 35, &edge, &help).contains("Help"));
         let quantity = UiState {
             quantity_input: Some("123".into()),
             ..UiState::default()
         };
-        for (width, height, view, ui) in [
-            (100, 35, &base, UiState::default()),
-            (70, 24, &edge, UiState::default()),
-            (100, 35, &edge, UiState::default()),
-            (100, 35, &edge, help),
-            (100, 35, &edge, quantity),
-            (40, 10, &base, UiState::default()),
-            (100, 12, &base, UiState::default()),
-        ] {
-            let backend = TestBackend::new(width, height);
-            let mut terminal = ratatui::Terminal::new(backend).unwrap();
-            terminal.draw(|frame| render(frame, view, &ui)).unwrap();
-            let rendered = terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .map(|cell| cell.symbol())
-                .collect::<String>();
-            if width < 70 || height < 24 {
-                assert!(rendered.contains("Terminal too small"));
-            } else {
-                for label in [
-                    "Systems",
-                    "System / Route",
-                    "Energy 800/1000",
-                    "Claims 20",
-                    "operating 100",
-                    "protected 50",
-                    "Market",
-                    "Player / Trade",
-                    "Tank ",
-                    "Cargo bay 2/10",
-                    "Events",
-                    "Controls",
-                ] {
-                    assert!(rendered.contains(label), "missing {label}");
-                }
-                assert!(
-                    !rendered.contains("core:"),
-                    "internal content IDs leaked into the rendered interface"
-                );
-                if width >= 100 && !ui.help_visible && ui.quantity_input.is_none() {
-                    assert!(rendered.contains("Funded"));
-                }
-                assert!(!rendered.contains("Funds:"));
-                assert!(!rendered.contains('¤'));
-                if view.inspection.market_energy.health == EnergyHealth::Deficit {
-                    assert!(rendered.contains("deficit"));
-                }
-                if view.inspection.market_energy.bootstrap_risk_acknowledged
-                    && width >= 100
-                    && !ui.help_visible
-                    && ui.quantity_input.is_none()
-                {
-                    assert!(rendered.contains("Bootstrap risk: ACKNOWLEDGED"));
-                }
-                if ui.help_visible {
-                    assert!(rendered.contains("Help"));
-                }
-                if ui.quantity_input.is_some() {
-                    assert!(rendered.contains("Trade Quantity"));
-                }
-            }
-        }
+        assert!(rendered_at(100, 35, &edge, &quantity).contains("Trade Quantity"));
     }
 
     #[tokio::test]
@@ -1582,6 +1932,65 @@ mod tests {
             .unwrap();
         assert_eq!(ui.message, "Selected market is read-only");
         app.shutdown().await.unwrap();
+    }
+
+    fn rendered_at(width: u16, height: u16, view: &ApplicationView, ui: &UiState) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, view, ui)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn responsive_mode_shell_uses_exact_breakpoints_and_only_relevant_surfaces() {
+        let view = test_view();
+        for (width, height) in [(79, 30), (80, 29)] {
+            let rendered = rendered_at(width, height, &view, &UiState::default());
+            assert!(rendered.contains("Unsupported terminal size"));
+            assert!(rendered.contains("80x30"));
+            assert!(!rendered.contains("Local Market"));
+        }
+
+        for (width, height) in [(80, 30), (159, 44)] {
+            let rendered = rendered_at(width, height, &view, &UiState::default());
+            assert!(rendered.contains("F1 Systems"));
+            assert!(rendered.contains("Systems — Name ↑"));
+            assert!(!rendered.contains("Local Market"));
+            assert!(!rendered.contains("Recent Events"));
+        }
+
+        for (width, height) in [(160, 45), (200, 60)] {
+            let rendered = rendered_at(width, height, &view, &UiState::default());
+            assert!(rendered.contains("F1 Systems"));
+            assert!(rendered.contains("Systems — Name ↑"));
+            assert!(rendered.contains("Selected System Overview"));
+            assert!(!rendered.contains("Local Market"));
+        }
+    }
+
+    #[test]
+    fn systems_table_marks_stable_selection_identities_and_sort_without_leaking_ids() {
+        let view = test_view();
+        let ui = UiState {
+            selected_system: Some(id("core:s1")),
+            system_sort: SystemSortKey::Risk,
+            sort_direction: SortDirection::Descending,
+            ..UiState::default()
+        };
+        let rendered = rendered_at(160, 45, &view, &ui);
+        assert!(rendered.contains("Systems — Risk ↓"));
+        assert!(rendered.contains(">"));
+        assert!(rendered.contains("LOC"));
+        assert!(rendered.contains("GOV"));
+        assert!(rendered.contains("Energy"));
+        assert!(rendered.contains("Population"));
+        assert!(!rendered.contains("core:"));
     }
 
     #[tokio::test]

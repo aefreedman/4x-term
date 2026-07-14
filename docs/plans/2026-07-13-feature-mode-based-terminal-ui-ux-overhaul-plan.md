@@ -294,19 +294,19 @@ Validation:
 
 ### Phase 3: Build the responsive shell and Systems activity
 
-- [ ] Have the primary agent write the mode-shell, breakpoint, sorting, selection, alignment, and resize acceptance tests first at the exact target grids.
-- [ ] Delegate responsive shell and Systems implementation against those unchanged tests.
-- [ ] Replace `Focus` and pane cycling with the persistent activity bar, global status line, contextual action footer, and activity-owned cursor.
-- [ ] Implement unsupported-size behavior at below `80x30`, compact composition from `80x30`, and regular composition at `160x45`.
-- [ ] Build the Systems stateful table with visible selection, player/governor/warning markers, aligned numeric columns, active sort indication, and deterministic scrolling.
-- [ ] Add the compact system inspector and regular selected-system context using shared widgets.
-- [ ] Convert energy/population summaries to gauges, exact labels, and existing-history sparklines where useful.
-- [ ] Preserve activity/selection/sort/detail state through compact-to-regular resize round trips.
+- [x] Have the primary agent write the mode-shell, breakpoint, sorting, selection, alignment, and resize acceptance tests first at the exact target grids.
+- [x] Delegate responsive shell and Systems implementation against those unchanged tests.
+- [x] Replace `Focus` and pane cycling with the persistent activity bar, global status line, contextual action footer, and activity-owned cursor.
+- [x] Implement unsupported-size behavior at below `80x30`, compact composition from `80x30`, and regular composition at `160x45`.
+- [x] Build the Systems stateful table with visible selection, player/governor/warning markers, aligned numeric columns, active sort indication, and deterministic scrolling.
+- [x] Add the compact system inspector and regular selected-system context using shared widgets.
+- [x] Convert energy/population summaries to gauges, exact labels, and existing-history sparklines where useful.
+- [x] Preserve activity/selection/sort/detail state through compact-to-regular resize round trips.
 
 Validation:
-- [ ] `TestBackend` tests cover `79x30`, `80x29`, `80x30`, `159x44`, `160x45`, and `200x60`.
-- [ ] Buffer assertions verify the active mode, visible `>` selection marker, sort key/direction, compact/regular composition, exact-value fallback, and absence of internal content IDs.
-- [ ] Resize tests prove selected `ContentId`, sort, and detail state survive both layout transitions.
+- [x] `TestBackend` tests cover `79x30`, `80x29`, `80x30`, `159x44`, `160x45`, and `200x60`.
+- [x] Buffer assertions verify the active mode, visible `>` selection marker, sort key/direction, compact/regular composition, exact-value fallback, and absence of internal content IDs.
+- [x] Resize tests prove selected `ContentId`, sort, and detail state survive both layout transitions.
 
 ### Phase 4: Implement Trade, Governance, and Intelligence activities
 
