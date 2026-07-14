@@ -6,7 +6,7 @@ pub mod state;
 pub use input::{InputAction, route_key};
 pub use state::{
     Activity, InputLayer, LayoutClass, SortDirection, SystemDetailKind, SystemOrderItem,
-    SystemSortKey, UiState, classify_layout, order_systems,
+    SystemSortKey, TradeRegion, UiState, classify_layout, order_systems,
 };
 
 use anyhow::Result;
@@ -26,6 +26,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap};
 use std::io::stdout;
+
+const ENCYCLOPEDIA_PAGE_LINES: u16 = 8;
 
 trait TerminalOps {
     fn enable_raw(&mut self) -> Result<()>;
@@ -237,6 +239,11 @@ async fn handle_key_for_layout(
                 ui.message = error.to_string();
             }
             ui.activity = Activity::Trade;
+            if let Some(proposal) = ui.route_proposal.clone() {
+                ui.selected_trade_destination = Some(proposal);
+            }
+            let destinations = trade_destination_ids(view, ui);
+            ui.reconcile_trade_destination(&destinations);
         }
         InputAction::Switch(Activity::Governance) => {
             ui.activity = Activity::Governance;
@@ -256,6 +263,10 @@ async fn handle_key_for_layout(
         InputAction::Switch(Activity::Intelligence) => {
             ui.activity = Activity::Intelligence;
             ui.reconcile_events(&view.events);
+        }
+        InputAction::Switch(Activity::Encyclopedia) => {
+            ui.activity = Activity::Encyclopedia;
+            clamp_encyclopedia_selection(ui, view);
         }
         InputAction::ToggleHelp => ui.input_layer = InputLayer::Help,
         InputAction::ToggleRun => {
@@ -280,7 +291,20 @@ async fn handle_key_for_layout(
                 && let Some(selected) = ui.selected_system.clone()
             {
                 app.request(AppRequest::SelectSystem(selected)).await?;
+            } else if ui.activity == Activity::Trade && ui.trade_region == TradeRegion::Destinations
+            {
+                activate_trade_destination(ui, view, app).await;
             }
+        }
+        InputAction::PageUp => {
+            ui.encyclopedia_article_scroll = ui
+                .encyclopedia_article_scroll
+                .saturating_sub(ENCYCLOPEDIA_PAGE_LINES);
+        }
+        InputAction::PageDown => {
+            ui.encyclopedia_article_scroll = ui
+                .encyclopedia_article_scroll
+                .saturating_add(ENCYCLOPEDIA_PAGE_LINES);
         }
         InputAction::Sort => {
             ui.system_sort = ui.system_sort.next();
@@ -298,8 +322,29 @@ async fn handle_key_for_layout(
             ui.system_detail = SystemDetailKind::Market;
             ui.input_layer = InputLayer::Detail;
         }
-        InputAction::NextSection => jump_governance_section(ui, view, 1),
-        InputAction::PreviousSection => jump_governance_section(ui, view, -1),
+        InputAction::NextSection | InputAction::PreviousSection => {
+            let delta = if action == InputAction::NextSection {
+                1
+            } else {
+                -1
+            };
+            match ui.activity {
+                Activity::Governance => jump_governance_section(ui, view, delta),
+                Activity::Trade => {
+                    ui.trade_region = match ui.trade_region {
+                        TradeRegion::Goods => TradeRegion::Destinations,
+                        TradeRegion::Destinations => TradeRegion::Goods,
+                    };
+                    let destinations = trade_destination_ids(view, ui);
+                    ui.reconcile_trade_destination(&destinations);
+                    if ui.trade_region == TradeRegion::Destinations {
+                        activate_trade_destination(ui, view, app).await;
+                    }
+                }
+                Activity::Encyclopedia => jump_encyclopedia_section(ui, view, delta),
+                Activity::Systems | Activity::Intelligence => {}
+            }
+        }
         InputAction::OpenQuantity => {
             if view.local_trade.market.is_empty() {
                 ui.message = "No local market goods are available".into();
@@ -567,11 +612,85 @@ fn move_selection(ui: &mut UiState, view: &ApplicationView, delta: isize) {
                 ui.investment_index = ui.governance_index - policy_rows - import_rows;
             }
         }
-        Activity::Trade => {
-            ui.market_index = shifted(ui.market_index, view.local_trade.market.len(), delta);
-        }
+        Activity::Trade => match ui.trade_region {
+            TradeRegion::Goods => {
+                ui.market_index = shifted(ui.market_index, view.local_trade.market.len(), delta);
+            }
+            TradeRegion::Destinations => {
+                let destinations = trade_destination_ids(view, ui);
+                ui.reconcile_trade_destination(&destinations);
+                ui.trade_destination_index =
+                    shifted(ui.trade_destination_index, destinations.len(), delta);
+                ui.selected_trade_destination =
+                    destinations.get(ui.trade_destination_index).cloned();
+            }
+        },
         Activity::Intelligence => ui.scroll_events(&view.events, delta),
+        Activity::Encyclopedia => {
+            let article_count = view
+                .encyclopedia
+                .sections
+                .get(ui.encyclopedia_section_index)
+                .map_or(0, |section| section.articles.len());
+            let previous = ui.encyclopedia_article_index;
+            ui.encyclopedia_article_index =
+                shifted(ui.encyclopedia_article_index, article_count, delta);
+            if ui.encyclopedia_article_index != previous {
+                ui.encyclopedia_article_scroll = 0;
+            }
+        }
     }
+}
+
+async fn activate_trade_destination(ui: &mut UiState, view: &ApplicationView, app: &AppHandle) {
+    let Some(destination) = ui.selected_trade_destination.clone() else {
+        ui.message = "No comparison destinations are available for the selected good".into();
+        return;
+    };
+    let Some(comparison) = view
+        .trade_markets
+        .iter()
+        .find(|market| market.system.id == destination)
+    else {
+        ui.message = "Selected comparison destination is no longer available".into();
+        return;
+    };
+    if view.player.traveling
+        || comparison.availability == game_app::TradeDestinationAvailability::Traveling
+    {
+        ui.message = "Destination preview is locked while the player is in transit".into();
+        return;
+    }
+    if comparison.availability != game_app::TradeDestinationAvailability::Available
+        || comparison.route.is_none()
+    {
+        ui.message = comparison
+            .unavailable_reason
+            .clone()
+            .unwrap_or_else(|| "No route is available to the selected destination".into());
+        return;
+    }
+    match app
+        .request(AppRequest::SelectSystem(destination.clone()))
+        .await
+    {
+        Ok(()) => {
+            ui.route_proposal = Some(destination.clone());
+            ui.message = format!("Comparing destination {}", system_name(view, &destination));
+        }
+        Err(error) => ui.message = error.to_string(),
+    }
+}
+
+fn trade_destination_ids(view: &ApplicationView, ui: &UiState) -> Vec<game_app::ContentId> {
+    if view.local_trade.market.get(ui.market_index).is_none() {
+        return Vec::new();
+    }
+    view.trade_markets
+        .iter()
+        .filter(|market| !market.local)
+        .map(|market| market.system.id.clone())
+        .collect()
 }
 
 fn shifted(current: usize, len: usize, delta: isize) -> usize {
@@ -587,6 +706,34 @@ fn wrapped_shifted(current: usize, len: usize, delta: isize) -> usize {
         return 0;
     }
     ((current as isize + delta).rem_euclid(len as isize)) as usize
+}
+
+fn jump_encyclopedia_section(ui: &mut UiState, view: &ApplicationView, delta: isize) {
+    ui.encyclopedia_section_index = wrapped_shifted(
+        ui.encyclopedia_section_index,
+        view.encyclopedia.sections.len(),
+        delta,
+    );
+    ui.encyclopedia_article_index = 0;
+    ui.encyclopedia_article_scroll = 0;
+}
+
+fn clamp_encyclopedia_selection(ui: &mut UiState, view: &ApplicationView) {
+    let previous = (ui.encyclopedia_section_index, ui.encyclopedia_article_index);
+    ui.encyclopedia_section_index = ui
+        .encyclopedia_section_index
+        .min(view.encyclopedia.sections.len().saturating_sub(1));
+    let article_count = view
+        .encyclopedia
+        .sections
+        .get(ui.encyclopedia_section_index)
+        .map_or(0, |section| section.articles.len());
+    ui.encyclopedia_article_index = ui
+        .encyclopedia_article_index
+        .min(article_count.saturating_sub(1));
+    if previous != (ui.encyclopedia_section_index, ui.encyclopedia_article_index) {
+        ui.encyclopedia_article_scroll = 0;
+    }
 }
 
 fn jump_governance_section(ui: &mut UiState, view: &ApplicationView, delta: isize) {
@@ -644,6 +791,9 @@ fn clamp_selection(ui: &mut UiState, view: &ApplicationView) {
     ui.market_index = ui
         .market_index
         .min(view.local_trade.market.len().saturating_sub(1));
+    let destinations = trade_destination_ids(view, ui);
+    ui.reconcile_trade_destination(&destinations);
+    clamp_encyclopedia_selection(ui, view);
     let governance_rows =
         2 + view.inspection.market.len() + view.inspection.governor.investments.len();
     ui.governance_index = ui.governance_index.min(governance_rows.saturating_sub(1));
@@ -693,6 +843,9 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
         Activity::Intelligence => {
             render_intelligence_activity(frame, shell[2], view, ui, layout_class);
         }
+        Activity::Encyclopedia => {
+            render_encyclopedia_activity(frame, shell[2], view, ui, layout_class);
+        }
     }
     render_footer(frame, shell[3], view, ui);
 
@@ -740,11 +893,25 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
 }
 
 fn render_activity_bar(frame: &mut Frame<'_>, area: Rect, active: Activity) {
+    let compact = area.width < 120;
     let entries = [
         (Activity::Systems, "F1", "Systems"),
         (Activity::Trade, "F2", "Trade"),
-        (Activity::Governance, "F3", "Governance"),
-        (Activity::Intelligence, "F4", "Intelligence"),
+        (
+            Activity::Governance,
+            "F3",
+            if compact { "Gov" } else { "Governance" },
+        ),
+        (
+            Activity::Intelligence,
+            "F4",
+            if compact { "Intel" } else { "Intelligence" },
+        ),
+        (
+            Activity::Encyclopedia,
+            "F5",
+            if compact { "Encycl." } else { "Encyclopedia" },
+        ),
     ];
     let mut spans = Vec::new();
     for (activity, key, label) in entries {
@@ -832,8 +999,13 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
             }
         }
         Activity::Trade => {
+            spans.push(shortcut_span("Tab/Shift-Tab"));
+            spans.push(Span::raw(" Region · "));
             spans.push(shortcut_span("↑/↓"));
-            spans.push(Span::raw(" Good · ("));
+            spans.push(Span::raw(match ui.trade_region {
+                TradeRegion::Goods => " Good · (",
+                TradeRegion::Destinations => " Destination · (",
+            }));
             spans.push(shortcut_span("N"));
             spans.push(Span::raw(format!(") Qty {} · ", ui.trade_quantity)));
             if let Some(row) = view.local_trade.market.get(ui.market_index) {
@@ -905,12 +1077,20 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
             spans.push(shortcut_span("↑/↓"));
             spans.push(Span::raw(" Scroll events · newest resumes tail-follow"));
         }
+        Activity::Encyclopedia => {
+            spans.push(shortcut_span("Tab/Shift-Tab"));
+            spans.push(Span::raw(" Section · "));
+            spans.push(shortcut_span("↑/↓"));
+            spans.push(Span::raw(" Article · "));
+            spans.push(shortcut_span("PgUp/PgDn"));
+            spans.push(Span::raw(" Scroll article"));
+        }
     }
     spans.push(Span::raw(" · "));
     spans.push(shortcut_span("Space"));
     spans.push(Span::raw(" run · "));
-    spans.push(shortcut_span("F5"));
-    spans.push(Span::raw(" step · "));
+    spans.push(shortcut_span("."));
+    spans.push(Span::raw(" step (paused) · "));
     spans.push(shortcut_span("r"));
     spans.push(Span::raw(" rate · "));
     spans.push(shortcut_span("?"));
@@ -1772,7 +1952,7 @@ fn render_trade_activity(
     if layout_class == LayoutClass::Regular {
         let columns = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
             .split(area);
         let left = Layout::default()
             .direction(Direction::Vertical)
@@ -1780,26 +1960,31 @@ fn render_trade_activity(
             .split(columns[0]);
         let right = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
+            .constraints([
+                Constraint::Percentage(42),
+                Constraint::Length(10),
+                Constraint::Min(7),
+            ])
             .split(columns[1]);
         render_local_market(frame, left[0], view, ui, layout_class);
         render_trade_action(frame, left[1], view, ui, layout_class);
-        render_trade_route(frame, right[0], view, ui);
-        render_trade_player(frame, right[1], view, ui);
+        render_trade_destinations(frame, right[0], view, ui, layout_class);
+        render_trade_route(frame, right[1], view, ui);
+        render_trade_player(frame, right[2], view, ui);
     } else {
         let panes = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(38),
+                Constraint::Length(7),
                 Constraint::Length(7),
                 Constraint::Length(6),
-                Constraint::Min(4),
+                Constraint::Min(6),
             ])
             .split(area);
         render_local_market(frame, panes[0], view, ui, layout_class);
         render_trade_action(frame, panes[1], view, ui, layout_class);
-        render_trade_route(frame, panes[2], view, ui);
-        render_trade_player(frame, panes[3], view, ui);
+        render_trade_destinations(frame, panes[2], view, ui, layout_class);
+        render_trade_route(frame, panes[3], view, ui);
     }
 }
 
@@ -1820,7 +2005,7 @@ fn render_local_market(
         .enumerate()
         .map(|(offset, row)| {
             let index = start + offset;
-            let selected = index == ui.market_index;
+            let selected = index == ui.market_index && ui.trade_region == TradeRegion::Goods;
             let common = vec![
                 Cell::from(if selected { ">" } else { " " }),
                 Cell::from(row.name.clone()),
@@ -1847,8 +2032,13 @@ fn render_local_market(
         ]));
     }
     let title = format!(
-        "Local Market — {}{} · {}",
+        "Local Market — {}{}{} · {}",
         view.local_trade.system.name,
+        if ui.trade_region == TradeRegion::Goods {
+            " [ACTIVE]"
+        } else {
+            ""
+        },
         if view.local_trade.available {
             ""
         } else {
@@ -1942,14 +2132,22 @@ fn render_trade_action(
             if layout_class == LayoutClass::Compact {
                 vec![
                     Line::from(format!(
-                        "> {} · Qty {} · Held {} · Stock {}",
+                        "{} · Qty {} · Held {} · Stock {}",
                         row.name, ui.trade_quantity, held, row.inventory
                     )),
                     Line::from(format!(
-                        "Buy {} E/unit · Total {}",
-                        row.sell_quote.0,
+                        "Buy total {} · Tank {}→{} E · Cargo {}→{}/{}",
                         buy_total
-                            .map_or_else(|| "overflow".into(), |total| format!("{} E", total.0))
+                            .map_or_else(|| "overflow".into(), |total| format!("{} E", total.0)),
+                        view.player.tank_energy.0,
+                        buy_total.map_or(view.player.tank_energy.0, |total| {
+                            view.player.tank_energy.0.saturating_sub(total.0)
+                        }),
+                        view.player.cargo_used,
+                        view.player
+                            .cargo_used
+                            .saturating_add(u64::from(ui.trade_quantity)),
+                        view.player.cargo_capacity,
                     )),
                     mnemonic_line(
                         "",
@@ -1957,10 +2155,18 @@ fn render_trade_action(
                         format!("uy {}", availability_label(buy_reason.as_deref())),
                     ),
                     Line::from(format!(
-                        "Sell {} E/unit · Total {}",
-                        row.buy_quote.0,
+                        "Sell total {} · Tank {}→{} E · Cargo {}→{}/{}",
                         sell_total
-                            .map_or_else(|| "overflow".into(), |total| format!("{} E", total.0))
+                            .map_or_else(|| "overflow".into(), |total| format!("{} E", total.0)),
+                        view.player.tank_energy.0,
+                        sell_total.map_or(view.player.tank_energy.0, |total| {
+                            view.player.tank_energy.0.saturating_add(total.0)
+                        }),
+                        view.player.cargo_used,
+                        view.player
+                            .cargo_used
+                            .saturating_sub(u64::from(ui.trade_quantity)),
+                        view.player.cargo_capacity,
                     )),
                     mnemonic_line(
                         "",
@@ -1971,7 +2177,7 @@ fn render_trade_action(
             } else {
                 vec![
                     Line::from(format!(
-                        "> {} · Qty {} · Held {} · Market stock {}",
+                        "{} · Qty {} · Held {} · Market stock {}",
                         row.name, ui.trade_quantity, held, row.inventory
                     )),
                     Line::from(format!(
@@ -2035,11 +2241,12 @@ fn render_trade_route(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView,
             (view.inspection.system.id != view.player.location)
                 .then_some(&view.inspection.system.id)
         });
+    let access = trade_network_access_label(view.player.trade_network_access);
     let title = remote.map_or_else(
-        || "Route".into(),
+        || format!("Route / Trade Network — {access}"),
         |target| {
             format!(
-                "Remote Inspection — {} (read-only)",
+                "Route — {} (read-only) / Network {access}",
                 system_name(view, target)
             )
         },
@@ -2203,6 +2410,385 @@ fn render_trade_player(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView
         ),
         area,
     );
+}
+
+fn render_trade_destinations(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+    layout_class: LayoutClass,
+) {
+    let Some(good) = view.local_trade.market.get(ui.market_index) else {
+        frame.render_widget(
+            Paragraph::new("No selected local good; destination comparison is empty")
+                .block(Block::bordered().title("Destination Comparison — read-only")),
+            area,
+        );
+        return;
+    };
+    let destinations = view
+        .trade_markets
+        .iter()
+        .filter(|market| !market.local)
+        .collect::<Vec<_>>();
+    let selected_id = ui.selected_trade_destination.as_ref();
+    let selected_index = selected_id
+        .and_then(|selected| {
+            destinations
+                .iter()
+                .position(|market| &market.system.id == selected)
+        })
+        .unwrap_or(0);
+    let capacity = usize::from(area.height.saturating_sub(3)).max(1);
+    let (start, end) = viewport(destinations.len(), selected_index, capacity);
+    let mut rows = destinations[start..end]
+        .iter()
+        .map(|comparison| {
+            let market = comparison
+                .market
+                .iter()
+                .find(|row| row.good_id == good.good_id);
+            let selected = ui.trade_region == TradeRegion::Destinations
+                && selected_id == Some(&comparison.system.id);
+            let (stock, target, buy, sell) = market.map_or_else(
+                || ("—".into(), "—".into(), "—".into(), "—".into()),
+                |row| {
+                    (
+                        row.inventory.to_string(),
+                        row.target.to_string(),
+                        format!("{} E", row.buy_quote.0),
+                        format!("{} E", row.sell_quote.0),
+                    )
+                },
+            );
+            let ticks = comparison
+                .route
+                .as_ref()
+                .map_or_else(|| "—".into(), |route| route.total_ticks.to_string());
+            let availability = match comparison.availability {
+                game_app::TradeDestinationAvailability::CurrentLocation => "LOCAL".into(),
+                game_app::TradeDestinationAvailability::Unreachable => "UNREACHABLE".into(),
+                game_app::TradeDestinationAvailability::Traveling => "IN TRANSIT".into(),
+                game_app::TradeDestinationAvailability::Available => {
+                    comparison.route.as_ref().map_or_else(
+                        || "ROUTE N/A".into(),
+                        |route| {
+                            if route.required_energy > view.player.tank_energy {
+                                format!("NEEDS {} E", route.required_energy.0)
+                            } else {
+                                format!("{} E", route.required_energy.0)
+                            }
+                        },
+                    )
+                }
+            };
+            let cells = if layout_class == LayoutClass::Regular {
+                vec![
+                    Cell::from(if selected { ">" } else { " " }),
+                    Cell::from(comparison.system.name.clone()),
+                    right_cell(stock),
+                    right_cell(target),
+                    right_cell(buy),
+                    right_cell(sell),
+                    right_cell(ticks),
+                    Cell::from(availability),
+                ]
+            } else {
+                vec![
+                    Cell::from(if selected { ">" } else { " " }),
+                    Cell::from(comparison.system.name.clone()),
+                    right_cell(format!("{stock}/{target}")),
+                    right_cell(format!("{buy}/{sell}")),
+                    right_cell(ticks),
+                    Cell::from(availability),
+                ]
+            };
+            Row::new(cells).style(selected_style(selected))
+        })
+        .collect::<Vec<_>>();
+    if rows.is_empty() {
+        rows.push(Row::new(vec![
+            Cell::from("—"),
+            Cell::from("No remote systems available"),
+        ]));
+    }
+    let title = format!(
+        "Destinations{} — {} — read-only · {}",
+        if ui.trade_region == TradeRegion::Destinations {
+            " [ACTIVE]"
+        } else {
+            ""
+        },
+        good.name,
+        viewport_label(start, end, destinations.len())
+    );
+    let table = if layout_class == LayoutClass::Regular {
+        Table::new(
+            rows,
+            [
+                Constraint::Length(1),
+                Constraint::Min(10),
+                Constraint::Length(7),
+                Constraint::Length(7),
+                Constraint::Length(8),
+                Constraint::Length(8),
+                Constraint::Length(6),
+                Constraint::Min(11),
+            ],
+        )
+        .header(bold_row([
+            "",
+            "System",
+            "Stock",
+            "Target",
+            "Mkt buys",
+            "Mkt sells",
+            "Ticks",
+            "Available",
+        ]))
+    } else {
+        Table::new(
+            rows,
+            [
+                Constraint::Length(1),
+                Constraint::Min(11),
+                Constraint::Length(11),
+                Constraint::Length(17),
+                Constraint::Length(6),
+                Constraint::Min(11),
+            ],
+        )
+        .header(bold_row([
+            "",
+            "System",
+            "Stock/Tgt",
+            "Mkt Buy/Sell",
+            "Ticks",
+            "Available",
+        ]))
+    };
+    frame.render_widget(
+        table
+            .column_spacing(1)
+            .block(Block::bordered().title(title)),
+        area,
+    );
+}
+
+fn trade_network_access_label(access: game_app::TradeNetworkAccess) -> &'static str {
+    match access {
+        game_app::TradeNetworkAccess::Offline => "Offline",
+        game_app::TradeNetworkAccess::ReservationContracts => "Reservation Contracts",
+    }
+}
+
+fn render_encyclopedia_activity(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+    layout_class: LayoutClass,
+) {
+    let Some(section) = view
+        .encyclopedia
+        .sections
+        .get(ui.encyclopedia_section_index)
+    else {
+        frame.render_widget(
+            Paragraph::new("No encyclopedia sections are available")
+                .block(Block::bordered().title("Encyclopedia")),
+            area,
+        );
+        return;
+    };
+    let section_bar = Line::from(
+        view.encyclopedia
+            .sections
+            .iter()
+            .enumerate()
+            .flat_map(|(index, item)| {
+                let active = index == ui.encyclopedia_section_index;
+                [
+                    Span::styled(
+                        if active {
+                            format!("[{}]", item.title)
+                        } else {
+                            item.title.clone()
+                        },
+                        if active {
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::Gray)
+                        },
+                    ),
+                    Span::raw("  "),
+                ]
+            })
+            .collect::<Vec<_>>(),
+    );
+    let panes = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+    frame.render_widget(Paragraph::new(section_bar), panes[0]);
+    if layout_class == LayoutClass::Regular {
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
+            .split(panes[1]);
+        render_encyclopedia_articles(frame, columns[0], section, ui);
+        render_encyclopedia_article(frame, columns[1], section, ui);
+    } else {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(8), Constraint::Min(1)])
+            .split(panes[1]);
+        render_encyclopedia_articles(frame, rows[0], section, ui);
+        render_encyclopedia_article(frame, rows[1], section, ui);
+    }
+}
+
+fn render_encyclopedia_articles(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    section: &game_app::EncyclopediaSectionView,
+    ui: &UiState,
+) {
+    let selected = ui
+        .encyclopedia_article_index
+        .min(section.articles.len().saturating_sub(1));
+    let capacity = usize::from(area.height.saturating_sub(2)).max(1);
+    let (start, end) = viewport(section.articles.len(), selected, capacity);
+    let lines = if section.articles.is_empty() {
+        vec![Line::from("No articles")]
+    } else {
+        section.articles[start..end]
+            .iter()
+            .enumerate()
+            .map(|(offset, article)| {
+                let is_selected = start + offset == selected;
+                Line::from(vec![
+                    Span::styled(
+                        if is_selected { "> " } else { "  " },
+                        if is_selected {
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                    Span::styled(article.title.clone(), selected_style(is_selected)),
+                ])
+            })
+            .collect()
+    };
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title(format!(
+            "Articles · {}",
+            viewport_label(start, end, section.articles.len())
+        ))),
+        area,
+    );
+}
+
+fn render_encyclopedia_article(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    section: &game_app::EncyclopediaSectionView,
+    ui: &UiState,
+) {
+    let Some(article) = section.articles.get(ui.encyclopedia_article_index) else {
+        frame.render_widget(
+            Paragraph::new("No selected article").block(Block::bordered().title("Article")),
+            area,
+        );
+        return;
+    };
+    let lines = article
+        .paragraphs
+        .iter()
+        .enumerate()
+        .flat_map(|(index, paragraph)| {
+            let mut lines = Vec::new();
+            if index > 0 {
+                lines.push(Line::default());
+            }
+            lines.push(Line::from(paragraph.clone()));
+            lines
+        })
+        .collect::<Vec<_>>();
+    let block = Block::bordered().title(article.title.clone());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let panes = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+    let content_area = panes[1];
+    let total_lines = wrapped_article_line_count(&article.paragraphs, content_area.width);
+    let visible_lines = usize::from(content_area.height);
+    let max_scroll = total_lines.saturating_sub(visible_lines);
+    let scroll = usize::from(ui.encyclopedia_article_scroll).min(max_scroll);
+    let first = if total_lines == 0 { 0 } else { scroll + 1 };
+    let last = scroll.saturating_add(visible_lines).min(total_lines);
+    let more = match (scroll > 0, scroll < max_scroll) {
+        (true, true) => "more ↑↓",
+        (true, false) => "more ↑",
+        (false, true) => "more ↓",
+        (false, false) => "all visible",
+    };
+    frame.render_widget(
+        Paragraph::new(format!(
+            "Lines {first}-{last}/{total_lines} · {more} · PgUp/PgDn scroll"
+        ))
+        .style(Style::default().fg(Color::Gray)),
+        panes[0],
+    );
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0)),
+        content_area,
+    );
+}
+
+fn wrapped_article_line_count(paragraphs: &[String], width: u16) -> usize {
+    let width = usize::from(width);
+    if width == 0 {
+        return 0;
+    }
+    paragraphs
+        .iter()
+        .enumerate()
+        .map(|(index, paragraph)| {
+            let separator = usize::from(index > 0);
+            let mut wrapped = 0_usize;
+            let mut current_width = 0_usize;
+            for word in paragraph.split_whitespace() {
+                let word_width = Line::from(word).width();
+                if current_width == 0 {
+                    wrapped = wrapped.saturating_add(word_width.div_ceil(width).max(1));
+                    current_width = word_width % width;
+                    if current_width == 0 && word_width > 0 {
+                        current_width = width;
+                    }
+                } else if current_width.saturating_add(1).saturating_add(word_width) <= width {
+                    current_width = current_width.saturating_add(1).saturating_add(word_width);
+                } else {
+                    wrapped = wrapped.saturating_add(word_width.div_ceil(width).max(1));
+                    current_width = word_width % width;
+                    if current_width == 0 && word_width > 0 {
+                        current_width = width;
+                    }
+                }
+            }
+            separator.saturating_add(wrapped.max(1))
+        })
+        .sum()
 }
 
 fn render_intelligence_activity(
@@ -2535,8 +3121,10 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
         ]),
         Activity::Trade => Line::from(vec![
             Span::raw("Trade: "),
+            shortcut_span("Tab/Shift-Tab"),
+            Span::raw(" goods/destinations · "),
             shortcut_span("↑/↓"),
-            Span::raw(" good · ("),
+            Span::raw(" row · ("),
             shortcut_span("N"),
             Span::raw(") quantity · ("),
             shortcut_span("B"),
@@ -2568,6 +3156,15 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
             shortcut_span("↑/↓"),
             Span::raw(" events · reaching newest resumes tail-follow"),
         ]),
+        Activity::Encyclopedia => Line::from(vec![
+            Span::raw("Encyclopedia: "),
+            shortcut_span("Tab/Shift-Tab"),
+            Span::raw(" section · "),
+            shortcut_span("↑/↓"),
+            Span::raw(" article · "),
+            shortcut_span("PgUp/PgDn"),
+            Span::raw(" scroll article"),
+        ]),
     };
     vec![
         contextual,
@@ -2581,14 +3178,16 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
             shortcut_span("F3"),
             Span::raw(" Governance · "),
             shortcut_span("F4"),
-            Span::raw(" Intelligence"),
+            Span::raw(" Intelligence · "),
+            shortcut_span("F5"),
+            Span::raw(" Encyclopedia"),
         ]),
         Line::from(vec![
             Span::raw("Global: "),
             shortcut_span("Space"),
             Span::raw(" pause/run · "),
-            shortcut_span("F5"),
-            Span::raw(" step · "),
+            shortcut_span("."),
+            Span::raw(" step while paused · "),
             shortcut_span("R"),
             Span::raw(" rate · "),
             shortcut_span("?"),
@@ -2610,18 +3209,19 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
 mod tests {
     use super::*;
     use game_app::{
-        AggregateDynamicsView, CargoItemView, ConnectionView, EnergyHealth,
-        GovernorInvestmentPolicy, GovernorMarketPolicy, GovernorView, InvestmentView,
-        LocalTradeView, MarketEnergyView, MarketRow, PlayerStatusView, PopulationView,
-        PresentationEvent, RouteLegView, RouteView, SeasonalGenerationView, SystemIdentityView,
-        SystemInspectionView, SystemListItem, TickRate,
+        AggregateDynamicsView, CargoItemView, ConnectionView, EncyclopediaArticleView,
+        EncyclopediaSectionView, EncyclopediaView, EnergyHealth, GovernorInvestmentPolicy,
+        GovernorMarketPolicy, GovernorView, InvestmentView, LocalTradeView, MarketEnergyView,
+        MarketRow, PlayerStatusView, PopulationView, PresentationEvent, RouteLegView, RouteView,
+        SeasonalGenerationView, SystemIdentityView, SystemInspectionView, SystemListItem, TickRate,
+        TradeDestinationAvailability, TradeMarketComparisonView,
     };
     use game_core::{
         BrownoutStage, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetDynamics, FleetMode,
         GameDefinition, GameSession, GoodCategory, GoodDefinition, Governance, InvestmentPolicy,
         InvestmentStatus, MarketAuthority, MarketPolicy, PopulationState, PopulationTrend,
         Position3, RefuelPolicy, SeasonalGenerationState, SeasonalTrend, SystemDefinition,
-        TraderDefinition,
+        TradeNetworkAccess, TraderDefinition,
     };
     use ratatui::backend::TestBackend;
     use std::cell::RefCell;
@@ -2742,6 +3342,7 @@ mod tests {
                 refuel_policy: RefuelPolicy::DepositAndWithdraw,
                 player: true,
             }],
+            player_trade_network_access: TradeNetworkAccess::Offline,
             fleet: FleetDynamics {
                 mode: Some(FleetMode::Fixed { count: 0 }),
                 ..FleetDynamics::default()
@@ -2883,10 +3484,88 @@ mod tests {
                 governor,
             },
             local_trade: LocalTradeView {
-                system,
+                system: system.clone(),
                 available: true,
                 unavailable_reason: None,
-                market,
+                market: market.clone(),
+            },
+            trade_markets: vec![
+                TradeMarketComparisonView {
+                    system: system.clone(),
+                    local: true,
+                    read_only: true,
+                    availability: TradeDestinationAvailability::CurrentLocation,
+                    unavailable_reason: Some("Player is already at this system".into()),
+                    route: None,
+                    market: market.clone(),
+                },
+                TradeMarketComparisonView {
+                    system: SystemIdentityView {
+                        id: id("core:s1"),
+                        name: "Brasshaven".into(),
+                    },
+                    local: false,
+                    read_only: true,
+                    availability: TradeDestinationAvailability::Available,
+                    unavailable_reason: None,
+                    route: Some(RouteView {
+                        destination_id: id("core:s1"),
+                        destination_name: "Brasshaven".into(),
+                        legs: vec![RouteLegView {
+                            from_id: id("core:s0"),
+                            from_name: "Aster Reach".into(),
+                            to_id: id("core:s1"),
+                            to_name: "Brasshaven".into(),
+                            distance: 3.5,
+                            travel_ticks: 4,
+                        }],
+                        current_leg: None,
+                        total_distance: 3.5,
+                        total_ticks: 4,
+                        remaining_ticks: None,
+                        required_energy: Energy(4),
+                    }),
+                    market: vec![MarketRow {
+                        good_id: id("core:ore"),
+                        name: "Ore".into(),
+                        inventory: 3,
+                        target: 20,
+                        buy_quote: Energy(13),
+                        sell_quote: Energy(15),
+                        unit_cost: Energy(8),
+                        funded_demand: 5,
+                    }],
+                },
+            ],
+            encyclopedia: EncyclopediaView {
+                sections: vec![
+                    EncyclopediaSectionView {
+                        title: "Worlds & Population".into(),
+                        articles: vec![
+                            EncyclopediaArticleView {
+                                title: "Systems and Energy".into(),
+                                paragraphs: vec!["Markets hold physical Energy stock.".into()],
+                            },
+                            EncyclopediaArticleView {
+                                title: "Brownouts".into(),
+                                paragraphs: vec![
+                                    "Normal, Throttled, Emergency, and Starvation form the brownout ladder."
+                                        .into(),
+                                ],
+                            },
+                        ],
+                    },
+                    EncyclopediaSectionView {
+                        title: "Recipes".into(),
+                        articles: vec![EncyclopediaArticleView {
+                            title: "Alloy Smelting".into(),
+                            paragraphs: vec![
+                                "Inputs: 3 Ferrite Ore. Outputs: 2 Structural Alloy."
+                                    .into(),
+                            ],
+                        }],
+                    },
+                ],
             },
             dynamics: AggregateDynamicsView {
                 stage_occupancy_ticks: [10, 2, 1, 0],
@@ -2895,6 +3574,7 @@ mod tests {
                 population_milestones: 1,
             },
             player: PlayerStatusView {
+                trade_network_access: TradeNetworkAccess::Offline,
                 location: id("core:s0"),
                 location_name: "Aster Reach".into(),
                 tank_energy: Energy(100),
@@ -3171,7 +3851,12 @@ mod tests {
         assert!(!systems.contains("core:"));
 
         let trade = rendered_activity(&base, Activity::Trade);
-        for label in ["Local Market", "Funded", "Player / Trade", "Cargo bay 2/10"] {
+        for label in [
+            "Local Market",
+            "Funded",
+            "Destinations",
+            "Route / Trade Network",
+        ] {
             assert!(trade.contains(label), "missing Trade surface label {label}");
         }
         assert!(!trade.contains("Funds:"));
@@ -3576,7 +4261,9 @@ mod tests {
                 },
             );
             assert!(trade.contains("Local Market — Aster Reach"));
-            assert!(trade.contains("Remote Inspection — Brasshaven (read-only)"));
+            assert!(trade.contains("Destinations"));
+            assert!(trade.contains("Brasshaven"));
+            assert!(trade.contains("Route — Brasshaven (read-only)"));
             assert!(trade.contains("Qty 1"));
             assert!(trade.contains("Route Proposal"));
             assert!(trade.contains("(T)ravel"));
@@ -3770,6 +4457,350 @@ mod tests {
         assert!(rendered.contains(">"));
     }
 
+    #[test]
+    fn encyclopedia_and_trade_comparisons_render_responsively_with_explicit_edge_states() {
+        let view = test_view();
+        for (width, height) in [(80, 30), (160, 45)] {
+            let encyclopedia = rendered_at(
+                width,
+                height,
+                &view,
+                &UiState {
+                    activity: Activity::Encyclopedia,
+                    ..UiState::default()
+                },
+            );
+            assert!(encyclopedia.contains("Worlds & Population"));
+            assert!(encyclopedia.contains("Articles"));
+            assert!(encyclopedia.contains("Systems and Energy"));
+            assert!(encyclopedia.contains("Markets hold physical Energy stock"));
+            assert_eq!(encyclopedia.matches("> ").count(), 1);
+
+            let trade = rendered_at(
+                width,
+                height,
+                &view,
+                &UiState {
+                    activity: Activity::Trade,
+                    trade_region: TradeRegion::Destinations,
+                    selected_trade_destination: Some(id("core:s1")),
+                    route_proposal: Some(id("core:s1")),
+                    ..UiState::default()
+                },
+            );
+            for fact in ["Stock", "Mkt", "Ticks", "Brasshaven"] {
+                assert!(trade.contains(fact), "missing comparison fact {fact}");
+            }
+            assert!(trade.contains(if width == 80 { "Stock/Tgt" } else { "Target" }));
+            assert!(trade.contains("Offline"));
+        }
+
+        let mut unreachable = view.clone();
+        let remote = unreachable
+            .trade_markets
+            .iter_mut()
+            .find(|market| !market.local)
+            .unwrap();
+        remote.availability = TradeDestinationAvailability::Unreachable;
+        remote.unavailable_reason = Some("No route".into());
+        remote.route = None;
+        let rendered = rendered_at(
+            80,
+            30,
+            &unreachable,
+            &UiState {
+                activity: Activity::Trade,
+                trade_region: TradeRegion::Destinations,
+                selected_trade_destination: Some(id("core:s1")),
+                route_proposal: Some(id("core:s1")),
+                ..UiState::default()
+            },
+        );
+        assert!(rendered.contains("UNREACHABLE"));
+        assert!(rendered.contains("Required energy unavailable"));
+
+        let mut traveling = view.clone();
+        traveling.player.traveling = true;
+        traveling.trade_markets[1].availability = TradeDestinationAvailability::Traveling;
+        traveling.selected_route = traveling.trade_markets[1].route.clone();
+        let rendered = rendered_at(
+            80,
+            30,
+            &traveling,
+            &UiState {
+                activity: Activity::Trade,
+                trade_region: TradeRegion::Destinations,
+                selected_trade_destination: Some(id("core:s1")),
+                ..UiState::default()
+            },
+        );
+        assert!(rendered.contains("IN TRANSIT"));
+        assert!(rendered.contains("In Transit"));
+
+        let mut empty = view;
+        empty.local_trade.market.clear();
+        empty.trade_markets.clear();
+        let rendered = rendered_at(
+            80,
+            30,
+            &empty,
+            &UiState {
+                activity: Activity::Trade,
+                trade_region: TradeRegion::Destinations,
+                ..UiState::default()
+            },
+        );
+        assert!(rendered.contains("destination comparison is empty"));
+    }
+
+    #[test]
+    fn compact_trade_preserves_exact_action_and_route_consequences_at_80x30() {
+        let mut view = test_view();
+        view.selected_system = id("core:s1");
+        view.selected_route = view.trade_markets[1].route.clone();
+        let rendered = rendered_at(
+            80,
+            30,
+            &view,
+            &UiState {
+                activity: Activity::Trade,
+                trade_region: TradeRegion::Destinations,
+                selected_trade_destination: Some(id("core:s1")),
+                route_proposal: Some(id("core:s1")),
+                ..UiState::default()
+            },
+        );
+
+        for fact in [
+            "Buy total 11 E · Tank 100→89 E · Cargo 2→3/10",
+            "Sell total 9 E · Tank 100→109 E · Cargo 2→1/10",
+            "Route Proposal: Aster Reach → Brasshaven",
+            "1 jumps · 3.5 distance · 4 ticks",
+            "Requires 4 E · after arrival 96 E",
+            "Brasshaven",
+        ] {
+            assert!(
+                rendered.contains(fact),
+                "missing compact Trade fact: {fact}"
+            );
+        }
+        assert!(rendered.contains("(T)ravel / Enter to commit"));
+    }
+
+    #[tokio::test]
+    async fn encyclopedia_pages_through_long_wrapped_articles_and_resets_scroll() {
+        let app = game_app::spawn(test_session());
+        let mut view = test_view();
+        let mut paragraphs = (0..69)
+            .map(|index| {
+                format!(
+                    "Catalog fact {index}: this deliberately long factual paragraph verifies wrapped encyclopedia content remains reachable."
+                )
+            })
+            .collect::<Vec<_>>();
+        paragraphs.push("FINAL ENCYCLOPEDIA PARAGRAPH".into());
+        view.encyclopedia.sections[0].articles[0].paragraphs = paragraphs;
+
+        for (width, height) in [(80, 30), (160, 45)] {
+            let mut ui = UiState {
+                activity: Activity::Encyclopedia,
+                ..UiState::default()
+            };
+            let initial = rendered_at(width, height, &view, &ui);
+            assert!(initial.contains("more ↓"));
+            assert!(initial.contains("PgUp/PgDn scroll"));
+            assert!(!initial.contains("FINAL ENCYCLOPEDIA PARAGRAPH"));
+
+            let mut reached_end = false;
+            for _ in 0..40 {
+                handle_key(KeyCode::PageDown, &mut ui, &view, &app)
+                    .await
+                    .unwrap();
+                let rendered = rendered_at(width, height, &view, &ui);
+                if rendered.contains("FINAL ENCYCLOPEDIA PARAGRAPH") {
+                    assert!(rendered.contains("more ↑"));
+                    reached_end = true;
+                    break;
+                }
+            }
+            assert!(
+                reached_end,
+                "long article was not reachable at {width}x{height}"
+            );
+
+            handle_key(KeyCode::Down, &mut ui, &view, &app)
+                .await
+                .unwrap();
+            assert_eq!(ui.encyclopedia_article_index, 1);
+            assert_eq!(ui.encyclopedia_article_scroll, 0);
+            handle_key(KeyCode::PageDown, &mut ui, &view, &app)
+                .await
+                .unwrap();
+            assert!(ui.encyclopedia_article_scroll > 0);
+            handle_key(KeyCode::Tab, &mut ui, &view, &app)
+                .await
+                .unwrap();
+            assert_eq!(ui.encyclopedia_section_index, 1);
+            assert_eq!(ui.encyclopedia_article_index, 0);
+            assert_eq!(ui.encyclopedia_article_scroll, 0);
+        }
+        app.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn destination_selection_edge_states_do_not_mutate_simulation_or_commit_routes() {
+        let app = game_app::spawn(test_session());
+        let initial = app.views.borrow().clone();
+
+        let mut no_destinations = initial.clone();
+        no_destinations.trade_markets.retain(|market| market.local);
+        let mut ui = UiState {
+            activity: Activity::Trade,
+            ..UiState::default()
+        };
+        handle_key(KeyCode::Tab, &mut ui, &no_destinations, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Enter, &mut ui, &no_destinations, &app)
+            .await
+            .unwrap();
+        let after_empty = app.views.borrow().clone();
+        assert_eq!(ui.selected_trade_destination, None);
+        assert_eq!(ui.route_proposal, None);
+        assert_eq!(after_empty.tick, initial.tick);
+        assert_eq!(after_empty.selected_system, initial.selected_system);
+        assert_eq!(after_empty.player.location, initial.player.location);
+        assert_eq!(after_empty.player.traveling, initial.player.traveling);
+        assert_eq!(after_empty.player.tank_energy, initial.player.tank_energy);
+        assert_eq!(after_empty.player.cargo_used, initial.player.cargo_used);
+        assert_eq!(after_empty.player.transactions, initial.player.transactions);
+
+        let mut unreachable = initial.clone();
+        unreachable.trade_markets[1].availability = TradeDestinationAvailability::Unreachable;
+        unreachable.trade_markets[1].unavailable_reason = Some("No route".into());
+        unreachable.trade_markets[1].route = None;
+        let mut ui = UiState {
+            activity: Activity::Trade,
+            ..UiState::default()
+        };
+        handle_key(KeyCode::Tab, &mut ui, &unreachable, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Enter, &mut ui, &unreachable, &app)
+            .await
+            .unwrap();
+        let after_unreachable = app.views.borrow().clone();
+        assert_eq!(ui.selected_trade_destination, Some(id("core:s1")));
+        assert_eq!(ui.route_proposal, None);
+        assert_eq!(after_unreachable.tick, initial.tick);
+        assert_eq!(after_unreachable.selected_system, initial.selected_system);
+        assert_eq!(after_unreachable.player.location, initial.player.location);
+        assert_eq!(after_unreachable.player.traveling, initial.player.traveling);
+        assert_eq!(
+            after_unreachable.player.tank_energy,
+            initial.player.tank_energy
+        );
+        assert_eq!(
+            after_unreachable.player.cargo_used,
+            initial.player.cargo_used
+        );
+        assert_eq!(
+            after_unreachable.player.transactions,
+            initial.player.transactions
+        );
+
+        app.request(AppRequest::BeginTravel {
+            destination: id("core:s1"),
+        })
+        .await
+        .unwrap();
+        let traveling = app.views.borrow().clone();
+        let mut ui = UiState {
+            activity: Activity::Trade,
+            ..UiState::default()
+        };
+        handle_key(KeyCode::Tab, &mut ui, &traveling, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Enter, &mut ui, &traveling, &app)
+            .await
+            .unwrap();
+        let after_traveling_selection = app.views.borrow().clone();
+        assert_eq!(ui.route_proposal, None);
+        assert_eq!(after_traveling_selection.tick, traveling.tick);
+        assert_eq!(
+            after_traveling_selection.selected_system,
+            traveling.selected_system
+        );
+        assert_eq!(
+            after_traveling_selection.player.location,
+            traveling.player.location
+        );
+        assert_eq!(
+            after_traveling_selection.player.traveling,
+            traveling.player.traveling
+        );
+        assert_eq!(
+            after_traveling_selection.player.tank_energy,
+            traveling.player.tank_energy
+        );
+        assert_eq!(
+            after_traveling_selection.player.cargo_used,
+            traveling.player.cargo_used
+        );
+        assert_eq!(
+            after_traveling_selection.player.transactions,
+            traveling.player.transactions
+        );
+        assert_eq!(
+            after_traveling_selection
+                .selected_route
+                .as_ref()
+                .and_then(|route| route.remaining_ticks),
+            traveling
+                .selected_route
+                .as_ref()
+                .and_then(|route| route.remaining_ticks)
+        );
+        app.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn destination_selection_updates_preview_without_travel_or_local_good_mutation() {
+        let app = game_app::spawn(test_session());
+        let mut ui = UiState {
+            activity: Activity::Trade,
+            market_index: 1,
+            ..UiState::default()
+        };
+        let mut view = app.views.borrow().clone();
+        let local_good = view.local_trade.market[1].good_id.clone();
+
+        handle_key(KeyCode::Tab, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(ui.trade_region, TradeRegion::Destinations);
+        assert_eq!(ui.selected_trade_destination, Some(id("core:s1")));
+        assert_eq!(ui.route_proposal, Some(id("core:s1")));
+        assert_eq!(view.selected_system, id("core:s1"));
+        assert_eq!(
+            view.selected_route
+                .as_ref()
+                .map(|route| &route.destination_id),
+            Some(&id("core:s1"))
+        );
+        assert!(!view.player.traveling);
+        assert_eq!(ui.market_index, 1);
+        assert_eq!(view.local_trade.market[1].good_id, local_good);
+
+        handle_key(KeyCode::Char('t'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert!(app.views.borrow().player.traveling);
+        app.shutdown().await.unwrap();
+    }
+
     #[tokio::test]
     async fn obsolete_hidden_target_shortcuts_are_inert_in_runtime_dispatch() {
         let app = game_app::spawn(test_session());
@@ -3778,7 +4809,7 @@ mod tests {
             ..UiState::default()
         };
         let before = app.views.borrow().clone();
-        for key in [']', '[', ',', '.', 'I', '-', '+', '='] {
+        for key in [']', '[', ',', ';', 'I', '-', '+', '='] {
             handle_key(KeyCode::Char(key), &mut ui, &before, &app)
                 .await
                 .unwrap();
@@ -3801,11 +4832,24 @@ mod tests {
         let mut ui = UiState::default();
         let mut view = app.views.borrow().clone();
 
-        handle_key(KeyCode::F(5), &mut ui, &view, &app)
+        handle_key(KeyCode::Char('.'), &mut ui, &view, &app)
             .await
             .unwrap();
         view = app.views.borrow().clone();
         assert_eq!(view.tick, 1);
+
+        handle_key(KeyCode::F(5), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.activity, Activity::Encyclopedia);
+        assert_eq!(
+            app.views.borrow().tick,
+            1,
+            "activity switches must not step"
+        );
+        handle_key(KeyCode::F(1), &mut ui, &view, &app)
+            .await
+            .unwrap();
 
         handle_key(KeyCode::Char('r'), &mut ui, &view, &app)
             .await

@@ -11,6 +11,7 @@ pub enum Activity {
     Trade,
     Governance,
     Intelligence,
+    Encyclopedia,
 }
 
 /// The layout supported by the current terminal cell grid.
@@ -181,6 +182,14 @@ pub enum SystemDetailKind {
     Market,
 }
 
+/// The active navigation region on the Trade activity.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TradeRegion {
+    #[default]
+    Goods,
+    Destinations,
+}
+
 /// All state local to the terminal adapter.
 #[derive(Clone, Debug)]
 pub struct UiState {
@@ -192,6 +201,12 @@ pub struct UiState {
     pub sort_direction: SortDirection,
     pub system_index: usize,
     pub market_index: usize,
+    pub trade_region: TradeRegion,
+    pub selected_trade_destination: Option<ContentId>,
+    pub trade_destination_index: usize,
+    pub encyclopedia_section_index: usize,
+    pub encyclopedia_article_index: usize,
+    pub encyclopedia_article_scroll: u16,
     pub governance_index: usize,
     pub investment_index: usize,
     pub route_proposal: Option<ContentId>,
@@ -216,6 +231,12 @@ impl Default for UiState {
             sort_direction: SortDirection::Ascending,
             system_index: 0,
             market_index: 0,
+            trade_region: TradeRegion::Goods,
+            selected_trade_destination: None,
+            trade_destination_index: 0,
+            encyclopedia_section_index: 0,
+            encyclopedia_article_index: 0,
+            encyclopedia_article_scroll: 0,
             governance_index: 0,
             investment_index: 0,
             route_proposal: None,
@@ -250,6 +271,20 @@ impl UiState {
         self.selected_system
             .as_ref()
             .and_then(|selected| systems.iter().position(|system| &system.id == selected))
+    }
+
+    /// Preserves a Trade destination stable ID across replaceable snapshots.
+    pub fn reconcile_trade_destination(&mut self, destinations: &[ContentId]) {
+        if let Some(index) = self
+            .selected_trade_destination
+            .as_ref()
+            .and_then(|selected| destinations.iter().position(|id| id == selected))
+        {
+            self.trade_destination_index = index;
+            return;
+        }
+        self.selected_trade_destination = destinations.first().cloned();
+        self.trade_destination_index = 0;
     }
 
     /// Reconciles the Intelligence cursor against a replaceable bounded event
@@ -330,6 +365,24 @@ mod tests {
             route_ticks,
             energy_stock: Energy::ZERO,
         }
+    }
+
+    #[test]
+    fn trade_destination_selection_survives_replacement_by_stable_id() {
+        let mut ui = UiState {
+            selected_trade_destination: Some(id("core:b")),
+            trade_destination_index: 1,
+            ..UiState::default()
+        };
+        ui.reconcile_trade_destination(&[id("core:c"), id("core:b"), id("core:a")]);
+        assert_eq!(ui.selected_trade_destination, Some(id("core:b")));
+        assert_eq!(ui.trade_destination_index, 1);
+
+        ui.reconcile_trade_destination(&[id("core:c")]);
+        assert_eq!(ui.selected_trade_destination, Some(id("core:c")));
+        assert_eq!(ui.trade_destination_index, 0);
+        ui.reconcile_trade_destination(&[]);
+        assert_eq!(ui.selected_trade_destination, None);
     }
 
     #[test]

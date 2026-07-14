@@ -667,6 +667,16 @@ pub struct SystemDefinition {
     pub bootstrap_risk_acknowledged: bool,
 }
 
+/// Player progression capability for access to networked trade reservations.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TradeNetworkAccess {
+    /// Player reservation-backed trade commitments are unavailable.
+    #[default]
+    Offline,
+    /// Allows player commands to create reservation-backed trade commitments.
+    ReservationContracts,
+}
+
 #[derive(Clone, Debug)]
 pub struct TraderDefinition {
     pub id: ContentId,
@@ -706,6 +716,8 @@ pub struct GameDefinition {
     pub recipes: Vec<RecipeDefinition>,
     pub systems: Vec<SystemDefinition>,
     pub traders: Vec<TraderDefinition>,
+    /// Authored initial capability for the one player-controlled trader.
+    pub player_trade_network_access: TradeNetworkAccess,
     pub fleet: FleetDynamics,
     pub economy: EconomyConfig,
 }
@@ -1674,6 +1686,12 @@ struct TraderLifecycle {
     retirement: Option<TraderRetirementState>,
 }
 
+/// Mutable player-only progression state for networked trade capabilities.
+#[derive(Component, Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PlayerTradeNetworkAccess {
+    pub access: TradeNetworkAccess,
+}
+
 #[derive(Component, Clone, Debug)]
 pub struct Trader {
     pub system: ContentId,
@@ -2145,6 +2163,8 @@ pub enum CoreError {
     Unfunded,
     #[error("reservation not found")]
     ReservationNotFound,
+    #[error("player trade-network access does not permit reservation contracts")]
+    TradeNetworkAccessDenied,
     #[error("invalid world-dynamics configuration")]
     InvalidWorldDynamics,
 }
@@ -2209,6 +2229,7 @@ pub struct CoreSnapshot {
     pub tick: u64,
     pub markets: Vec<MarketSnapshot>,
     pub investment_shapes: BTreeMap<InvestmentKind, InvestmentShape>,
+    pub player_trade_network_access: TradeNetworkAccess,
     pub traders: Vec<TraderSnapshot>,
     pub reservations: Vec<TradeReservation>,
     pub energy_flow: GlobalEnergyFlowLedger,
@@ -2498,6 +2519,7 @@ impl GameSession {
                 .map(|r| (r.id.clone(), r))
                 .collect(),
         };
+        let player_trade_network_access = definition.player_trade_network_access;
         let mut world = World::new();
         world.insert_resource(graph);
         world.insert_resource(catalog.clone());
@@ -2704,7 +2726,12 @@ impl GameSession {
                 },
             ));
             if player {
-                e.insert(PlayerControlled);
+                e.insert((
+                    PlayerControlled,
+                    PlayerTradeNetworkAccess {
+                        access: player_trade_network_access,
+                    },
+                ));
             } else {
                 e.insert(TraderLifecycle::default());
             }
@@ -2783,11 +2810,20 @@ impl GameSession {
                 quantity,
             } => {
                 let e = self.player_entity()?;
-                let system = self.world.get::<Trader>(e).unwrap().system.clone();
-                if system != origin {
-                    return Err(CoreError::WrongLocation);
+                let trader = self.world.get::<Trader>(e).unwrap();
+                let access = self
+                    .world
+                    .get::<PlayerTradeNetworkAccess>(e)
+                    .ok_or(CoreError::InvalidPlayerCount)?
+                    .access;
+                let system = trader.system.clone();
+                if access != TradeNetworkAccess::ReservationContracts {
+                    Err(CoreError::TradeNetworkAccessDenied)
+                } else if system != origin {
+                    Err(CoreError::WrongLocation)
+                } else {
+                    self.enqueue_commit_request(e, &destination, &good, quantity, true, true)
                 }
-                self.enqueue_commit_request(e, &destination, &good, quantity, true, true)
             }
             GameCommand::DepositTank { amount } => {
                 let e = self.player_entity()?;
@@ -3150,10 +3186,18 @@ impl GameSession {
                 aggregate
             },
         );
+        let player_trade_network_access = self
+            .world
+            .query_filtered::<&PlayerTradeNetworkAccess, With<PlayerControlled>>()
+            .iter(&self.world)
+            .next()
+            .expect("validated player access component")
+            .access;
         CoreSnapshot {
             tick: self.tick(),
             markets,
             investment_shapes: self.world.resource::<EconomyConfig>().investments.clone(),
+            player_trade_network_access,
             traders,
             reservations,
             energy_flow,
@@ -6409,6 +6453,7 @@ mod tests {
                 refuel_policy: RefuelPolicy::DepositAndWithdraw,
                 player: true,
             }],
+            player_trade_network_access: TradeNetworkAccess::Offline,
             fleet: FleetDynamics {
                 mode: Some(FleetMode::Fixed { count: 0 }),
                 ..FleetDynamics::default()
@@ -7195,8 +7240,97 @@ mod tests {
         assert_eq!(before.energy_tank.0 - after.energy_tank.0, 10);
     }
     #[test]
-    fn energy_cargo_uses_funded_reservation_and_tank_headroom() {
+    fn offline_trade_network_access_rejects_commit_trade_atomically() {
+        let mut denied = GameSession::new(definition()).unwrap();
+        let mut control = GameSession::new(definition()).unwrap();
+        let before = denied.snapshot();
+
+        assert_eq!(
+            denied.submit(GameCommand::CommitTrade {
+                origin: id("core:s0"),
+                destination: id("core:s1"),
+                good: id("core:ore"),
+                quantity: 1,
+            }),
+            Err(CoreError::TradeNetworkAccessDenied)
+        );
+        assert!(
+            denied.world.resource::<PendingTradeRequests>().0.is_empty(),
+            "a denied player command must not leave deferred work"
+        );
+        assert_eq!(denied.snapshot(), before);
+        assert!(matches!(
+            denied.drain_events().as_slice(),
+            [GameEvent::Rejected(reason)] if reason.contains("trade-network access")
+        ));
+
+        denied.step().unwrap();
+        control.step().unwrap();
+        assert!(denied.world.resource::<PendingTradeRequests>().0.is_empty());
+        assert_eq!(
+            denied.snapshot(),
+            control.snapshot(),
+            "stepping after rejection must match a session that never received the command"
+        );
+        assert_eq!(denied.drain_events(), control.drain_events());
+    }
+
+    #[test]
+    fn offline_player_access_does_not_gate_npc_automated_commitments() {
         let mut d = definition();
+        d.traders.push(TraderDefinition {
+            id: id("core:ai"),
+            name: "AI".into(),
+            system: id("core:s0"),
+            energy_tank: Energy(500),
+            energy_tank_capacity: Energy(1_000),
+            cargo_capacity: 20,
+            speed: 10.0,
+            travel_burn_per_distance: Energy(1),
+            refuel_policy: RefuelPolicy::DepositAndWithdraw,
+            player: false,
+        });
+        let mut s = GameSession::new(d).unwrap();
+
+        s.step().unwrap();
+
+        let npc_entity = s
+            .world
+            .query_filtered::<(Entity, &StableId), Without<PlayerControlled>>()
+            .iter(&s.world)
+            .find(|(_, stable)| stable.0 == id("core:ai"))
+            .unwrap()
+            .0;
+        assert!(
+            s.world
+                .get::<PlayerTradeNetworkAccess>(npc_entity)
+                .is_none(),
+            "NPC entities must remain capability-free"
+        );
+        let snapshot = s.snapshot();
+        assert_eq!(
+            snapshot.player_trade_network_access,
+            TradeNetworkAccess::Offline
+        );
+        let reservation = snapshot
+            .reservations
+            .iter()
+            .find(|reservation| reservation.trader == id("core:ai"))
+            .expect("NPC automation should create its funded commitment");
+        assert_eq!(reservation.status, ReservationStatus::Active);
+        let npc = snapshot
+            .traders
+            .iter()
+            .find(|trader| trader.id == id("core:ai"))
+            .unwrap();
+        assert!(npc.travel.is_some());
+        assert!(npc.reservation.is_some());
+    }
+
+    #[test]
+    fn reservation_contract_access_queues_trade_commitment_and_respects_tank_headroom() {
+        let mut d = definition();
+        d.player_trade_network_access = TradeNetworkAccess::ReservationContracts;
         let energy = id(ENERGY_ID);
         d.systems[0].targets.insert(energy.clone(), 100);
         d.systems[1].inventory.insert(energy.clone(), 100);
@@ -7231,6 +7365,8 @@ mod tests {
             .unwrap();
         assert_eq!(reservation.quantity, 5, "profit must fit arrival headroom");
         assert_eq!(departure.traders[0].cargo.get(&energy), Some(&5));
+        assert!(departure.traders[0].travel.is_some());
+        assert!(departure.markets[1].reserved_energy > Energy::ZERO);
 
         s.step().unwrap();
         let arrival = s.snapshot();

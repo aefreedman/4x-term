@@ -4,24 +4,25 @@ Generated 2026-07-14 from Ratatui `TestBackend` buffers and real pseudo-terminal
 
 ## Text-buffer captures
 
-Compact (`80x30`) and regular (`160x45`) captures are included for Systems, Trade, Governance, and Intelligence. Additional Systems captures cover `159x44` and `200x60`.
+Compact (`80x30`) and regular (`160x45`) captures are included for Systems, Trade, Governance, Intelligence, and Encyclopedia. Additional Systems captures cover `159x44` and `200x60`.
 
 The captures demonstrate:
 
-- persistent F1–F4 activity bar and textual active marker;
+- persistent F1–F5 activity bar and textual active marker;
 - stable `>` selection plus `LOC`, `GOV`, and warning labels;
-- local Trade versus remote read-only inspection;
-- explicit route proposal or disabled reason;
+- local Trade versus selected-good remote market comparisons;
+- explicit destination selection, route proposal, or disabled reason;
 - Governance row selection, allocation totals, and read-only labeling;
 - Intelligence event range and player/fleet summaries;
+- factual Encyclopedia sections, article selection, and scroll status;
 - compact and regular compositions without internal content IDs.
 
 ## Keyboard and resize playthrough
 
 Two real terminal runs completed with exit status 0:
 
-1. `80x30`: Systems navigation and sorting, Trade quantity cancel, Governance navigation/edit attempt, Intelligence scrolling, help open/close, resize to `160x45` and back to `80x30`, then quit.
-2. `160x45`: visited all four activities with keyboard-only navigation, then quit.
+1. `80x30`: Systems navigation and sorting, Trade goods/destination switching, Governance navigation/edit attempt, Intelligence scrolling, Encyclopedia article/section scrolling, help open/close, resize to `160x45` and back to `80x30`, then quit.
+2. `160x45`: visited all five activities with keyboard-only navigation, then quit.
 
 The pseudo-terminal logs were retained only under ignored `target/ui-playthroughs/`; they contain ANSI control sequences and are not source artifacts.
 
@@ -31,4 +32,4 @@ The pseudo-terminal logs were retained only under ignored `target/ui-playthrough
 - Local/remote target labels remained explicit during mode changes.
 - Compact footer text truncates before nonessential trailing status, while selected-action availability remains visible in the main surface.
 - No target mistakes or missing critical action state were observed in the exercised flow.
-- Save/content compatibility is unaffected; this change restructures immutable presentation data and TUI-local state only.
+- Save compatibility is unaffected. Content adds an authored, player-only initial Trade Network access capability; the repository player begins Offline.

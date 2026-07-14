@@ -7,8 +7,8 @@ use game_core::{
     MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS, MarketAuthority, MarketPolicy, PopulationConfig,
     PopulationState, Position3, PricingMode, RecipeDefinition, RecipeLayer, RecipeOutput,
     RefuelPolicy, SeasonalGenerationState, SourceDefinition, SystemDefinition, SystemGraph,
-    TraderDefinition, compute_protected_liquidation_budget, route_travel_energy,
-    scaled_source_output, ticks_for_distance, validate_investment_shapes,
+    TradeNetworkAccess, TraderDefinition, compute_protected_liquidation_budget,
+    route_travel_energy, scaled_source_output, ticks_for_distance, validate_investment_shapes,
     validate_market_investment_bounds, validate_population_config,
 };
 #[cfg(test)]
@@ -312,6 +312,8 @@ struct PlayerTraderSource {
     speed: f64,
     travel_burn_per_distance: i64,
     refuel_policy: RefuelPolicySource,
+    #[serde(default)]
+    trade_network_access: TradeNetworkAccessSource,
 }
 #[derive(Deserialize)]
 struct NpcTraderSource {
@@ -349,6 +351,22 @@ enum RefuelPolicySource {
     DepositAndWithdraw,
     DepositOnly,
     Disabled,
+}
+
+#[derive(Clone, Copy, Default, Deserialize)]
+enum TradeNetworkAccessSource {
+    #[default]
+    Offline,
+    ReservationContracts,
+}
+
+impl From<TradeNetworkAccessSource> for TradeNetworkAccess {
+    fn from(value: TradeNetworkAccessSource) -> Self {
+        match value {
+            TradeNetworkAccessSource::Offline => Self::Offline,
+            TradeNetworkAccessSource::ReservationContracts => Self::ReservationContracts,
+        }
+    }
 }
 
 impl From<RefuelPolicySource> for RefuelPolicy {
@@ -839,7 +857,8 @@ fn compile(
         }
     }
 
-    let (compiled_traders, fleet) = compile_traders(traders, &compiled_systems, &mut errors);
+    let (compiled_traders, player_trade_network_access, fleet) =
+        compile_traders(traders, &compiled_systems, &mut errors);
     let player_ids = compiled_traders
         .iter()
         .filter(|trader| trader.player)
@@ -907,6 +926,7 @@ fn compile(
             recipes: compiled_recipes,
             systems: compiled_systems,
             traders: compiled_traders,
+            player_trade_network_access,
             fleet,
             economy: compiled_config,
         },
@@ -1300,7 +1320,8 @@ fn compile_traders(
     source: TraderConfigSource,
     systems: &[SystemDefinition],
     errors: &mut Vec<String>,
-) -> (Vec<TraderDefinition>, FleetDynamics) {
+) -> (Vec<TraderDefinition>, TradeNetworkAccess, FleetDynamics) {
+    let player_trade_network_access = source.player.trade_network_access.into();
     let fleet_mode = match source.npcs.mode {
         NpcFleetModeSource::Fixed => FleetMode::Fixed {
             count: source.npcs.count,
@@ -1433,6 +1454,7 @@ fn compile_traders(
     }
     (
         result,
+        player_trade_network_access,
         FleetDynamics {
             mode: Some(fleet_mode),
             archetype: Some(FleetArchetype {
@@ -1787,6 +1809,10 @@ mod tests {
                 .traders
                 .iter()
                 .all(|trader| { trader.refuel_policy == RefuelPolicy::DepositAndWithdraw })
+        );
+        assert_eq!(
+            loaded.definition.player_trade_network_access,
+            TradeNetworkAccess::Offline
         );
         assert!(matches!(
             loaded.definition.fleet.mode,

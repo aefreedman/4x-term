@@ -7,7 +7,7 @@ use game_core::{
 };
 pub use game_core::{
     ContentId, Energy, GovernorInvestmentPolicy, GovernorMarketPolicy, InvestmentKind,
-    InvestmentStatus, PopulationTrend,
+    InvestmentStatus, PopulationTrend, TradeNetworkAccess,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
@@ -248,6 +248,7 @@ pub struct CargoItemView {
 
 #[derive(Clone, Debug)]
 pub struct PlayerStatusView {
+    pub trade_network_access: TradeNetworkAccess,
     pub location: ContentId,
     pub location_name: String,
     pub tank_energy: Energy,
@@ -313,6 +314,48 @@ pub struct LocalTradeView {
     pub market: Vec<MarketRow>,
 }
 
+/// Read-only availability of a market in the player-relative trade comparison.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TradeDestinationAvailability {
+    CurrentLocation,
+    Available,
+    Unreachable,
+    Traveling,
+}
+
+/// Immutable market and route facts for one comparison destination.
+///
+/// This projection is always read-only. Actionable dockside trading remains
+/// isolated in [`LocalTradeView`].
+#[derive(Clone, Debug)]
+pub struct TradeMarketComparisonView {
+    pub system: SystemIdentityView,
+    pub local: bool,
+    pub read_only: bool,
+    pub availability: TradeDestinationAvailability,
+    pub unavailable_reason: Option<String>,
+    pub route: Option<RouteView>,
+    pub market: Vec<MarketRow>,
+}
+
+#[derive(Clone, Debug)]
+pub struct EncyclopediaArticleView {
+    pub title: String,
+    pub paragraphs: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct EncyclopediaSectionView {
+    pub title: String,
+    pub articles: Vec<EncyclopediaArticleView>,
+}
+
+/// Frontend-independent factual manual content.
+#[derive(Clone, Debug)]
+pub struct EncyclopediaView {
+    pub sections: Vec<EncyclopediaSectionView>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PresentationEvent {
     pub sequence: u64,
@@ -351,6 +394,8 @@ pub struct ApplicationView {
     pub governed_system: Option<SystemIdentityView>,
     pub inspection: SystemInspectionView,
     pub local_trade: LocalTradeView,
+    pub trade_markets: Vec<TradeMarketComparisonView>,
+    pub encyclopedia: EncyclopediaView,
     pub dynamics: AggregateDynamicsView,
     pub player: PlayerStatusView,
     pub fleet: FleetView,
@@ -689,6 +734,60 @@ fn build_view(
     let local_market = player_market
         .map(|market| build_market_rows(session, market))
         .unwrap_or_default();
+    let trade_markets = snapshot
+        .markets
+        .iter()
+        .map(|market| {
+            let local = market.system_id == player.system;
+            let route = (!local)
+                .then(|| session.shortest_path(&player.system, &market.system_id))
+                .flatten()
+                .map(|(route, _)| {
+                    build_route_view(
+                        session,
+                        &system_names,
+                        &route,
+                        player.speed,
+                        player.travel_burn_per_distance,
+                        None,
+                        None,
+                    )
+                });
+            let availability = if player.travel.is_some() {
+                TradeDestinationAvailability::Traveling
+            } else if local {
+                TradeDestinationAvailability::CurrentLocation
+            } else if route.is_some() {
+                TradeDestinationAvailability::Available
+            } else {
+                TradeDestinationAvailability::Unreachable
+            };
+            let unavailable_reason = match availability {
+                TradeDestinationAvailability::CurrentLocation => {
+                    Some("Player is already at this system".into())
+                }
+                TradeDestinationAvailability::Available => None,
+                TradeDestinationAvailability::Unreachable => {
+                    Some("No route is available from the player location".into())
+                }
+                TradeDestinationAvailability::Traveling => {
+                    Some("New travel is unavailable while the player is in transit".into())
+                }
+            };
+            TradeMarketComparisonView {
+                system: SystemIdentityView {
+                    id: market.system_id.clone(),
+                    name: market.name.clone(),
+                },
+                local,
+                read_only: true,
+                availability,
+                unavailable_reason,
+                route,
+                market: build_market_rows(session, market),
+            }
+        })
+        .collect::<Vec<_>>();
     let route = if let Some(travel) = &player.travel {
         Some(build_route_view(
             session,
@@ -908,6 +1007,12 @@ fn build_view(
             unavailable_reason: local_trade_unavailable_reason,
             market: local_market,
         },
+        trade_markets,
+        encyclopedia: build_encyclopedia(
+            &snapshot,
+            session.catalog(),
+            snapshot.player_trade_network_access,
+        ),
         dynamics: AggregateDynamicsView {
             stage_occupancy_ticks: snapshot.dynamics_history.stage_occupancy_ticks,
             stage_transitions: snapshot.dynamics_history.stage_transitions,
@@ -915,6 +1020,7 @@ fn build_view(
             population_milestones: snapshot.dynamics_history.population_milestones,
         },
         player: PlayerStatusView {
+            trade_network_access: snapshot.player_trade_network_access,
             location_name: system_names
                 .get(&player.system)
                 .cloned()
@@ -1021,6 +1127,224 @@ fn build_market_rows(
             }
         })
         .collect()
+}
+
+fn build_encyclopedia(
+    snapshot: &game_core::CoreSnapshot,
+    catalog: &game_core::Catalog,
+    trade_network_access: TradeNetworkAccess,
+) -> EncyclopediaView {
+    let goods = catalog
+        .goods
+        .values()
+        .map(|good| {
+            let category = match good.category {
+                game_core::GoodCategory::Energy => "Energy",
+                game_core::GoodCategory::Raw => "Raw",
+                game_core::GoodCategory::Primary => "Primary",
+                game_core::GoodCategory::Secondary => "Secondary",
+            };
+            format!(
+                "{} — {category} good; bootstrap embodied-energy cost {} E per unit. Bootstrap cost seeds cost basis and is not a current market quote.",
+                good.name, good.bootstrap_cost.0
+            )
+        })
+        .collect::<Vec<_>>();
+    let recipe_articles = catalog
+        .recipes
+        .values()
+        .map(|recipe| {
+            let amounts = recipe
+                .inputs
+                .iter()
+                .map(|input| format!("{} {}", input.quantity, good_name(catalog, &input.good)))
+                .collect::<Vec<_>>();
+            let outputs = recipe
+                .outputs
+                .iter()
+                .map(|output| format!("{} {}", output.quantity, good_name(catalog, &output.good)))
+                .collect::<Vec<_>>();
+            let layer = match recipe.layer {
+                game_core::RecipeLayer::Primary => "Primary",
+                game_core::RecipeLayer::Secondary => "Secondary",
+                game_core::RecipeLayer::Tertiary => "Tertiary",
+            };
+            EncyclopediaArticleView {
+                title: recipe.name.clone(),
+                paragraphs: vec![
+                    format!(
+                        "Layer: {layer}. Operating energy: {} E.",
+                        recipe.operating_energy.0
+                    ),
+                    format!(
+                        "Inputs: {}.",
+                        if amounts.is_empty() {
+                            "none".into()
+                        } else {
+                            amounts.join(", ")
+                        }
+                    ),
+                    format!(
+                        "Outputs: {}.",
+                        if outputs.is_empty() {
+                            "none; the process consumes its inputs".into()
+                        } else {
+                            outputs.join(", ")
+                        }
+                    ),
+                ],
+            }
+        })
+        .collect::<Vec<_>>();
+    let investment_facts = snapshot
+        .investment_shapes
+        .iter()
+        .map(|(kind, shape)| {
+            let (name, effect) = match kind {
+                InvestmentKind::Collector => (
+                    "Collector",
+                    format!("adds {} E to base generation per level", shape.effect_per_level),
+                ),
+                InvestmentKind::Storage => (
+                    "Storage",
+                    format!("adds {} E of market storage per level", shape.effect_per_level),
+                ),
+                InvestmentKind::PopulationSupport => (
+                    "Population Support",
+                    format!(
+                        "adds {} to support capacity and {} percentage points to the gated growth-rate bonus per level",
+                        shape.effect_per_level, shape.effect_per_level
+                    ),
+                ),
+                InvestmentKind::RouteSubsidy => (
+                    "Route Subsidy",
+                    format!("adds a {}% funded import premium per level", shape.effect_per_level),
+                ),
+            };
+            format!(
+                "{name} — {}; base cost {} E; cost growth {}%; maximum level {}; cooldown {} ticks; {effect}.",
+                if shape.enabled { "enabled" } else { "disabled" },
+                shape.base_cost.0,
+                shape.cost_growth_percent,
+                shape.maximum_level,
+                shape.cooldown_ticks
+            )
+        })
+        .collect::<Vec<_>>();
+    let (access_name, access_fact) = match trade_network_access {
+        TradeNetworkAccess::Offline => (
+            "Offline",
+            "The player cannot create reservation-backed CommitTrade commitments. Read-only remote market facts, dockside transactions, and direct travel are separate capabilities.",
+        ),
+        TradeNetworkAccess::ReservationContracts => (
+            "Reservation Contracts",
+            "An accepted CommitTrade commitment atomically buys, reserves destination funding, and departs. The current TUI does not expose CommitTrade yet.",
+        ),
+    };
+
+    EncyclopediaView {
+        sections: vec![
+            EncyclopediaSectionView {
+                title: "Worlds & Population".into(),
+                articles: vec![
+                    EncyclopediaArticleView {
+                        title: "Systems and Energy".into(),
+                        paragraphs: vec![
+                            format!(
+                                "The current frontier contains {} systems. Systems have fixed positions and a connected route graph; route distance determines travel ticks and tank-energy burn.",
+                                snapshot.markets.len()
+                            ),
+                            "Each market has one physical Energy stock and a storage capacity. Generation enters that stock; overflow is curtailed. Life support, production, investments, and market settlements use that same stock under their respective reserve rules.".into(),
+                            "Market Energy, trader-tank Energy, and cargo-bay Energy are separate physical stores. Tank Energy pays for local purchases and travel. Cargo-bay Energy occupies cargo capacity and is neither spendable nor burned during travel.".into(),
+                        ],
+                    },
+                    EncyclopediaArticleView {
+                        title: "Brownouts".into(),
+                        paragraphs: vec![
+                            "Brownout state is an ordered ladder: Normal, Throttled, Emergency, and Starvation. Entry and recovery use different runway thresholds and a minimum stage duration, so a stage does not mirror a single stock sample instantly.".into(),
+                            "Throttled reduces industrial throughput. Emergency and Starvation suppress non-survival demand and disable investment spending; configured policy remains stored. Starvation also permits population decline after sufficiency is sampled.".into(),
+                            "Runway is market Energy stock divided by the mandatory life-support Energy obligation for one tick: population multiplied by per-capita life-support burn. It is not a measure of general or current burn.".into(),
+                        ],
+                    },
+                    EncyclopediaArticleView {
+                        title: "Population".into(),
+                        paragraphs: vec![
+                            "Population is integer market state. Current population determines life-support demand, labor throughput, and authored tertiary demand on the following tick.".into(),
+                            "A bounded rolling sufficiency history combines Energy and authored essential-goods supply. Starvation can cause comparatively fast decline. Growth requires sustained sufficient supply under Normal conditions and follows gated logistic growth toward a history-supported carrying capacity.".into(),
+                            "Population has a reference level, carrying capacity, trend, and tier. Fractional growth and decline are retained as deterministic remainders rather than discarded.".into(),
+                        ],
+                    },
+                ],
+            },
+            EncyclopediaSectionView {
+                title: "Goods & Markets".into(),
+                articles: vec![
+                    EncyclopediaArticleView {
+                        title: "Goods".into(),
+                        paragraphs: goods,
+                    },
+                    EncyclopediaArticleView {
+                        title: "Markets and Quotes".into(),
+                        paragraphs: vec![
+                            "Every system market records stock, target, funded demand, embodied unit cost, a market-buy quote, and a market-sell quote for each catalog good.".into(),
+                            "The market-buy quote is the Energy paid by the market for one unit sold into it. The market-sell quote is the Energy charged by the market for one unit bought from it. Quotes can differ by system because stock, target, cost basis, policy, funding, and brownout state differ.".into(),
+                            "Market purchasing power is physical Energy stock after reservation claims, operating reserve, and protected liquidation budget. A reservation claim is not a second physical stockpile.".into(),
+                        ],
+                    },
+                ],
+            },
+            EncyclopediaSectionView {
+                title: "Recipes".into(),
+                articles: if recipe_articles.is_empty() {
+                    vec![EncyclopediaArticleView {
+                        title: "Recipes".into(),
+                        paragraphs: vec!["The current catalog defines no production recipes.".into()],
+                    }]
+                } else {
+                    recipe_articles
+                },
+            },
+            EncyclopediaSectionView {
+                title: "Governance & Trade".into(),
+                articles: vec![
+                    EncyclopediaArticleView {
+                        title: "Governance Policies".into(),
+                        paragraphs: vec![
+                            "A market is governed either by a player authority or autonomously. Player authority permits replacement of the exposed producer margin, operating-reserve horizon, import priorities, and investment allocation. Other pricing, liquidation, and target rules remain core-owned.".into(),
+                            "Producer margin contributes to sustainable asks. Operating-reserve ticks protect Energy needed for operation. Import priorities weight normal import bids relative to asks, subject to processor solvency and available destination funding; they do not scale target deficit or configured demand quantity. Investment allocations divide at most 100 percent among the four investment kinds.".into(),
+                        ],
+                    },
+                    EncyclopediaArticleView {
+                        title: "Investments".into(),
+                        paragraphs: investment_facts,
+                    },
+                    EncyclopediaArticleView {
+                        title: "Traders, Reservations, and Travel".into(),
+                        paragraphs: vec![
+                            "Traders have a location, Energy tank and capacity, cargo bay and capacity, speed, travel-burn rate, refuel policy, ledger, and optional travel plan and reservation.".into(),
+                            "An accepted reservation-backed commitment buys at its origin, claims funded Energy at its destination without creating a second stockpile, and departs as one atomic mutation. Claims refresh in transit and are released on cancellation, expiry, or settlement.".into(),
+                            "Travel follows a route of connected systems. Its displayed required Energy is calculated for the full route from distance and the trader burn rate. Departure burns tank Energy; arrival and reservation settlement occur in later simulation phases.".into(),
+                        ],
+                    },
+                    EncyclopediaArticleView {
+                        title: "Trade Network Access".into(),
+                        paragraphs: vec![
+                            format!("Current player access: {access_name}."),
+                            access_fact.into(),
+                            "NPC commitment planning is internal simulation behavior and does not use the player's access capability.".into(),
+                        ],
+                    },
+                ],
+            },
+        ],
+    }
+}
+
+fn good_name(catalog: &game_core::Catalog, id: &ContentId) -> String {
+    catalog
+        .goods
+        .get(id)
+        .map_or_else(|| "Unknown good".into(), |good| good.name.clone())
 }
 
 fn energy_health(market: &game_core::MarketSnapshot) -> EnergyHealth {
@@ -1334,10 +1658,10 @@ fn reservation_status(status: ReservationStatus) -> &'static str {
 mod tests {
     use super::*;
     use game_core::{
-        EconomyConfig, FleetDynamics, FleetMode, GameDefinition, GoodCategory, GoodDefinition,
-        Governance, InvestmentPolicy, MarketAuthority, MarketPolicy, PopulationState, Position3,
-        RefuelPolicy, SeasonalGenerationState, SourceDefinition, SystemDefinition,
-        TraderDefinition,
+        EconomyConfig, FleetDynamics, FleetMode, GameDefinition, GoodAmount, GoodCategory,
+        GoodDefinition, Governance, InvestmentPolicy, MarketAuthority, MarketPolicy,
+        PopulationState, Position3, RecipeDefinition, RecipeLayer, RecipeOutput, RefuelPolicy,
+        SeasonalGenerationState, SourceDefinition, SystemDefinition, TraderDefinition,
     };
 
     fn id(value: &str) -> ContentId {
@@ -1418,6 +1742,7 @@ mod tests {
             recipes: vec![],
             systems,
             traders,
+            player_trade_network_access: TradeNetworkAccess::Offline,
             fleet: FleetDynamics {
                 mode: Some(FleetMode::Fixed { count: 0 }),
                 ..FleetDynamics::default()
@@ -1626,6 +1951,140 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn trade_comparison_is_remote_read_only_and_does_not_replace_local_action_data() {
+        let mut definition = definition();
+        definition.systems[1].inventory.insert(id("core:ore"), 2);
+        definition.systems[1].targets.insert(id("core:ore"), 25);
+        let handle = spawn(GameSession::new(definition).unwrap());
+        let initial = handle.views.borrow().clone();
+        let local = initial
+            .local_trade
+            .market
+            .iter()
+            .find(|row| row.good_id == id("core:ore"))
+            .unwrap();
+        assert_eq!((local.inventory, local.target), (10, 10));
+
+        let remote = initial
+            .trade_markets
+            .iter()
+            .find(|market| market.system.id == id("core:s1"))
+            .unwrap();
+        let remote_ore = remote
+            .market
+            .iter()
+            .find(|row| row.good_id == id("core:ore"))
+            .unwrap();
+        assert!(remote.read_only);
+        assert!(!remote.local);
+        assert_eq!((remote_ore.inventory, remote_ore.target), (2, 25));
+        assert_ne!(remote_ore.sell_quote, local.sell_quote);
+        assert_eq!(remote.availability, TradeDestinationAvailability::Available);
+        assert_eq!(remote.route.as_ref().unwrap().required_energy, Energy(1));
+
+        handle
+            .request(AppRequest::SelectSystem(id("core:s1")))
+            .await
+            .unwrap();
+        let selected = handle.views.borrow().clone();
+        let still_local = selected
+            .local_trade
+            .market
+            .iter()
+            .find(|row| row.good_id == id("core:ore"))
+            .unwrap();
+        assert_eq!((still_local.inventory, still_local.target), (10, 10));
+        assert!(!selected.player.traveling);
+
+        handle
+            .request(AppRequest::BeginTravel {
+                destination: id("core:s1"),
+            })
+            .await
+            .unwrap();
+        assert!(
+            handle
+                .views
+                .borrow()
+                .trade_markets
+                .iter()
+                .all(|market| market.availability == TradeDestinationAvailability::Traveling)
+        );
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn encyclopedia_resolves_catalog_recipe_and_access_facts() {
+        let mut definition = definition();
+        definition.recipes.push(RecipeDefinition {
+            id: id("core:smelt"),
+            name: "Ore Smelting".into(),
+            layer: RecipeLayer::Primary,
+            inputs: vec![GoodAmount {
+                good: id("core:ore"),
+                quantity: 3,
+            }],
+            outputs: vec![RecipeOutput {
+                good: id(ENERGY_ID),
+                quantity: 2,
+                cost_weight: 1,
+            }],
+            operating_energy: Energy(6),
+            margin_percent: None,
+        });
+        definition.player_trade_network_access = TradeNetworkAccess::ReservationContracts;
+        let handle = spawn(GameSession::new(definition).unwrap());
+        let view = handle.views.borrow().clone();
+        let articles = view
+            .encyclopedia
+            .sections
+            .iter()
+            .flat_map(|section| &section.articles)
+            .collect::<Vec<_>>();
+        let recipe = articles
+            .iter()
+            .find(|article| article.title == "Ore Smelting")
+            .unwrap();
+        let recipe_text = recipe.paragraphs.join(" ");
+        assert!(recipe_text.contains("3 Ore"));
+        assert!(recipe_text.contains("2 Energy"));
+        assert!(!recipe_text.contains("core:"));
+        let access = articles
+            .iter()
+            .find(|article| article.title == "Trade Network Access")
+            .unwrap()
+            .paragraphs
+            .join(" ");
+        assert!(access.contains("Current player access: Reservation Contracts"));
+        assert!(access.contains("atomically buys, reserves destination funding, and departs"));
+        assert!(access.contains("current TUI does not expose CommitTrade yet"));
+
+        let brownouts = articles
+            .iter()
+            .find(|article| article.title == "Brownouts")
+            .unwrap()
+            .paragraphs
+            .join(" ");
+        assert!(brownouts.contains(
+            "market Energy stock divided by the mandatory life-support Energy obligation"
+        ));
+        assert!(brownouts.contains("not a measure of general or current burn"));
+
+        let governance = articles
+            .iter()
+            .find(|article| article.title == "Governance Policies")
+            .unwrap()
+            .paragraphs
+            .join(" ");
+        assert!(governance.contains("weight normal import bids relative to asks"));
+        assert!(
+            governance.contains("subject to processor solvency and available destination funding")
+        );
+        assert!(governance.contains("do not scale target deficit or configured demand quantity"));
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn views_project_seasonal_base_effective_phase_and_turning_point() {
         let mut definition = definition();
         definition.systems[0].seasonal_generation.amplitude_percent = 20;
@@ -1648,8 +2107,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn views_project_trade_network_access() {
+        let mut definition = definition();
+        definition.player_trade_network_access = TradeNetworkAccess::ReservationContracts;
+        let handle = spawn(GameSession::new(definition).unwrap());
+        assert_eq!(
+            handle.views.borrow().player.trade_network_access,
+            TradeNetworkAccess::ReservationContracts
+        );
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn actor_dispatches_supported_economy_commands_without_crossing_owner_boundary() {
-        let session = GameSession::new(definition()).unwrap();
+        let mut definition = definition();
+        definition.player_trade_network_access = TradeNetworkAccess::ReservationContracts;
+        let session = GameSession::new(definition).unwrap();
         let handle = spawn(session);
         handle
             .request(AppRequest::DepositTank { amount: Energy(1) })
