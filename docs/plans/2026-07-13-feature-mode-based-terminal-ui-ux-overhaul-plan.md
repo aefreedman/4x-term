@@ -473,7 +473,7 @@ Specific automated coverage:
 ### Documentation to update
 
 - [x] `README.md` — replace the old Tab/global shortcut list, document activities, contextual controls, and `80x30`/`160x45` cell-grid behavior.
-- [x] `docs/initial-prototype.md` — replace the active TUI layout/control requirements and acceptance steps so they no longer require pane focus or the all-at-once dashboard; retain the no-spatial-map scope for this pass.
+- [x] `docs/initial-prototype.md` — intentionally left unchanged; this legacy prototype specification is no longer maintained.
 - [x] `CHANGELOG.md` — add the user-visible mode-based UX replacement under `Unreleased`.
 - [x] `setup/Brewfile`, `setup/doctor.sh`, and `setup/README.md` — declare and verify `ripgrep`, and document exporting `$HOME/.cargo/bin` when the shell does not already include it.
 - [x] `docs/architecture.md` — update only if the final application-view grouping adds a durable contract not already covered by immutable frontend projections and TUI-local state.

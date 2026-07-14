@@ -846,17 +846,17 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
                     |reason| format!(")uy disabled: {} · ", action_reason(&reason)),
                 )));
                 spans.push(Span::raw("("));
-                spans.push(shortcut_span("X"));
+                spans.push(shortcut_span("S"));
                 spans.push(Span::raw(sell_reason.map_or_else(
-                    || ") sell · ".into(),
-                    |reason| format!(") sell disabled: {} · ", action_reason(&reason)),
+                    || ")ell · ".into(),
+                    |reason| format!(")ell disabled: {} · ", action_reason(&reason)),
                 )));
             } else {
                 spans.push(Span::raw("("));
                 spans.push(shortcut_span("B"));
                 spans.push(Span::raw(")uy / ("));
-                spans.push(shortcut_span("X"));
-                spans.push(Span::raw(") sell disabled: no good · "));
+                spans.push(shortcut_span("S"));
+                spans.push(Span::raw(")ell disabled: no good · "));
             }
             spans.push(Span::raw("("));
             spans.push(shortcut_span("T"));
@@ -909,7 +909,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
     spans.push(Span::raw(" · "));
     spans.push(shortcut_span("Space"));
     spans.push(Span::raw(" run · "));
-    spans.push(shortcut_span("s"));
+    spans.push(shortcut_span("F5"));
     spans.push(Span::raw(" step · "));
     spans.push(shortcut_span("r"));
     spans.push(Span::raw(" rate · "));
@@ -1927,9 +1927,9 @@ fn render_trade_action(
                 Line::from(vec![
                     Span::raw("("),
                     shortcut_span("B"),
-                    Span::raw(")uy unavailable · sell ("),
-                    shortcut_span("X"),
-                    Span::raw(") unavailable"),
+                    Span::raw(")uy unavailable · ("),
+                    shortcut_span("S"),
+                    Span::raw(")ell unavailable"),
                 ]),
             ]
         },
@@ -1963,9 +1963,9 @@ fn render_trade_action(
                             .map_or_else(|| "overflow".into(), |total| format!("{} E", total.0))
                     )),
                     mnemonic_line(
-                        "Sell ",
-                        "X",
-                        format!(" {}", availability_label(sell_reason.as_deref())),
+                        "",
+                        "S",
+                        format!("ell {}", availability_label(sell_reason.as_deref())),
                     ),
                 ]
             } else {
@@ -2004,9 +2004,9 @@ fn render_trade_action(
                         format!("uy {}", availability_label(buy_reason.as_deref())),
                     ),
                     mnemonic_line(
-                        "Sell ",
-                        "X",
-                        format!(" {}", availability_label(sell_reason.as_deref())),
+                        "",
+                        "S",
+                        format!("ell {}", availability_label(sell_reason.as_deref())),
                     ),
                 ]
             }
@@ -2540,9 +2540,9 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
             shortcut_span("N"),
             Span::raw(") quantity · ("),
             shortcut_span("B"),
-            Span::raw(")uy · sell ("),
-            shortcut_span("X"),
-            Span::raw(") · ("),
+            Span::raw(")uy · ("),
+            shortcut_span("S"),
+            Span::raw(")ell · ("),
             shortcut_span("T"),
             Span::raw(")ravel/"),
             shortcut_span("Enter"),
@@ -2587,7 +2587,7 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
             Span::raw("Global: "),
             shortcut_span("Space"),
             Span::raw(" pause/run · "),
-            shortcut_span("S"),
+            shortcut_span("F5"),
             Span::raw(" step · "),
             shortcut_span("R"),
             Span::raw(" rate · "),
@@ -3801,7 +3801,7 @@ mod tests {
         let mut ui = UiState::default();
         let mut view = app.views.borrow().clone();
 
-        handle_key(KeyCode::Char('s'), &mut ui, &view, &app)
+        handle_key(KeyCode::F(5), &mut ui, &view, &app)
             .await
             .unwrap();
         view = app.views.borrow().clone();
@@ -3841,7 +3841,7 @@ mod tests {
             .unwrap();
         view = app.views.borrow().clone();
         assert_eq!(view.player.cargo_used, 2);
-        handle_key(KeyCode::Char('x'), &mut ui, &view, &app)
+        handle_key(KeyCode::Char('s'), &mut ui, &view, &app)
             .await
             .unwrap();
         view = app.views.borrow().clone();

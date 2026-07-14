@@ -78,7 +78,7 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
         KeyCode::F(4) => return InputAction::Switch(Activity::Intelligence),
         KeyCode::Char('q') => return InputAction::Quit,
         KeyCode::Char(' ') => return InputAction::ToggleRun,
-        KeyCode::Char('s') => return InputAction::Step,
+        KeyCode::F(5) => return InputAction::Step,
         KeyCode::Char('r') => return InputAction::CycleTickRate,
         KeyCode::Char('?') => return InputAction::ToggleHelp,
         _ => {}
@@ -99,7 +99,7 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
             KeyCode::Down | KeyCode::Char('j') => InputAction::MoveDown,
             KeyCode::Char('n') => InputAction::OpenQuantity,
             KeyCode::Char('b') => InputAction::Buy,
-            KeyCode::Char('x') => InputAction::Sell,
+            KeyCode::Char('s') => InputAction::Sell,
             KeyCode::Char('t') | KeyCode::Enter => InputAction::BeginTravel,
             KeyCode::Esc => InputAction::ClearContext,
             _ => InputAction::None,
