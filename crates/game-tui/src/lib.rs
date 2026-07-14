@@ -1,5 +1,14 @@
 //! Ratatui input/render adapter. This crate never accesses the ECS world.
 
+pub mod input;
+pub mod state;
+
+pub use input::{InputAction, route_key};
+pub use state::{
+    Activity, InputLayer, LayoutClass, SortDirection, SystemOrderItem, SystemSortKey, UiState,
+    classify_layout, order_systems,
+};
+
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind};
 use crossterm::execute;
@@ -17,56 +26,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use std::io::stdout;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Focus {
-    Systems,
-    Governor,
-    Market,
-    Trade,
-    Events,
-}
-
-impl Focus {
-    fn next(self) -> Self {
-        match self {
-            Self::Systems => Self::Governor,
-            Self::Governor => Self::Market,
-            Self::Market => Self::Trade,
-            Self::Trade => Self::Events,
-            Self::Events => Self::Systems,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct UiState {
-    pub focus: Focus,
-    pub system_index: usize,
-    pub market_index: usize,
-    pub investment_index: usize,
-    pub event_scroll: u16,
-    pub trade_quantity: u32,
-    pub quantity_input: Option<String>,
-    pub help_visible: bool,
-    pub message: String,
-}
-
-impl Default for UiState {
-    fn default() -> Self {
-        Self {
-            focus: Focus::Systems,
-            system_index: 0,
-            market_index: 0,
-            investment_index: 0,
-            event_scroll: 0,
-            trade_quantity: 1,
-            quantity_input: None,
-            help_visible: false,
-            message: String::new(),
-        }
-    }
-}
 
 trait TerminalOps {
     fn enable_raw(&mut self) -> Result<()>;
@@ -209,17 +168,41 @@ async fn handle_key(
             KeyCode::Enter => {
                 ui.trade_quantity = input.parse::<u32>().unwrap_or(1).max(1);
                 ui.quantity_input = None;
+                ui.input_layer = InputLayer::Root;
             }
-            KeyCode::Esc => ui.quantity_input = None,
+            KeyCode::Esc => {
+                ui.quantity_input = None;
+                ui.input_layer = InputLayer::Root;
+            }
             _ => {}
+        }
+        return Ok(false);
+    }
+    if ui.input_layer == InputLayer::Help {
+        if matches!(code, KeyCode::Esc | KeyCode::Char('?')) {
+            ui.help_visible = false;
+            ui.input_layer = InputLayer::Root;
         }
         return Ok(false);
     }
     match code {
         KeyCode::Char('q') => return Ok(true),
-        KeyCode::Tab => ui.focus = ui.focus.next(),
-        KeyCode::Char('?') => ui.help_visible = !ui.help_visible,
-        KeyCode::Char('n') => ui.quantity_input = Some(String::new()),
+        KeyCode::F(1) => ui.activity = Activity::Systems,
+        KeyCode::F(2) => ui.activity = Activity::Trade,
+        KeyCode::F(3) => ui.activity = Activity::Governance,
+        KeyCode::F(4) => ui.activity = Activity::Intelligence,
+        KeyCode::Char('?') => {
+            ui.help_visible = !ui.help_visible;
+            ui.input_layer = if ui.help_visible {
+                InputLayer::Help
+            } else {
+                InputLayer::Root
+            };
+        }
+        KeyCode::Char('n') if ui.activity == Activity::Trade => {
+            ui.quantity_input = Some(String::new());
+            ui.input_layer = InputLayer::Quantity;
+        }
         KeyCode::Up | KeyCode::Char('k') => move_selection(ui, view, -1),
         KeyCode::Down | KeyCode::Char('j') => move_selection(ui, view, 1),
         KeyCode::Char(' ') => {
@@ -237,11 +220,11 @@ async fn handle_key(
             app.request(AppRequest::SetTickRate(view.tick_rate.next()))
                 .await?;
         }
-        KeyCode::Char('[') | KeyCode::Char(']') => {
-            if !view.governor.governed {
+        KeyCode::Char('[') | KeyCode::Char(']') if ui.activity == Activity::Governance => {
+            if !view.inspection.governor.governed {
                 ui.message = "Selected market is read-only".into();
             } else {
-                let mut policy = view.governor.policy.clone();
+                let mut policy = view.inspection.governor.policy.clone();
                 policy.operating_reserve_ticks = if code == KeyCode::Char(']') {
                     policy.operating_reserve_ticks.saturating_add(1)
                 } else {
@@ -258,11 +241,11 @@ async fn handle_key(
                 }
             }
         }
-        KeyCode::Char(',') | KeyCode::Char('.') => {
-            if !view.governor.governed {
+        KeyCode::Char(',') | KeyCode::Char('.') if ui.activity == Activity::Governance => {
+            if !view.inspection.governor.governed {
                 ui.message = "Selected market is read-only".into();
             } else {
-                let mut policy = view.governor.policy.clone();
+                let mut policy = view.inspection.governor.policy.clone();
                 policy.producer_margin_percent = if code == KeyCode::Char('.') {
                     policy.producer_margin_percent.saturating_add(1).min(10_000)
                 } else {
@@ -279,12 +262,14 @@ async fn handle_key(
                 }
             }
         }
-        KeyCode::Char('i') | KeyCode::Char('I') if !view.market.is_empty() => {
-            if !view.governor.governed {
+        KeyCode::Char('i') | KeyCode::Char('I')
+            if ui.activity == Activity::Governance && !view.inspection.market.is_empty() =>
+        {
+            if !view.inspection.governor.governed {
                 ui.message = "Selected market is read-only".into();
             } else {
-                let mut policy = view.governor.policy.clone();
-                let good = view.market[ui.market_index].good_id.clone();
+                let mut policy = view.inspection.governor.policy.clone();
+                let good = view.inspection.market[ui.market_index].good_id.clone();
                 let current = policy.import_priorities.get(&good).copied().unwrap_or(100);
                 let next = if code == KeyCode::Char('i') {
                     current.saturating_add(10).min(10_000)
@@ -304,13 +289,14 @@ async fn handle_key(
             }
         }
         KeyCode::Char('-') | KeyCode::Char('+') | KeyCode::Char('=')
-            if !view.governor.investments.is_empty() =>
+            if ui.activity == Activity::Governance
+                && !view.inspection.governor.investments.is_empty() =>
         {
-            if !view.governor.governed {
+            if !view.inspection.governor.governed {
                 ui.message = "Selected market is read-only".into();
             } else {
-                let investment = &view.governor.investments[ui.investment_index];
-                let mut policy = view.governor.investment_policy.clone();
+                let investment = &view.inspection.governor.investments[ui.investment_index];
+                let mut policy = view.inspection.governor.investment_policy.clone();
                 let current = policy
                     .allocation_percent
                     .get(&investment.kind)
@@ -342,8 +328,18 @@ async fn handle_key(
                 }
             }
         }
-        KeyCode::Char('b') if !view.market.is_empty() => {
-            let good = view.market[ui.market_index].good_id.clone();
+        KeyCode::Char('b')
+            if ui.activity == Activity::Trade && !view.local_trade.market.is_empty() =>
+        {
+            if !view.local_trade.available {
+                ui.message = view
+                    .local_trade
+                    .unavailable_reason
+                    .clone()
+                    .unwrap_or_else(|| "Trading is unavailable".into());
+                return Ok(false);
+            }
+            let good = view.local_trade.market[ui.market_index].good_id.clone();
             if let Err(error) = app
                 .request(AppRequest::Buy {
                     good,
@@ -354,8 +350,18 @@ async fn handle_key(
                 ui.message = error.to_string();
             }
         }
-        KeyCode::Char('x') if !view.market.is_empty() => {
-            let good = view.market[ui.market_index].good_id.clone();
+        KeyCode::Char('x')
+            if ui.activity == Activity::Trade && !view.local_trade.market.is_empty() =>
+        {
+            if !view.local_trade.available {
+                ui.message = view
+                    .local_trade
+                    .unavailable_reason
+                    .clone()
+                    .unwrap_or_else(|| "Trading is unavailable".into());
+                return Ok(false);
+            }
+            let good = view.local_trade.market[ui.market_index].good_id.clone();
             if let Err(error) = app
                 .request(AppRequest::Sell {
                     good,
@@ -366,7 +372,7 @@ async fn handle_key(
                 ui.message = error.to_string();
             }
         }
-        KeyCode::Enter if !view.systems.is_empty() => {
+        KeyCode::Enter if ui.activity == Activity::Systems && !view.systems.is_empty() => {
             let destination = view.systems[ui.system_index].id.clone();
             if let Err(error) = app.request(AppRequest::BeginTravel { destination }).await {
                 ui.message = error.to_string();
@@ -374,7 +380,7 @@ async fn handle_key(
         }
         _ => {}
     }
-    if matches!(ui.focus, Focus::Systems) && !view.systems.is_empty() {
+    if ui.activity == Activity::Systems && !view.systems.is_empty() {
         app.request(AppRequest::SelectSystem(
             view.systems[ui.system_index].id.clone(),
         ))
@@ -384,16 +390,27 @@ async fn handle_key(
 }
 
 fn move_selection(ui: &mut UiState, view: &ApplicationView, delta: isize) {
-    match ui.focus {
-        Focus::Systems => ui.system_index = shifted(ui.system_index, view.systems.len(), delta),
-        Focus::Governor => {
-            ui.investment_index =
-                shifted(ui.investment_index, view.governor.investments.len(), delta)
+    match ui.activity {
+        Activity::Systems => {
+            ui.system_index = shifted(ui.system_index, view.systems.len(), delta);
+            ui.selected_system = view
+                .systems
+                .get(ui.system_index)
+                .map(|system| system.id.clone());
         }
-        Focus::Market | Focus::Trade => {
-            ui.market_index = shifted(ui.market_index, view.market.len(), delta)
+        Activity::Governance => {
+            ui.investment_index = shifted(
+                ui.investment_index,
+                view.inspection.governor.investments.len(),
+                delta,
+            )
         }
-        Focus::Events => ui.event_scroll = ui.event_scroll.saturating_add_signed(delta as i16),
+        Activity::Trade => {
+            ui.market_index = shifted(ui.market_index, view.local_trade.market.len(), delta);
+        }
+        Activity::Intelligence => {
+            ui.event_scroll = ui.event_scroll.saturating_add_signed(delta as i16)
+        }
     }
 }
 
@@ -407,10 +424,24 @@ fn shifted(current: usize, len: usize, delta: isize) -> usize {
 
 fn clamp_selection(ui: &mut UiState, view: &ApplicationView) {
     ui.system_index = ui.system_index.min(view.systems.len().saturating_sub(1));
-    ui.market_index = ui.market_index.min(view.market.len().saturating_sub(1));
+    if let Some(row) = ui.selected_system.as_ref().and_then(|selected| {
+        view.systems
+            .iter()
+            .position(|system| &system.id == selected)
+    }) {
+        ui.system_index = row;
+    } else {
+        ui.selected_system = view
+            .systems
+            .get(ui.system_index)
+            .map(|system| system.id.clone());
+    }
+    ui.market_index = ui
+        .market_index
+        .min(view.local_trade.market.len().saturating_sub(1));
     ui.investment_index = ui
         .investment_index
-        .min(view.governor.investments.len().saturating_sub(1));
+        .min(view.inspection.governor.investments.len().saturating_sub(1));
 }
 
 pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
@@ -501,8 +532,8 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     )
 }
 
-fn focused(ui: &UiState, focus: Focus) -> Style {
-    if ui.focus == focus {
+fn focused(ui: &UiState, activity: Activity) -> Style {
+    if ui.activity == activity {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default()
@@ -539,7 +570,7 @@ fn render_systems(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui:
             Block::default()
                 .borders(Borders::ALL)
                 .title("Systems")
-                .border_style(focused(ui, Focus::Systems)),
+                .border_style(focused(ui, Activity::Systems)),
         ),
         area,
     );
@@ -570,7 +601,7 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
             )),
         ]
     });
-    let population = &view.population;
+    let population = &view.inspection.population;
     let recent_trajectory = population
         .sufficiency_trajectory
         .iter()
@@ -580,7 +611,7 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
         .map(u32::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let energy = &view.market_energy;
+    let energy = &view.inspection.market_energy;
     lines.push(Line::from(format!(
         "Energy {}/{} · {} · {} · {}t runway",
         energy.stock.0,
@@ -633,24 +664,26 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
     )));
     lines.push(Line::from(format!(
         "Governor: {} · reserve {}t · margin {}% · tier {} · ladder {:?}/{}",
-        if view.governor.governed {
+        if view.inspection.governor.governed {
             "PLAYER CONTROL"
         } else {
             "READ-ONLY AI"
         },
-        view.governor.policy.operating_reserve_ticks,
-        view.governor.policy.producer_margin_percent,
-        view.governor.population_tier,
-        view.governor.ladder_occupancy_ticks,
-        view.governor.ladder_transitions,
+        view.inspection.governor.policy.operating_reserve_ticks,
+        view.inspection.governor.policy.producer_margin_percent,
+        view.inspection.governor.population_tier,
+        view.inspection.governor.ladder_occupancy_ticks,
+        view.inspection.governor.ladder_transitions,
     )));
     let priorities = view
+        .inspection
         .governor
         .policy
         .import_priorities
         .iter()
         .filter_map(|(good, percent)| {
-            view.market
+            view.inspection
+                .market
                 .iter()
                 .find(|row| &row.good_id == good)
                 .map(|row| format!("{} {}%", row.name, percent))
@@ -666,6 +699,7 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
         }
     )));
     let investment_lines = view
+        .inspection
         .governor
         .investments
         .iter()
@@ -688,8 +722,8 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
     lines.push(Line::from(format!("Investments: {investment_lines}")));
     lines.push(Line::from(format!(
         "Route subsidy {}% · {}",
-        view.governor.route_subsidy_percent,
-        if view.governor.route_subsidy_active {
+        view.inspection.governor.route_subsidy_percent,
+        if view.inspection.governor.route_subsidy_active {
             "active"
         } else {
             "suppressed/inactive"
@@ -729,7 +763,7 @@ fn render_details(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, _ui
         Paragraph::new(lines).wrap(Wrap { trim: true }).block(
             Block::bordered()
                 .title("System / Route / Governor")
-                .border_style(focused(_ui, Focus::Governor)),
+                .border_style(focused(_ui, Activity::Governance)),
         ),
         area,
     );
@@ -780,22 +814,27 @@ fn format_route_chain(route: &game_app::RouteView) -> String {
 }
 
 fn render_market(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: &UiState) {
-    let rows = view.market.iter().enumerate().map(|(index, row)| {
-        Row::new(vec![
-            Cell::from(row.name.clone()),
-            Cell::from(row.inventory.to_string()),
-            Cell::from(row.target.to_string()),
-            Cell::from(row.unit_cost.0.to_string()),
-            Cell::from(row.funded_demand.to_string()),
-            Cell::from(format!("{} E", row.buy_quote.0)),
-            Cell::from(format!("{} E", row.sell_quote.0)),
-        ])
-        .style(if index == ui.market_index {
-            Style::default().bg(Color::DarkGray)
-        } else {
-            Style::default()
-        })
-    });
+    let rows = view
+        .local_trade
+        .market
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            Row::new(vec![
+                Cell::from(row.name.clone()),
+                Cell::from(row.inventory.to_string()),
+                Cell::from(row.target.to_string()),
+                Cell::from(row.unit_cost.0.to_string()),
+                Cell::from(row.funded_demand.to_string()),
+                Cell::from(format!("{} E", row.buy_quote.0)),
+                Cell::from(format!("{} E", row.sell_quote.0)),
+            ])
+            .style(if index == ui.market_index {
+                Style::default().bg(Color::DarkGray)
+            } else {
+                Style::default()
+            })
+        });
     let header = Row::new([
         "Good",
         "Stock",
@@ -822,8 +861,16 @@ fn render_market(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Market")
-            .border_style(focused(ui, Focus::Market)),
+            .title(format!(
+                "Local Market · {}{}",
+                view.local_trade.system.name,
+                if view.local_trade.available {
+                    ""
+                } else {
+                    " · UNAVAILABLE"
+                }
+            ))
+            .border_style(focused(ui, Activity::Trade)),
     );
     frame.render_widget(table, area);
 }
@@ -872,7 +919,7 @@ fn render_player(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
             Block::default()
                 .borders(Borders::ALL)
                 .title("Player / Trade")
-                .border_style(focused(ui, Focus::Trade)),
+                .border_style(focused(ui, Activity::Trade)),
         ),
         area,
     );
@@ -887,15 +934,14 @@ fn render_events(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
     let end = (start + visible).min(view.events.len());
     let text = view.events[start..end]
         .iter()
-        .cloned()
-        .map(Line::from)
+        .map(|event| Line::from(event.text.clone()))
         .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(text).block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Events")
-                .border_style(focused(ui, Focus::Events)),
+                .border_style(focused(ui, Activity::Intelligence)),
         ),
         area,
     );
@@ -907,8 +953,9 @@ mod tests {
     use game_app::{
         AggregateDynamicsView, CargoItemView, ConnectionView, EnergyHealth,
         GovernorInvestmentPolicy, GovernorMarketPolicy, GovernorView, InvestmentView,
-        MarketEnergyView, MarketRow, PlayerStatusView, PopulationView, RouteLegView, RouteView,
-        SeasonalGenerationView, SystemListItem, TickRate,
+        LocalTradeView, MarketEnergyView, MarketRow, PlayerStatusView, PopulationView,
+        PresentationEvent, RouteLegView, RouteView, SeasonalGenerationView, SystemIdentityView,
+        SystemInspectionView, SystemListItem, TickRate,
     };
     use game_core::{
         BrownoutStage, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetDynamics, FleetMode,
@@ -1046,38 +1093,118 @@ mod tests {
     }
 
     fn test_view() -> ApplicationView {
+        let system = SystemIdentityView {
+            id: id("core:s0"),
+            name: "Aster Reach".into(),
+        };
+        let population = PopulationView {
+            current: 5,
+            reference: 5,
+            carrying_capacity: 6,
+            trend: PopulationTrend::Growing,
+            tier: 2,
+            sufficiency_average_percent: 94,
+            sufficiency_trajectory: vec![90, 94, 98],
+            settled_changes: 1,
+        };
+        let season = SeasonalGenerationView {
+            base_output: Energy(40),
+            effective_output: Energy(32),
+            phase_ticks: 0,
+            period_ticks: 20,
+            trend: SeasonalTrend::Rising,
+            ticks_until_turning_point: 10,
+            next_turning_point_tick: Some(10),
+        };
+        let market_energy = MarketEnergyView {
+            stock: Energy(800),
+            capacity: Energy(1_000),
+            reserved_claims: Energy(20),
+            operating_reserve: Energy(100),
+            protected_liquidation_budget: Energy(50),
+            unreserved_purchasing_energy: Energy(630),
+            generated: Energy(40),
+            burned: Energy(25),
+            curtailed: Energy(0),
+            unsupplied_life_support: Energy(0),
+            bootstrap_risk_acknowledged: false,
+            health: EnergyHealth::Healthy,
+            brownout_stage: BrownoutStage::Normal,
+            runway_ticks: 80,
+            seasonal_generation: season,
+        };
+        let market = vec![MarketRow {
+            good_id: id("core:ore"),
+            name: "Ore".into(),
+            inventory: 10,
+            target: 10,
+            buy_quote: Energy(9),
+            sell_quote: Energy(11),
+            unit_cost: Energy(8),
+            funded_demand: 3,
+        }];
+        let governor = GovernorView {
+            governed: true,
+            policy: GovernorMarketPolicy {
+                producer_margin_percent: 15,
+                operating_reserve_ticks: 3,
+                import_priorities: BTreeMap::new(),
+            },
+            investment_policy: GovernorInvestmentPolicy {
+                allocation_percent: BTreeMap::from([
+                    (InvestmentKind::Collector, 30),
+                    (InvestmentKind::Storage, 25),
+                    (InvestmentKind::PopulationSupport, 25),
+                    (InvestmentKind::RouteSubsidy, 20),
+                ]),
+            },
+            investments: [
+                InvestmentKind::Collector,
+                InvestmentKind::Storage,
+                InvestmentKind::PopulationSupport,
+                InvestmentKind::RouteSubsidy,
+            ]
+            .into_iter()
+            .map(|kind| InvestmentView {
+                kind,
+                allocation_percent: match kind {
+                    InvestmentKind::Collector => 30,
+                    InvestmentKind::Storage | InvestmentKind::PopulationSupport => 25,
+                    InvestmentKind::RouteSubsidy => 20,
+                },
+                level: u32::from(kind == InvestmentKind::RouteSubsidy),
+                maximum_level: 4,
+                next_cost: Some(Energy(300)),
+                cooldown_until: 0,
+                status: InvestmentStatus::Ready { cost: Energy(300) },
+                effect_per_level: 10,
+            })
+            .collect(),
+            route_subsidy_percent: 10,
+            route_subsidy_active: true,
+            ladder_occupancy_ticks: [10, 2, 1, 0],
+            ladder_transitions: 3,
+            population_tier: 2,
+        };
         ApplicationView {
             tick: 0,
             run_state: RunState::Paused,
             tick_rate: TickRate::Normal,
             systems: vec![SystemListItem {
-                id: id("core:s0"),
+                id: system.id.clone(),
                 name: "Aster".into(),
                 coordinates: (0.0, 0.0, 0.0),
-                population: PopulationView {
-                    current: 5,
-                    reference: 5,
-                    carrying_capacity: 6,
-                    trend: PopulationTrend::Growing,
-                    tier: 2,
-                    sufficiency_average_percent: 94,
-                    sufficiency_trajectory: vec![90, 94, 98],
-                    settled_changes: 1,
-                },
+                player_location: true,
+                player_governed: true,
+                route_distance_from_player: Some(0.0),
+                route_ticks_from_player: Some(0),
+                population: population.clone(),
                 energy_stock: Energy(800),
                 energy_capacity: Energy(1_000),
                 health: EnergyHealth::Healthy,
                 brownout_stage: BrownoutStage::Normal,
                 runway_ticks: 80,
-                seasonal_generation: SeasonalGenerationView {
-                    base_output: Energy(40),
-                    effective_output: Energy(32),
-                    phase_ticks: 0,
-                    period_ticks: 20,
-                    trend: SeasonalTrend::Rising,
-                    ticks_until_turning_point: 10,
-                    next_turning_point_tick: Some(10),
-                },
+                seasonal_generation: season,
                 connections: vec![ConnectionView {
                     system_id: id("core:s1"),
                     system_name: "Brasshaven".into(),
@@ -1085,42 +1212,22 @@ mod tests {
                     travel_ticks: 4,
                 }],
             }],
-            selected_system: id("core:s0"),
+            selected_system: system.id.clone(),
             selected_route: None,
-            market_energy: MarketEnergyView {
-                stock: Energy(800),
-                capacity: Energy(1_000),
-                reserved_claims: Energy(20),
-                operating_reserve: Energy(100),
-                protected_liquidation_budget: Energy(50),
-                unreserved_purchasing_energy: Energy(630),
-                generated: Energy(40),
-                burned: Energy(25),
-                curtailed: Energy(0),
-                unsupplied_life_support: Energy(0),
-                bootstrap_risk_acknowledged: false,
-                health: EnergyHealth::Healthy,
-                brownout_stage: BrownoutStage::Normal,
-                runway_ticks: 80,
-                seasonal_generation: SeasonalGenerationView {
-                    base_output: Energy(40),
-                    effective_output: Energy(32),
-                    phase_ticks: 0,
-                    period_ticks: 20,
-                    trend: SeasonalTrend::Rising,
-                    ticks_until_turning_point: 10,
-                    next_turning_point_tick: Some(10),
-                },
+            governed_system: Some(system.clone()),
+            inspection: SystemInspectionView {
+                system: system.clone(),
+                read_only_market: false,
+                market_energy,
+                population,
+                market: market.clone(),
+                governor,
             },
-            population: PopulationView {
-                current: 5,
-                reference: 5,
-                carrying_capacity: 6,
-                trend: PopulationTrend::Growing,
-                tier: 2,
-                sufficiency_average_percent: 94,
-                sufficiency_trajectory: vec![90, 94, 98],
-                settled_changes: 1,
+            local_trade: LocalTradeView {
+                system,
+                available: true,
+                unavailable_reason: None,
+                market,
             },
             dynamics: AggregateDynamicsView {
                 stage_occupancy_ticks: [10, 2, 1, 0],
@@ -1128,16 +1235,6 @@ mod tests {
                 population_changes: 1,
                 population_milestones: 1,
             },
-            market: vec![MarketRow {
-                good_id: id("core:ore"),
-                name: "Ore".into(),
-                inventory: 10,
-                target: 10,
-                buy_quote: Energy(9),
-                sell_quote: Energy(11),
-                unit_cost: Energy(8),
-                funded_demand: 3,
-            }],
             player: PlayerStatusView {
                 location: id("core:s0"),
                 location_name: "Aster Reach".into(),
@@ -1166,53 +1263,6 @@ mod tests {
                 traveling: false,
             },
             fleet: game_app::FleetView::default(),
-            governor: GovernorView {
-                governed: true,
-                policy: GovernorMarketPolicy {
-                    producer_margin_percent: 15,
-                    operating_reserve_ticks: 3,
-                    import_priorities: BTreeMap::new(),
-                },
-                investment_policy: GovernorInvestmentPolicy {
-                    allocation_percent: BTreeMap::from([
-                        (InvestmentKind::Collector, 30),
-                        (InvestmentKind::Storage, 25),
-                        (InvestmentKind::PopulationSupport, 25),
-                        (InvestmentKind::RouteSubsidy, 20),
-                    ]),
-                },
-                investments: [
-                    InvestmentKind::Collector,
-                    InvestmentKind::Storage,
-                    InvestmentKind::PopulationSupport,
-                    InvestmentKind::RouteSubsidy,
-                ]
-                .into_iter()
-                .map(|kind| InvestmentView {
-                    kind,
-                    allocation_percent: match kind {
-                        InvestmentKind::Collector => 30,
-                        InvestmentKind::Storage | InvestmentKind::PopulationSupport => 25,
-                        InvestmentKind::RouteSubsidy => 20,
-                    },
-                    level: if kind == InvestmentKind::RouteSubsidy {
-                        1
-                    } else {
-                        0
-                    },
-                    maximum_level: 4,
-                    next_cost: Some(Energy(300)),
-                    cooldown_until: 0,
-                    status: InvestmentStatus::Ready { cost: Energy(300) },
-                    effect_per_level: 10,
-                })
-                .collect(),
-                route_subsidy_percent: 10,
-                route_subsidy_active: true,
-                ladder_occupancy_ticks: [10, 2, 1, 0],
-                ladder_transitions: 3,
-                population_tier: 2,
-            },
             events: vec![],
         }
     }
@@ -1293,9 +1343,9 @@ mod tests {
             let mut view = test_view();
             view.systems[0].energy_stock = stock;
             view.systems[0].health = health;
-            view.market_energy.stock = stock;
-            view.market_energy.health = health;
-            view.market_energy.unsupplied_life_support = deficit;
+            view.inspection.market_energy.stock = stock;
+            view.inspection.market_energy.health = health;
+            view.inspection.market_energy.unsupplied_life_support = deficit;
             let rendered = rendered_view(&view);
             assert!(
                 rendered.contains(&format!("Energy {}/1000 · {label}", stock.0)),
@@ -1315,30 +1365,36 @@ mod tests {
         ] {
             let mut view = test_view();
             view.systems[0].brownout_stage = stage;
-            view.market_energy.brownout_stage = stage;
-            view.market_energy.runway_ticks = match stage {
+            view.inspection.market_energy.brownout_stage = stage;
+            view.inspection.market_energy.runway_ticks = match stage {
                 BrownoutStage::Normal => 80,
                 BrownoutStage::Throttled => 12,
                 BrownoutStage::Emergency => 6,
                 BrownoutStage::Starvation => 0,
             };
-            view.market[0].buy_quote = if stage >= BrownoutStage::Emergency {
+            view.local_trade.market[0].buy_quote = if stage >= BrownoutStage::Emergency {
                 Energy::ZERO
             } else {
                 Energy(9)
             };
-            view.events = vec![format!(
-                "Aster Reach brownout stage Normal → {} at tick 7 ({} ticks runway)",
-                stage.label(),
-                view.market_energy.runway_ticks
-            )];
+            view.events = vec![PresentationEvent {
+                sequence: 1,
+                text: format!(
+                    "Aster Reach brownout stage Normal → {} at tick 7 ({} ticks runway)",
+                    stage.label(),
+                    view.inspection.market_energy.runway_ticks
+                ),
+            }];
             let rendered = rendered_view(&view);
             assert!(
                 rendered.contains(&format!("· {} ·", stage.label())),
                 "missing stage {}",
                 stage.label()
             );
-            assert!(rendered.contains(&format!("{}t runway", view.market_energy.runway_ticks)));
+            assert!(rendered.contains(&format!(
+                "{}t runway",
+                view.inspection.market_energy.runway_ticks
+            )));
             assert!(rendered.contains(&format!("Normal → {}", stage.label())));
             assert!(rendered.contains("Season 40/32 base/effective"));
             assert!(rendered.contains("phase 0/20 rising · turn 10 (10t)"));
@@ -1359,8 +1415,8 @@ mod tests {
         assert!(governed.contains("Collector 30% L0/4 next 300 cd 0 ready"));
 
         let mut readonly = test_view();
-        readonly.governor.governed = false;
-        readonly.governor.route_subsidy_active = false;
+        readonly.inspection.governor.governed = false;
+        readonly.inspection.governor.route_subsidy_active = false;
         let readonly = rendered_view(&readonly);
         assert!(readonly.contains("Governor: READ-ONLY AI"));
         assert!(readonly.contains("Route subsidy 10% · suppressed/inactive"));
@@ -1374,9 +1430,9 @@ mod tests {
             "A very long frontier system name that must be clipped safely".into();
         edge.player.tank_energy = Energy(i64::MAX);
         edge.player.total_energy_value = Energy(i64::MAX);
-        edge.market_energy.health = EnergyHealth::Deficit;
-        edge.market_energy.unsupplied_life_support = Energy(5);
-        edge.market_energy.bootstrap_risk_acknowledged = true;
+        edge.inspection.market_energy.health = EnergyHealth::Deficit;
+        edge.inspection.market_energy.unsupplied_life_support = Energy(5);
+        edge.inspection.market_energy.bootstrap_risk_acknowledged = true;
         edge.player.traveling = true;
         edge.selected_route = Some(RouteView {
             destination_id: id("core:s1"),
@@ -1394,7 +1450,12 @@ mod tests {
             total_ticks: 8,
             remaining_ticks: Some(7),
         });
-        edge.events = vec!["Rejected: insufficient cargo capacity".into(); 20];
+        edge.events = (1..=20)
+            .map(|sequence| PresentationEvent {
+                sequence,
+                text: "Rejected: insufficient cargo capacity".into(),
+            })
+            .collect();
 
         let help = UiState {
             help_visible: true,
@@ -1451,10 +1512,10 @@ mod tests {
                 }
                 assert!(!rendered.contains("Funds:"));
                 assert!(!rendered.contains('¤'));
-                if view.market_energy.health == EnergyHealth::Deficit {
+                if view.inspection.market_energy.health == EnergyHealth::Deficit {
                     assert!(rendered.contains("deficit"));
                 }
-                if view.market_energy.bootstrap_risk_acknowledged
+                if view.inspection.market_energy.bootstrap_risk_acknowledged
                     && width >= 100
                     && !ui.help_visible
                     && ui.quantity_input.is_none()
@@ -1476,7 +1537,7 @@ mod tests {
     {
         let app = game_app::spawn(test_session());
         let mut ui = UiState {
-            focus: Focus::Governor,
+            activity: Activity::Governance,
             ..UiState::default()
         };
         let mut view = app.views.borrow().clone();
@@ -1484,24 +1545,28 @@ mod tests {
             .await
             .unwrap();
         view = app.views.borrow().clone();
-        assert_eq!(view.governor.policy.operating_reserve_ticks, 4);
+        assert_eq!(view.inspection.governor.policy.operating_reserve_ticks, 4);
         handle_key(KeyCode::Char('.'), &mut ui, &view, &app)
             .await
             .unwrap();
         view = app.views.borrow().clone();
-        assert_eq!(view.governor.policy.producer_margin_percent, 16);
+        assert_eq!(view.inspection.governor.policy.producer_margin_percent, 16);
         handle_key(KeyCode::Char('+'), &mut ui, &view, &app)
             .await
             .unwrap();
         view = app.views.borrow().clone();
-        assert_eq!(view.governor.investments[0].allocation_percent, 5);
+        assert_eq!(
+            view.inspection.governor.investments[0].allocation_percent,
+            5
+        );
 
         let mut invalid = view.clone();
         invalid
+            .inspection
             .governor
             .policy
             .import_priorities
-            .insert(invalid.market[0].good_id.clone(), 10_000);
+            .insert(invalid.inspection.market[0].good_id.clone(), 10_000);
         handle_key(KeyCode::Char('i'), &mut ui, &invalid, &app)
             .await
             .unwrap();
@@ -1511,7 +1576,7 @@ mod tests {
             .await
             .unwrap();
         let readonly = app.views.borrow().clone();
-        assert!(!readonly.governor.governed);
+        assert!(!readonly.inspection.governor.governed);
         handle_key(KeyCode::Char(']'), &mut ui, &readonly, &app)
             .await
             .unwrap();
@@ -1547,6 +1612,9 @@ mod tests {
         view = app.views.borrow().clone();
         assert_eq!(view.run_state, RunState::Paused);
 
+        handle_key(KeyCode::F(2), &mut ui, &view, &app)
+            .await
+            .unwrap();
         handle_key(KeyCode::Char('n'), &mut ui, &view, &app)
             .await
             .unwrap();
@@ -1568,10 +1636,16 @@ mod tests {
         view = app.views.borrow().clone();
         assert_eq!(view.player.cargo_used, 0);
 
+        handle_key(KeyCode::F(1), &mut ui, &view, &app)
+            .await
+            .unwrap();
         handle_key(KeyCode::Char('?'), &mut ui, &view, &app)
             .await
             .unwrap();
         assert!(ui.help_visible);
+        handle_key(KeyCode::Char('?'), &mut ui, &view, &app)
+            .await
+            .unwrap();
         handle_key(KeyCode::Down, &mut ui, &view, &app)
             .await
             .unwrap();
@@ -1584,14 +1658,14 @@ mod tests {
         view = app.views.borrow().clone();
         assert!(view.player.traveling);
 
-        handle_key(KeyCode::Tab, &mut ui, &view, &app)
+        handle_key(KeyCode::F(3), &mut ui, &view, &app)
             .await
             .unwrap();
-        assert_eq!(ui.focus, Focus::Governor);
-        handle_key(KeyCode::Tab, &mut ui, &view, &app)
+        assert_eq!(ui.activity, Activity::Governance);
+        handle_key(KeyCode::F(2), &mut ui, &view, &app)
             .await
             .unwrap();
-        assert_eq!(ui.focus, Focus::Market);
+        assert_eq!(ui.activity, Activity::Trade);
         handle_key(KeyCode::Up, &mut ui, &view, &app).await.unwrap();
         assert!(
             handle_key(KeyCode::Char('q'), &mut ui, &view, &app)

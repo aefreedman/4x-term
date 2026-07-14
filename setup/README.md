@@ -20,9 +20,10 @@ This folder contains a small, rerunnable macOS bootstrap inspired by the setup u
 
    Use `--skip-brew` when the Homebrew dependencies are already installed.
 
-4. Verify the environment:
+4. Ensure the Rust user toolchain is on `PATH`, then verify the environment:
 
    ```bash
+   export PATH="$HOME/.cargo/bin:$PATH"
    ./setup/doctor.sh
    ```
 
@@ -30,7 +31,7 @@ This folder contains a small, rerunnable macOS bootstrap inspired by the setup u
 
 ## What bootstrap installs
 
-- Git, Node.js, rustup, and the 1Password CLI through Homebrew
+- Git, Node.js, ripgrep, rustup, and the 1Password CLI through Homebrew
 - The latest Pi CLI
 - Machine-local `.pi/settings.json` generated from `setup/pi-packages.txt` when settings do not already exist
 - The stable Rust toolchain
