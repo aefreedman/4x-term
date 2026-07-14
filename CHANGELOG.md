@@ -30,6 +30,7 @@
 - Encyclopedia prose now loads from validated `content/encyclopedia.ron`, introduces mechanics in plain language before detailed terms, and avoids runtime-settings narration.
 - Trade gives surplus vertical space to its scrollable local-market and destination lists while keeping action, route, and player summaries compact.
 - Systems navigation wraps, selected remote markets have an explicit read-only view, Governance can jump between sections, warning markers reflect actual severity, and shortcut accents are consistent across primary surfaces.
+- Systems tables use a bounded name column and reserve enough width for the complete Energy gauge and values at compact and regular sizes.
 - Trade preserves mnemonic `(S)ell`; paused single-step moved to `.` so function keys remain reserved for top-level activities.
 - Route previews, active travel, direct connections, and player location now use readable system names with jump, distance, timing, and route-specific required-energy summaries instead of exposing internal content IDs.
 - Event log entries now resolve system, trader, good, and production-process IDs to readable display names.

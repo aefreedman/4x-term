@@ -1,8 +1,8 @@
  * F1 Systems     F2 Trade     F3 Governance     F4 Intelligence     F5 Encyclopedia
 PAUSED · Tick 0 · Rate 4/s · Location Aster Reach · Tank 100/250 E
 ┌Systems — Name ↑ · 1-1/1──────────────────────────────────────────────────────────────────────────────────────────────────┐┌Selected System Overview──────────────────────────────────────────────────┐
-│    Name                                                    LOC/GOV/WARN               Energy   Runway   Population  Route││Aster  LOC · GOV                                                          │
-│>   Aster                                                   LOC GOV         [#####-] 800/1000      80t          5 ↑      0││Coordinates 0.0, 0.0, 0.0                                                 │
+│    Name                 LOC/GOV/WARN               Energy   Runway   Population  Route                                   ││Aster  LOC · GOV                                                          │
+│>   Aster                LOC GOV         [#####-] 800/1000      80t          5 ↑      0                                   ││Coordinates 0.0, 0.0, 0.0                                                 │
 │                                                                                                                          ││Energy [########--] 800/1000 E (80%) · healthy · Normal                   │
 │                                                                                                                          ││Runway 80 ticks                                                           │
 │                                                                                                                          ││Population 5 ↑ · cap 6 · tier 2                                           │

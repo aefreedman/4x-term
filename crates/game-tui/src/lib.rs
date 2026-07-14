@@ -1317,17 +1317,21 @@ fn render_systems_table(frame: &mut Frame<'_>, area: Rect, view: &ApplicationVie
     let header = Row::new(vec![
         Cell::from(""),
         Cell::from("Name"),
-        Cell::from("LOC/GOV/WARN"),
+        Cell::from(if area.width >= 90 {
+            "LOC/GOV/WARN"
+        } else {
+            "Flags"
+        }),
         right_cell("Energy"),
         right_cell("Runway"),
         right_cell("Population"),
         right_cell("Route"),
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
-    let widths = if area.width >= 100 {
+    let widths = if area.width >= 90 {
         [
             Constraint::Length(3),
-            Constraint::Min(12),
+            Constraint::Length(20),
             Constraint::Length(12),
             Constraint::Length(20),
             Constraint::Length(8),
@@ -1337,9 +1341,9 @@ fn render_systems_table(frame: &mut Frame<'_>, area: Rect, view: &ApplicationVie
     } else {
         [
             Constraint::Length(3),
-            Constraint::Min(10),
+            Constraint::Length(20),
             Constraint::Length(8),
-            Constraint::Length(14),
+            Constraint::Length(18),
             Constraint::Length(7),
             Constraint::Length(10),
             Constraint::Length(5),
@@ -4066,6 +4070,30 @@ mod tests {
     }
 
     #[test]
+    fn systems_table_preserves_the_complete_energy_gauge_at_supported_widths() {
+        let view = test_view();
+        for (width, height) in [(80, 30), (160, 45)] {
+            let rendered = rendered_at(width, height, &view, &UiState::default());
+            let cells = rendered.chars().collect::<Vec<_>>();
+            let row = cells
+                .chunks(usize::from(width))
+                .map(|line| line.iter().collect::<String>())
+                .find(|line| line.contains(">   Aster"))
+                .expect("selected system row");
+            assert!(
+                row.contains("[#####-] 800/1000"),
+                "energy gauge was clipped at width {width}: {row:?}"
+            );
+            let name_start = row.find("Aster").unwrap();
+            let flags_start = row.find("LOC GOV").unwrap();
+            assert!(
+                flags_start.saturating_sub(name_start) <= 21,
+                "system name column used excess width at {width}: {row:?}"
+            );
+        }
+    }
+
+    #[test]
     fn semantic_cues_have_textual_fallbacks_and_shortcut_accent_styles() {
         let mut view = test_view();
         view.systems[0].health = EnergyHealth::Deficit;
@@ -4105,34 +4133,29 @@ mod tests {
 
     #[test]
     fn system_warn_marker_only_marks_actual_warning_states() {
+        fn selected_row(view: &ApplicationView) -> String {
+            rendered_at(160, 45, view, &UiState::default())
+                .chars()
+                .collect::<Vec<_>>()
+                .chunks(160)
+                .map(|line| line.iter().collect::<String>())
+                .find(|line| line.contains(">   Aster"))
+                .expect("selected system row")
+        }
+
         let mut view = test_view();
         view.systems[0].brownout_stage = BrownoutStage::Normal;
         view.systems[0].health = EnergyHealth::Healthy;
         assert_eq!(system_order_items(&view)[0].risk, 0);
-        assert_eq!(
-            rendered_at(160, 45, &view, &UiState::default())
-                .matches("WARN")
-                .count(),
-            0
-        );
+        assert!(!selected_row(&view).contains("WARN"));
 
         view.systems[0].brownout_stage = BrownoutStage::Throttled;
         assert_eq!(system_order_items(&view)[0].risk, 1);
-        assert_eq!(
-            rendered_at(160, 45, &view, &UiState::default())
-                .matches("WARN")
-                .count(),
-            0
-        );
+        assert!(!selected_row(&view).contains("WARN"));
 
         view.systems[0].health = EnergyHealth::Low;
         assert!(system_order_items(&view)[0].risk >= 2);
-        assert_eq!(
-            rendered_at(160, 45, &view, &UiState::default())
-                .matches("WARN")
-                .count(),
-            1
-        );
+        assert!(selected_row(&view).contains("WARN"));
     }
 
     #[test]

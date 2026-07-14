@@ -1,8 +1,8 @@
  * F1 Systems     F2 Trade     F3 Governance     F4 Intelligence     F5 Encyclopedia
 PAUSED · Tick 0 · Rate 4/s · Location Aster Reach · Tank 100/250 E
 ┌Systems — Name ↑ · 1-1/1─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│    Name                                                                                       LOC/GOV/WARN               Energy   Runway   Population  Route│
-│>   Aster                                                                                      LOC GOV         [#####-] 800/1000      80t          5 ↑      0│
+│    Name                 LOC/GOV/WARN               Energy   Runway   Population  Route                                                                      │
+│>   Aster                LOC GOV         [#####-] 800/1000      80t          5 ↑      0                                                                      │
 │                                                                                                                                                             │
 │                                                                                                                                                             │
 │                                                                                                                                                             │
