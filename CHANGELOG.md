@@ -20,13 +20,15 @@
 - A common autonomous investment executor for collectors, storage, population support, and canonically funded route subsidies, with diminishing checked costs, stable allocation ties, cooldowns, maximum levels, protected-surplus spending, typed status, and Emergency/Starvation suppression with automatic subsidy recovery.
 - One authored starting player governorship plus default AI allocations, typed authorized policy/allocation requests and rejection feedback, immutable governor views, and TUI controls for reserve horizon, margin, import priorities, and autonomous investment allocations.
 - Authored, progression-ready player trade-network access with offline reservation-contract rejection in the headless core, immutable application projection, and visible TUI capability state.
-- A responsive, explicitly scrollable F5 Encyclopedia backed by frontend-independent factual sections and articles for systems, energy, brownouts, population, goods, markets, resolved recipes, governance, investments, traders, reservations, travel, and trade-network access.
+- A responsive, explicitly scrollable F5 Encyclopedia backed by frontend-independent factual sections and articles for systems, energy, brownouts, population, goods, markets, recipes, governance, investments, traders, reservations, travel, and trade-network access.
 - Read-only selected-good destination market comparisons with player-relative route time and energy facts, plus stable-ID Trade region selection that previews routes without committing travel.
 
 ### Changed
 
 - Replaced the all-at-once terminal dashboard with F1–F5 Systems, Trade, Governance, Intelligence, and Encyclopedia activities, contextual controls, and cell-based compact (`80x30`) and regular (`160x45`) layouts.
 - Systems, Trade, and Governance tables now use deterministic selected-row viewports with position/more indicators; compact Trade prioritizes exact selected-action cargo and tank consequences, route workflow, and unavailable reason.
+- Encyclopedia prose now loads from validated `content/encyclopedia.ron`, introduces mechanics in plain language before detailed terms, and avoids runtime-settings narration.
+- Trade gives surplus vertical space to its scrollable local-market and destination lists while keeping action, route, and player summaries compact.
 - Systems navigation wraps, selected remote markets have an explicit read-only view, Governance can jump between sections, warning markers reflect actual severity, and shortcut accents are consistent across primary surfaces.
 - Trade preserves mnemonic `(S)ell`; paused single-step moved to `.` so function keys remain reserved for top-level activities.
 - Route previews, active travel, direct connections, and player location now use readable system names with jump, distance, timing, and route-specific required-energy summaries instead of exposing internal content IDs.

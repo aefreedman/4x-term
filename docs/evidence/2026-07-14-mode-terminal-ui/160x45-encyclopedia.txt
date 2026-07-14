@@ -3,7 +3,7 @@ PAUSED · Tick 0 · Rate 4/s · Location Aster Reach · Tank 100/250 E
 [Worlds & Population]  Recipes
 ┌Articles · 1-2/2────────────────────────────────────┐┌Systems and Energy──────────────────────────────────────────────────────────────────────────────────────┐
 │> Systems and Energy                                ││Lines 1-1/1 · all visible · PgUp/PgDn scroll                                                            │
-│  Brownouts                                         ││Markets hold physical Energy stock.                                                                     │
+│  Brownouts                                         ││A system is a location with a market and routes to other systems.                                       │
 │                                                    ││                                                                                                        │
 │                                                    ││                                                                                                        │
 │                                                    ││                                                                                                        │

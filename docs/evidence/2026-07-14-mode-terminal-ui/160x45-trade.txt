@@ -16,30 +16,30 @@ PAUSED · Tick 0 · Rate 4/s · Location Aster Reach · Tank 100/250 E
 │                                                                                      ││                                                                      │
 │                                                                                      ││                                                                      │
 │                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
+│                                                                                      ││                                                                      │
 │                                                                                      │└──────────────────────────────────────────────────────────────────────┘
 │                                                                                      │┌Route — Brasshaven (read-only) / Network Offline──────────────────────┐
 │                                                                                      ││Route Proposal: Aster Reach → Brasshaven                              │
 │                                                                                      ││1 jump · 3.5 distance · 4 ticks                                       │
 │                                                                                      ││Required energy unavailable for this proposal                         │
-│                                                                                      ││(T)ravel disabled: exact route details unavailable · Esc clears       │
-│                                                                                      ││proposal                                                              │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      │└──────────────────────────────────────────────────────────────────────┘
-│                                                                                      │┌Player / Trade────────────────────────────────────────────────────────┐
-│                                                                                      ││Location Aster Reach · Tank 100/250 E · Value 118 E · Rank #1         │
-│                                                                                      ││Cargo bay 2/10 · bay energy 0 · value 18 E: Ferrite Ore x2            │
-│                                                                                      ││Sales 0 E · Gain -18 E · Trades 0 · Runway 5 jumps                    │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-└──────────────────────────────────────────────────────────────────────────────────────┘│                                                                      │
-┌Selected Good / Action Preview────────────────────────────────────────────────────────┐│                                                                      │
-│Ore · Qty 1 · Held 2 · Market stock 10                                                ││                                                                      │
-│Buy 11 E/unit · Total 11 E · Tank 100→89 E · Cargo 2→3/10                             ││                                                                      │
-│Sell 9 E/unit · Total 9 E · Tank after 109 E                                          ││                                                                      │
-│(B)uy available                                                                       ││                                                                      │
-│(S)ell available                                                                      ││                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────┘│(T)ravel disabled: exact route details unavailable · Esc clears       │
+┌Selected Good / Action Preview────────────────────────────────────────────────────────┐│proposal                                                              │
+│Ore · Qty 1 · Held 2 · Market stock 10                                                │└──────────────────────────────────────────────────────────────────────┘
+│Buy 11 E/unit · Total 11 E · Tank 100→89 E · Cargo 2→3/10                             │┌Player / Trade────────────────────────────────────────────────────────┐
+│Sell 9 E/unit · Total 9 E · Tank after 109 E                                          ││Location Aster Reach · Tank 100/250 E · Value 118 E · Rank #1         │
+│(B)uy available                                                                       ││Cargo bay 2/10 · bay energy 0 · value 18 E: Ferrite Ore x2            │
+│(S)ell available                                                                      ││Sales 0 E · Gain -18 E · Trades 0 · Runway 5 jumps                    │
 └──────────────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 Tab/Shift-Tab Region · ↑/↓ Good · (N) Qty 1 · (B)uy · (S)ell · (T)ravel disabled: route details unavailable · Space run · . step (paused) · r rate · ? help · q

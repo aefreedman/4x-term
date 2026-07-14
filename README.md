@@ -29,7 +29,7 @@ The interface is organized into five top-level activities:
 - `F2` **Trade**: `Tab`/`Shift-Tab` switches between local goods and read-only destination comparisons. `↑`/`↓` or `j`/`k` moves only the active region. `n` enters quantity; `b` buys locally; `s` sells locally; `t` or `Enter` commits only the displayed travel proposal; `Esc` clears it.
 - `F3` **Governance**: `↑`/`↓` or `j`/`k` selects a row; `Tab`/`Shift-Tab` jumps between policy, import, and investment sections; `←`/`→` edits an available governed row; `i` inspects the stable Systems selection; `Esc` returns to the governed market. Autonomous markets are explicitly read-only.
 - `F4` **Intelligence**: `↑`/`↓` or `j`/`k` scrolls the bounded event history.
-- `F5` **Encyclopedia**: `Tab`/`Shift-Tab` switches factual manual sections; `↑`/`↓` or `j`/`k` selects an article; `PageUp`/`PageDown` scrolls the selected article. Encyclopedia articles describe game mechanics and current catalog facts separately from controls-only contextual help.
+- `F5` **Encyclopedia**: `Tab`/`Shift-Tab` switches factual manual sections; `↑`/`↓` or `j`/`k` selects an article; `PageUp`/`PageDown` scrolls the selected article. Encyclopedia articles describe game mechanics and catalog reference material separately from controls-only contextual help.
 
 Global controls are `Space` to pause/resume, `.` to single-step while paused, `r` to change tick rate, `?` for contextual help, and `q` to quit. Unavailable actions are shown as disabled with a reason.
 
@@ -40,6 +40,7 @@ Terminal dimensions are measured in cells. `80x30` is the minimum supported comp
 Runtime content is stored under `content/`.
 
 - `economy_config.ron` controls global market policy, brownouts, population, all four diminishing-cost investment shapes, default AI allocations, raw-source output, and idle NPC repositioning.
+- `encyclopedia.ron` contains the player-facing manual sections, articles, and paragraphs. Its prose is loaded as content and projected unchanged through the application layer.
 - `economy.ron` controls per-system inventories, demand targets, recipes, raw sources, deterministic seasonal generation, optional investment-allocation overrides, and the optional starting governor.
 - `goods.ron` controls individual base prices.
 - `traders.ron` controls fixed/dynamic fleet mode, initial and maximum count, response/retirement windows, speed, physical starting tank, cargo capacity, player trade-network access, naming, and distribution.

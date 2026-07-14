@@ -60,7 +60,20 @@ pub enum ContentWarning {
 #[derive(Clone, Debug)]
 pub struct LoadedContent {
     pub definition: GameDefinition,
+    pub encyclopedia: Vec<EncyclopediaSection>,
     pub warnings: Vec<ContentWarning>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub struct EncyclopediaSection {
+    pub title: String,
+    pub articles: Vec<EncyclopediaArticle>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub struct EncyclopediaArticle {
+    pub title: String,
+    pub paragraphs: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -389,14 +402,68 @@ pub fn load_directory(root: impl AsRef<Path>) -> Result<GameDefinition, ContentE
 
 pub fn load_directory_with_warnings(root: impl AsRef<Path>) -> Result<LoadedContent, ContentError> {
     let root = root.as_ref();
-    compile(
+    let encyclopedia: Vec<EncyclopediaSection> = load(root.join("encyclopedia.ron"))?;
+    let mut errors = Vec::new();
+    validate_encyclopedia(&encyclopedia, &mut errors);
+    if !errors.is_empty() {
+        return Err(ContentError::Validation(errors));
+    }
+    let mut loaded = compile(
         load(root.join("systems.ron"))?,
         load(root.join("goods.ron"))?,
         load(root.join("recipes.ron"))?,
         load(root.join("economy.ron"))?,
         load(root.join("economy_config.ron"))?,
         load(root.join("traders.ron"))?,
-    )
+    )?;
+    loaded.encyclopedia = encyclopedia;
+    Ok(loaded)
+}
+
+fn validate_encyclopedia(sections: &[EncyclopediaSection], errors: &mut Vec<String>) {
+    if sections.is_empty() {
+        errors.push("encyclopedia.ron: at least one section is required".into());
+        return;
+    }
+    let mut section_titles = BTreeSet::new();
+    for section in sections {
+        let title = section.title.trim();
+        if title.is_empty() {
+            errors.push("encyclopedia.ron: section title must not be empty".into());
+        } else if !section_titles.insert(title) {
+            errors.push(format!(
+                "encyclopedia.ron: duplicate section title {title:?}"
+            ));
+        }
+        if section.articles.is_empty() {
+            errors.push(format!(
+                "encyclopedia.ron:{title}: at least one article is required"
+            ));
+        }
+        let mut article_titles = BTreeSet::new();
+        for article in &section.articles {
+            let article_title = article.title.trim();
+            if article_title.is_empty() {
+                errors.push(format!(
+                    "encyclopedia.ron:{title}: article title must not be empty"
+                ));
+            } else if !article_titles.insert(article_title) {
+                errors.push(format!(
+                    "encyclopedia.ron:{title}: duplicate article title {article_title:?}"
+                ));
+            }
+            if article.paragraphs.is_empty()
+                || article
+                    .paragraphs
+                    .iter()
+                    .any(|paragraph| paragraph.trim().is_empty())
+            {
+                errors.push(format!(
+                    "encyclopedia.ron:{title}:{article_title}: paragraphs must not be empty"
+                ));
+            }
+        }
+    }
 }
 
 fn load<T: for<'de> Deserialize<'de>>(path: PathBuf) -> Result<T, ContentError> {
@@ -930,6 +997,7 @@ fn compile(
             fleet,
             economy: compiled_config,
         },
+        encyclopedia: Vec::new(),
         warnings,
     })
 }
@@ -1861,6 +1929,20 @@ mod tests {
             loaded.definition.systems[0].governance.authority,
             MarketAuthority::Player(ref player) if player.as_str() == "frontier:player"
         ));
+        assert_eq!(loaded.encyclopedia.len(), 4);
+        let encyclopedia_text = loaded
+            .encyclopedia
+            .iter()
+            .flat_map(|section| &section.articles)
+            .flat_map(|article| &article.paragraphs)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(encyclopedia_text.contains("A brownout describes"));
+        assert!(encyclopedia_text.contains("A baseline cost is not a market price"));
+        assert!(!encyclopedia_text.contains("bootstrap embodied-energy"));
+        assert!(!encyclopedia_text.contains("The current frontier contains"));
+        assert!(!encyclopedia_text.contains("CommitTrade"));
         assert!(loaded.warnings.iter().all(|warning| matches!(
             warning,
             ContentWarning::BootstrapRunwayAcknowledged {

@@ -1961,30 +1961,30 @@ fn render_trade_activity(
         let right = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(42),
-                Constraint::Length(10),
-                Constraint::Min(7),
+                Constraint::Min(10),
+                Constraint::Length(7),
+                Constraint::Length(5),
             ])
             .split(columns[1]);
         render_local_market(frame, left[0], view, ui, layout_class);
         render_trade_action(frame, left[1], view, ui, layout_class);
         render_trade_destinations(frame, right[0], view, ui, layout_class);
-        render_trade_route(frame, right[1], view, ui);
+        render_trade_route(frame, right[1], view, ui, layout_class);
         render_trade_player(frame, right[2], view, ui);
     } else {
         let panes = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(7),
-                Constraint::Length(7),
+                Constraint::Length(8),
                 Constraint::Length(6),
-                Constraint::Min(6),
+                Constraint::Length(7),
+                Constraint::Min(5),
             ])
             .split(area);
         render_local_market(frame, panes[0], view, ui, layout_class);
         render_trade_action(frame, panes[1], view, ui, layout_class);
         render_trade_destinations(frame, panes[2], view, ui, layout_class);
-        render_trade_route(frame, panes[3], view, ui);
+        render_trade_route(frame, panes[3], view, ui, layout_class);
     }
 }
 
@@ -2149,11 +2149,6 @@ fn render_trade_action(
                             .saturating_add(u64::from(ui.trade_quantity)),
                         view.player.cargo_capacity,
                     )),
-                    mnemonic_line(
-                        "",
-                        "B",
-                        format!("uy {}", availability_label(buy_reason.as_deref())),
-                    ),
                     Line::from(format!(
                         "Sell total {} · Tank {}→{} E · Cargo {}→{}/{}",
                         sell_total
@@ -2168,11 +2163,19 @@ fn render_trade_action(
                             .saturating_sub(u64::from(ui.trade_quantity)),
                         view.player.cargo_capacity,
                     )),
-                    mnemonic_line(
-                        "",
-                        "S",
-                        format!("ell {}", availability_label(sell_reason.as_deref())),
-                    ),
+                    Line::from(vec![
+                        Span::raw("("),
+                        shortcut_span("B"),
+                        Span::raw(format!(
+                            ")uy {} · (",
+                            availability_label(buy_reason.as_deref())
+                        )),
+                        shortcut_span("S"),
+                        Span::raw(format!(
+                            ")ell {}",
+                            availability_label(sell_reason.as_deref())
+                        )),
+                    ]),
                 ]
             } else {
                 vec![
@@ -2226,7 +2229,13 @@ fn render_trade_action(
     );
 }
 
-fn render_trade_route(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: &UiState) {
+fn render_trade_route(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+    layout_class: LayoutClass,
+) {
     let target = if view.player.traveling {
         view.selected_route
             .as_ref()
@@ -2258,24 +2267,45 @@ fn render_trade_route(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView,
                 let remaining = route.remaining_ticks.unwrap_or(route.total_ticks);
                 let elapsed = route.total_ticks.saturating_sub(remaining);
                 let leg = route.current_leg.and_then(|index| route.legs.get(index));
-                vec![
-                    Line::from(format!("In Transit to {}", route.destination_name)),
-                    Line::from(format!(
-                        "Progress {elapsed}/{} ticks · {remaining} remaining · {} jumps",
-                        route.total_ticks,
-                        route.legs.len()
-                    )),
-                    Line::from(leg.map_or_else(
-                        || format_route_chain(route),
-                        |leg| format!("Current leg: {} → {}", leg.from_name, leg.to_name),
-                    )),
-                    Line::from(
-                        view.local_trade
-                            .unavailable_reason
-                            .clone()
-                            .unwrap_or_else(|| "Local trading disabled during transit".into()),
-                    ),
-                ]
+                if layout_class == LayoutClass::Compact {
+                    vec![
+                        Line::from(format!(
+                            "To {} · {elapsed}/{} ticks · {remaining} left · {} jumps",
+                            route.destination_name,
+                            route.total_ticks,
+                            route.legs.len()
+                        )),
+                        Line::from(leg.map_or_else(
+                            || format_route_chain(route),
+                            |leg| format!("Current leg: {} → {}", leg.from_name, leg.to_name),
+                        )),
+                        Line::from(
+                            view.local_trade
+                                .unavailable_reason
+                                .clone()
+                                .unwrap_or_else(|| "Local trading disabled during transit".into()),
+                        ),
+                    ]
+                } else {
+                    vec![
+                        Line::from(format!("In Transit to {}", route.destination_name)),
+                        Line::from(format!(
+                            "Progress {elapsed}/{} ticks · {remaining} remaining · {} jumps",
+                            route.total_ticks,
+                            route.legs.len()
+                        )),
+                        Line::from(leg.map_or_else(
+                            || format_route_chain(route),
+                            |leg| format!("Current leg: {} → {}", leg.from_name, leg.to_name),
+                        )),
+                        Line::from(
+                            view.local_trade
+                                .unavailable_reason
+                                .clone()
+                                .unwrap_or_else(|| "Local trading disabled during transit".into()),
+                        ),
+                    ]
+                }
             },
         )
     } else if let Some(destination) = &ui.route_proposal {
@@ -2340,16 +2370,28 @@ fn render_trade_route(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView,
                 }
             },
         );
-        vec![
-            Line::from(format!(
-                "Route Proposal: {} → {}",
-                view.player.location_name,
-                system_name(view, destination)
-            )),
-            Line::from(summary),
-            Line::from(energy),
-            command,
-        ]
+        if layout_class == LayoutClass::Compact {
+            vec![
+                Line::from(format!(
+                    "{} → {} · {summary}",
+                    view.player.location_name,
+                    system_name(view, destination)
+                )),
+                Line::from(energy),
+                command,
+            ]
+        } else {
+            vec![
+                Line::from(format!(
+                    "Route Proposal: {} → {}",
+                    view.player.location_name,
+                    system_name(view, destination)
+                )),
+                Line::from(summary),
+                Line::from(energy),
+                command,
+            ]
+        }
     } else {
         vec![
             Line::from("No Route Proposal"),
@@ -3544,7 +3586,7 @@ mod tests {
                         articles: vec![
                             EncyclopediaArticleView {
                                 title: "Systems and Energy".into(),
-                                paragraphs: vec!["Markets hold physical Energy stock.".into()],
+                                paragraphs: vec!["A system is a location with a market and routes to other systems.".into()],
                             },
                             EncyclopediaArticleView {
                                 title: "Brownouts".into(),
@@ -4265,7 +4307,11 @@ mod tests {
             assert!(trade.contains("Brasshaven"));
             assert!(trade.contains("Route — Brasshaven (read-only)"));
             assert!(trade.contains("Qty 1"));
-            assert!(trade.contains("Route Proposal"));
+            assert!(trade.contains(if width == 80 {
+                "Aster Reach → Brasshaven"
+            } else {
+                "Route Proposal"
+            }));
             assert!(trade.contains("(T)ravel"));
             assert!(!trade.contains("core:"));
 
@@ -4473,7 +4519,7 @@ mod tests {
             assert!(encyclopedia.contains("Worlds & Population"));
             assert!(encyclopedia.contains("Articles"));
             assert!(encyclopedia.contains("Systems and Energy"));
-            assert!(encyclopedia.contains("Markets hold physical Energy stock"));
+            assert!(encyclopedia.contains("A system is a location with a market"));
             assert_eq!(encyclopedia.matches("> ").count(), 1);
 
             let trade = rendered_at(
@@ -4535,7 +4581,7 @@ mod tests {
             },
         );
         assert!(rendered.contains("IN TRANSIT"));
-        assert!(rendered.contains("In Transit"));
+        assert!(rendered.contains("To Brasshaven"));
 
         let mut empty = view;
         empty.local_trade.market.clear();
@@ -4574,7 +4620,7 @@ mod tests {
         for fact in [
             "Buy total 11 E · Tank 100→89 E · Cargo 2→3/10",
             "Sell total 9 E · Tank 100→109 E · Cargo 2→1/10",
-            "Route Proposal: Aster Reach → Brasshaven",
+            "Aster Reach → Brasshaven",
             "1 jumps · 3.5 distance · 4 ticks",
             "Requires 4 E · after arrival 96 E",
             "Brasshaven",
@@ -4585,6 +4631,63 @@ mod tests {
             );
         }
         assert!(rendered.contains("(T)ravel / Enter to commit"));
+    }
+
+    #[test]
+    fn trade_layout_gives_surplus_height_to_scrollable_market_lists() {
+        let mut view = test_view();
+        let local_template = view.local_trade.market[0].clone();
+        view.local_trade.market = (0..35)
+            .map(|index| {
+                let mut row = local_template.clone();
+                row.good_id = id(&format!("core:good_{index}"));
+                row.name = format!("Good {index:02}");
+                row
+            })
+            .collect();
+        let remote_template = view.trade_markets[1].clone();
+        view.trade_markets = (1..=30)
+            .map(|index| {
+                let mut market = remote_template.clone();
+                market.system.id = id(&format!("core:s{index}"));
+                market.system.name = format!("System {index:02}");
+                market
+            })
+            .collect();
+
+        let compact = rendered_at(
+            80,
+            30,
+            &view,
+            &UiState {
+                activity: Activity::Trade,
+                trade_region: TradeRegion::Destinations,
+                selected_trade_destination: Some(id("core:s1")),
+                route_proposal: Some(id("core:s1")),
+                ..UiState::default()
+            },
+        );
+        assert!(compact.contains("1-5/35"));
+        assert!(compact.contains("1-4/30"));
+        assert!(compact.contains("Buy total"));
+        assert!(compact.contains("Aster Reach → Brasshaven"));
+
+        let regular = rendered_at(
+            160,
+            45,
+            &view,
+            &UiState {
+                activity: Activity::Trade,
+                trade_region: TradeRegion::Destinations,
+                selected_trade_destination: Some(id("core:s1")),
+                route_proposal: Some(id("core:s1")),
+                ..UiState::default()
+            },
+        );
+        assert!(regular.contains("1-31/35"));
+        assert!(regular.contains("1-26/30"));
+        assert!(regular.contains("Player / Trade"));
+        assert!(regular.contains("Route Proposal"));
     }
 
     #[tokio::test]

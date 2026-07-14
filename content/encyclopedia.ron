@@ -1,0 +1,180 @@
+[
+  (
+    title: "Worlds & Population",
+    articles: [
+      (
+        title: "Systems and Energy",
+        paragraphs: [
+          "A system is a location with a market and routes to other systems. The distance along a route determines how long a journey takes and how much Energy a trader's tank must provide.",
+          "A system's market stores Energy. Local generation adds Energy to that store, while life support, production, investments, and trade payments remove it. Energy generated beyond the market's storage capacity is lost.",
+          "Market Energy, tank Energy, and Energy carried as cargo are separate. Market Energy belongs to a system. Tank Energy pays for purchases and travel. Cargo Energy uses cargo space and cannot be spent or used to power a journey until it is sold to a market.",
+        ],
+      ),
+      (
+        title: "Brownouts",
+        paragraphs: [
+          "A brownout describes how severely a system lacks Energy. The stages are Normal, Throttled, Emergency, and Starvation. Each stage represents a more serious shortage.",
+          "Runway estimates how many ticks the stored market Energy could cover life support by itself. It divides stored Energy by the population's life-support cost for one tick. Other expenses, such as production or trade, are not included in this estimate.",
+          "A system enters worse stages when runway falls. It must remain safer for a while before recovering, so a small or temporary Energy change does not immediately switch the stage back and forth.",
+          "Throttled systems produce goods more slowly. Emergency and Starvation stop investment spending and ordinary demand for goods that are not designated as necessary for survival. Starvation can also cause population decline when essential supplies are insufficient.",
+        ],
+      ),
+      (
+        title: "Population",
+        paragraphs: [
+          "Population is the number of people living in a system. It determines the Energy needed for life support, the labor available to production, and demand for goods whose use scales with population.",
+          "The simulation remembers whether life support and required goods were adequately supplied during recent ticks. Population can grow only after a sustained period of adequate supply while the system is in Normal conditions. Growth slows as population approaches the system's support capacity—the number of people its sustained supplies can support.",
+          "During Starvation, insufficient Energy or required goods can cause population to decline. Decline can begin sooner and proceed faster than growth because severe shortages have immediate effects.",
+          "Population changes can be smaller than one person in a tick. Those fractions are carried forward instead of discarded, so repeated small changes eventually affect the whole-number population.",
+        ],
+      ),
+    ],
+  ),
+  (
+    title: "Goods & Markets",
+    articles: [
+      (
+        title: "Understanding Goods",
+        paragraphs: [
+          "Goods are physical items held by markets or carried by traders. Energy is also a good, but market Energy and tank Energy have special roles as the game's means of payment and travel power.",
+          "Raw materials are gathered directly. Primary and secondary products are made by recipes. These categories describe where a good belongs in the production chain; a recipe gives the exact inputs and outputs.",
+          "Each good has a baseline cost. The simulation assigns this cost to starting and externally delivered stock, and uses it as a minimum when it has no higher recorded production cost. A baseline cost is not a market price.",
+        ],
+      ),
+      (
+        title: "Markets and Prices",
+        paragraphs: [
+          "Each system has a market that stores goods and exchanges them for Energy. Stock is the amount held now. A target is the amount the market wants to keep available.",
+          "A market's buying price is what it pays when a trader sells one unit to the market. Its selling price is what it charges when a trader buys one unit. Prices can differ between systems because their stock, targets, costs, available Energy, policies, and brownout conditions differ.",
+          "Funded demand is the number of units the market currently wants and can afford to buy. A market may want more goods than it can fund with its available Energy.",
+          "Some market Energy is protected for essential obligations. Operating reserve covers expected life-support, extraction, and recipe costs. Reservation claims set aside payment for accepted remote deliveries. Protected Energy still exists in the market, but ordinary purchases cannot spend it.",
+          "Cost basis is the recorded Energy cost of obtaining the goods currently in stock. Cost-aware pricing starts from this recorded cost, then adjusts for the market's margin and shortages.",
+        ],
+      ),
+      (
+        title: "Raw Materials",
+        paragraphs: [
+          "Ferrite Ore, Silicate Crystals, Hydrocarbon Feedstock, and Cultured Biomass are raw materials. Systems with the appropriate natural sources gather them directly instead of making them through recipes.",
+          "Raw materials feed primary production. Their baseline costs are 8 E for Ferrite Ore, 10 E for Silicate Crystals, 12 E for Hydrocarbon Feedstock, and 9 E for Cultured Biomass.",
+        ],
+      ),
+      (
+        title: "Primary Products",
+        paragraphs: [
+          "Structural Alloy, Ceramic Composite, and Industrial Biopolymer are primary products made from raw materials.",
+          "Their baseline costs are 24 E for Structural Alloy, 30 E for Ceramic Composite, and 28 E for Industrial Biopolymer. These values initialize cost records; local market prices can be different.",
+        ],
+      ),
+      (
+        title: "Secondary Products",
+        paragraphs: [
+          "Industrial Machinery, Habitat Modules, and Reactor Assemblies are secondary products. Their recipes use raw materials, primary products, or both.",
+          "Their baseline costs are 85 E for Industrial Machinery, 100 E for Habitat Modules, and 110 E for Reactor Assemblies. These values initialize cost records; local market prices can be different.",
+        ],
+      ),
+    ],
+  ),
+  (
+    title: "Recipes",
+    articles: [
+      (
+        title: "How Recipes Work",
+        paragraphs: [
+          "A recipe converts listed input goods into listed output goods. It also consumes operating Energy each time it runs.",
+          "Recipes run in production layers: Primary, then Secondary, then Tertiary. This order lets goods made by an earlier layer become available to later production.",
+          "Production can be limited by missing inputs, insufficient operating Energy, available labor, or a brownout.",
+        ],
+      ),
+      (
+        title: "Alloy Smelting",
+        paragraphs: [
+          "Alloy Smelting is a Primary recipe. Each run consumes 3 Ferrite Ore and 6 E of operating Energy, then produces 2 Structural Alloy.",
+        ],
+      ),
+      (
+        title: "Composite Firing",
+        paragraphs: [
+          "Composite Firing is a Primary recipe. Each run consumes 2 Silicate Crystals, 1 Hydrocarbon Feedstock, and 6 E of operating Energy, then produces 2 Ceramic Composite.",
+        ],
+      ),
+      (
+        title: "Polymer Synthesis",
+        paragraphs: [
+          "Polymer Synthesis is a Primary recipe. Each run consumes 2 Cultured Biomass, 1 Hydrocarbon Feedstock, and 6 E of operating Energy, then produces 2 Industrial Biopolymer.",
+        ],
+      ),
+      (
+        title: "Machinery Fabrication",
+        paragraphs: [
+          "Machinery Fabrication is a Secondary recipe. Each run consumes 2 Structural Alloy, 1 Hydrocarbon Feedstock, and 9 E of operating Energy, then produces 1 Industrial Machinery.",
+        ],
+      ),
+      (
+        title: "Habitat Fabrication",
+        paragraphs: [
+          "Habitat Fabrication is a Secondary recipe. Each run consumes 1 Ceramic Composite, 1 Industrial Biopolymer, 1 Cultured Biomass, and 9 E of operating Energy, then produces 1 Habitat Module.",
+        ],
+      ),
+      (
+        title: "Reactor Fabrication",
+        paragraphs: [
+          "Reactor Fabrication is a Secondary recipe. Each run consumes 1 Structural Alloy, 2 Silicate Crystals, and 9 E of operating Energy, then produces 1 Reactor Assembly.",
+        ],
+      ),
+      (
+        title: "Tertiary Activity",
+        paragraphs: [
+          "Tertiary recipes represent local activity that consumes advanced goods without producing a trade good. They still consume their listed inputs and operating Energy.",
+          "Settlement Expansion consumes 1 Habitat Module, 1 Industrial Machinery, and 4 E. Orbital Shipyard consumes 2 Industrial Machinery, 1 Reactor Assembly, and 4 E. Research Enclave consumes 1 Reactor Assembly, 1 Ceramic Composite, and 4 E.",
+        ],
+      ),
+    ],
+  ),
+  (
+    title: "Governance & Trade",
+    articles: [
+      (
+        title: "Governance Policies",
+        paragraphs: [
+          "A governed market exposes a limited set of policies. Autonomous markets manage those policies themselves.",
+          "The operating-reserve horizon controls how many ticks of expected production costs the market protects before spending Energy elsewhere.",
+          "In cost-aware pricing, producer margin adds a markup to recorded production cost before scarcity affects the selling price.",
+          "Import priority changes a market's normal buying offer for a good relative to its selling price. It does not change how much stock the market targets or how many units it wants. For recipe inputs, offers can be capped so the finished product can still cover its input and operating costs.",
+          "Investment allocations divide up to 100 percent of available investment funding among the investment types. Unallocated funding remains unspent.",
+        ],
+      ),
+      (
+        title: "Investments",
+        paragraphs: [
+          "Investments are improvements funded by a market's own Energy. Allocations determine which eligible improvement receives funding after protected obligations have been covered.",
+          "Each investment has levels. Later levels cost more, and a cooldown is the number of ticks that must pass before another level of the same improvement can be completed.",
+          "Collectors increase base Energy generation. Storage increases market Energy capacity. Population Support increases support capacity and the possible growth rate. Route Subsidies raise normal buying offers for goods that are not designated as necessary for survival.",
+        ],
+      ),
+      (
+        title: "Traders and Travel",
+        paragraphs: [
+          "A trader carries goods in a cargo bay and stores spendable Energy in a tank. Cargo capacity limits the total units carried. Tank capacity limits the Energy available for purchases and journeys.",
+          "Travel follows connected routes between systems. Route distance and the trader's travel-burn rate determine the Energy required. Starting a journey removes the full route's travel Energy from the tank at departure.",
+          "Travel takes a number of simulation ticks. A trader cannot use local market actions while in transit; arrival and any reserved sale are processed later.",
+        ],
+      ),
+      (
+        title: "Reservations",
+        paragraphs: [
+          "A reservation is Energy that a destination market sets aside to pay for a planned delivery. Reserved Energy remains part of the market's stock, but it cannot fund an unrelated purchase.",
+          "When a reservation-backed trade is accepted, the trader buys the goods at the origin, the destination reserves payment, and the trader departs. All three parts succeed together. If any part fails, none of them happen.",
+          "Reservations expire if they are not used in time, and their expiry time is extended while the trader is travelling. If a trade is cancelled or expires, its reserved Energy becomes available again. When it settles, that Energy pays the trader and the reservation closes.",
+        ],
+      ),
+      (
+        title: "Trade Network Access",
+        paragraphs: [
+          "Trade Network access controls whether the player can create reservation-backed remote trade commitments.",
+          "Offline access does not allow remote commitments. Local buying and selling, remote market information, and direct travel remain separate capabilities.",
+          "Reservation Contracts access allows a remote commitment to buy goods at the origin, reserve the destination's payment, and begin travel as one transaction.",
+        ],
+      ),
+    ],
+  ),
+]

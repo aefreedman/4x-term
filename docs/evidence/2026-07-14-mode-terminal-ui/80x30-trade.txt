@@ -6,23 +6,23 @@ PAUSED · Tick 0 · Rate 4/s · Location Aster Reach · Tank 100/250 E
 │                                                                              │
 │                                                                              │
 │                                                                              │
+│                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌Selected Good / Action Preview────────────────────────────────────────────────┐
 │Ore · Qty 1 · Held 2 · Stock 10                                               │
 │Buy total 11 E · Tank 100→89 E · Cargo 2→3/10                                 │
-│(B)uy available                                                               │
 │Sell total 9 E · Tank 100→109 E · Cargo 2→1/10                                │
-│(S)ell available                                                              │
+│(B)uy available · (S)ell available                                            │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌Destinations — Ore — read-only · 1-1/1────────────────────────────────────────┐
 │  System              Stock/Tgt   Mkt Buy/Sell      Ticks  Available          │
 │  Brasshaven                 3/20         13 E/15 E      4 4 E                │
 │                                                                              │
 │                                                                              │
+│                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌Route — Brasshaven (read-only) / Network Offline──────────────────────────────┐
-│Route Proposal: Aster Reach → Brasshaven                                      │
-│1 jump · 3.5 distance · 4 ticks                                               │
+│Aster Reach → Brasshaven · 1 jump · 3.5 distance · 4 ticks                    │
 │Required energy unavailable for this proposal                                 │
 │(T)ravel disabled: exact route details unavailable · Esc clears proposal      │
 └──────────────────────────────────────────────────────────────────────────────┘
