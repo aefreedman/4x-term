@@ -21,6 +21,8 @@ pub enum InputAction {
     Buy,
     Sell,
     BeginTravel,
+    ClearContext,
+    Inspect,
     Sort,
     ToggleSortDirection,
     Decrease,
@@ -62,7 +64,6 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
         Activity::Systems => match code {
             KeyCode::Up | KeyCode::Char('k') => InputAction::MoveUp,
             KeyCode::Down | KeyCode::Char('j') => InputAction::MoveDown,
-            KeyCode::Enter => InputAction::BeginTravel,
             KeyCode::Char('o') => InputAction::Sort,
             KeyCode::Char('d') => InputAction::ToggleSortDirection,
             _ => InputAction::None,
@@ -74,6 +75,7 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
             KeyCode::Char('b') => InputAction::Buy,
             KeyCode::Char('x') => InputAction::Sell,
             KeyCode::Char('t') | KeyCode::Enter => InputAction::BeginTravel,
+            KeyCode::Esc => InputAction::ClearContext,
             _ => InputAction::None,
         },
         Activity::Governance => match code {
@@ -81,6 +83,8 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
             KeyCode::Down | KeyCode::Char('j') => InputAction::MoveDown,
             KeyCode::Left => InputAction::Decrease,
             KeyCode::Right => InputAction::Increase,
+            KeyCode::Char('i') => InputAction::Inspect,
+            KeyCode::Esc => InputAction::ClearContext,
             _ => InputAction::None,
         },
         Activity::Intelligence => match code {

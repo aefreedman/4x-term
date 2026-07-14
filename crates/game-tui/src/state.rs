@@ -1,6 +1,6 @@
 //! Pure, TUI-local interaction state.
 
-use game_app::{ContentId, Energy, PopulationTrend};
+use game_app::{ContentId, Energy, PopulationTrend, PresentationEvent};
 use std::cmp::Ordering;
 
 /// The player's current top-level activity.
@@ -184,7 +184,13 @@ pub struct UiState {
     pub sort_direction: SortDirection,
     pub system_index: usize,
     pub market_index: usize,
+    pub governance_index: usize,
     pub investment_index: usize,
+    pub route_proposal: Option<ContentId>,
+    pub governance_inspection: Option<ContentId>,
+    pub event_anchor: Option<u64>,
+    pub event_follow_tail: bool,
+    pub newer_events_available: bool,
     pub event_scroll: u16,
     pub trade_quantity: u32,
     pub quantity_input: Option<String>,
@@ -202,7 +208,13 @@ impl Default for UiState {
             sort_direction: SortDirection::Ascending,
             system_index: 0,
             market_index: 0,
+            governance_index: 0,
             investment_index: 0,
+            route_proposal: None,
+            governance_inspection: None,
+            event_anchor: None,
+            event_follow_tail: true,
+            newer_events_available: false,
             event_scroll: 0,
             trade_quantity: 1,
             quantity_input: None,
@@ -231,6 +243,63 @@ impl UiState {
         self.selected_system
             .as_ref()
             .and_then(|selected| systems.iter().position(|system| &system.id == selected))
+    }
+
+    /// Reconciles the Intelligence cursor against a replaceable bounded event
+    /// history. Tail-follow advances only while the cursor is already newest;
+    /// otherwise the stable presentation sequence remains the anchor.
+    pub fn reconcile_events(&mut self, events: &[PresentationEvent]) {
+        let Some(first) = events.first() else {
+            self.event_anchor = None;
+            self.event_follow_tail = true;
+            self.newer_events_available = false;
+            self.event_scroll = 0;
+            return;
+        };
+        let last = events.last().expect("non-empty event history");
+        if self.event_follow_tail || self.event_anchor.is_none() {
+            self.event_anchor = Some(last.sequence);
+            self.event_follow_tail = true;
+            self.newer_events_available = false;
+            self.event_scroll = 0;
+            return;
+        }
+
+        let previous = self.event_anchor.expect("checked above");
+        let anchor_index = events
+            .iter()
+            .position(|event| event.sequence == previous)
+            .unwrap_or_else(|| {
+                events
+                    .iter()
+                    .position(|event| event.sequence >= previous)
+                    .unwrap_or(events.len() - 1)
+            });
+        let anchor = events[anchor_index].sequence.max(first.sequence);
+        self.event_anchor = Some(anchor);
+        self.event_follow_tail = anchor == last.sequence;
+        self.newer_events_available = !self.event_follow_tail;
+        self.event_scroll = u16::try_from(events.len() - 1 - anchor_index).unwrap_or(u16::MAX);
+    }
+
+    /// Moves the Intelligence cursor by event rows, clamping to the bounded
+    /// history and resuming tail-follow when the newest row is reached.
+    pub fn scroll_events(&mut self, events: &[PresentationEvent], delta: isize) {
+        self.reconcile_events(events);
+        if events.is_empty() {
+            return;
+        }
+        let current = self
+            .event_anchor
+            .and_then(|anchor| events.iter().position(|event| event.sequence == anchor))
+            .unwrap_or(events.len() - 1);
+        let next = current
+            .saturating_add_signed(delta)
+            .min(events.len().saturating_sub(1));
+        self.event_anchor = Some(events[next].sequence);
+        self.event_follow_tail = next == events.len() - 1;
+        self.newer_events_available = !self.event_follow_tail;
+        self.event_scroll = u16::try_from(events.len() - 1 - next).unwrap_or(u16::MAX);
     }
 }
 

@@ -310,21 +310,21 @@ Validation:
 
 ### Phase 4: Implement Trade, Governance, and Intelligence activities
 
-- [ ] Have the primary agent write activity-specific acceptance tests first for contextual input isolation, trade, route transitions, governance, Intelligence scrolling, feedback, and help.
-- [ ] Delegate non-overlapping activity implementations against those exact tests; keep shared input/state changes with one implementation owner.
-- [ ] Implement the local Trade table, cargo/action summary, quantity modal, explicit remote/read-only inspection labeling, and disabled-state reasons.
-- [ ] Implement route proposal, explicit Begin Travel, rejection recovery, in-transit progress, and arrival-state transitions.
-- [ ] Implement Governance policy/import/investment tables with explicit selected rows, aligned values, allocation bars, immediate discrete edits, and adjacent result feedback.
-- [ ] Implement Intelligence event scrolling, tail-follow rules, player/fleet/world summaries, and bounded-history rollover behavior.
-- [ ] Scope every non-global key to its active activity and remove old punctuation/case-sensitive shortcuts where a clearer row/action interaction replaces them.
-- [ ] Update contextual help and action labels for all activity and modal states.
+- [x] Have the primary agent write activity-specific acceptance tests first for contextual input isolation, trade, route transitions, governance, Intelligence scrolling, feedback, and help.
+- [x] Delegate non-overlapping activity implementations against those exact tests; keep shared input/state changes with one implementation owner.
+- [x] Implement the local Trade table, cargo/action summary, quantity modal, explicit remote/read-only inspection labeling, and disabled-state reasons.
+- [x] Implement route proposal, explicit Begin Travel, rejection recovery, in-transit progress, and arrival-state transitions.
+- [x] Implement Governance policy/import/investment tables with explicit selected rows, aligned values, allocation bars, immediate discrete edits, and adjacent result feedback.
+- [x] Implement Intelligence event scrolling, tail-follow rules, player/fleet/world summaries, and bounded-history rollover behavior.
+- [x] Scope every non-global key to its active activity and remove old punctuation/case-sensitive shortcuts where a clearer row/action interaction replaces them.
+- [x] Update contextual help and action labels for all activity and modal states.
 
 Validation:
-- [ ] Input tests prove inactive-activity actions cannot fire against hidden selections.
-- [ ] Trade tests cover local/remote distinction, empty markets, traveling, insufficient resources, quantity cancel, accepted trade, and rejected trade with selection preserved.
-- [ ] Travel tests cover preview without mutation, commit, rejection, in-transit state, and arrival.
-- [ ] Governance tests cover visible investment selection, allocation constraints, accepted edits, read-only systems, and rejected policy updates.
-- [ ] Intelligence tests cover newest-tail following, scrolled-back anchoring, new-event indication, empty history, and bounded rollover.
+- [x] Input tests prove inactive-activity actions cannot fire against hidden selections.
+- [x] Trade tests cover local/remote distinction, empty markets, traveling, insufficient resources, quantity cancel, accepted trade, and rejected trade with selection preserved.
+- [x] Travel tests cover preview without mutation, commit, rejection, in-transit state, and arrival.
+- [x] Governance tests cover visible investment selection, allocation constraints, accepted edits, read-only systems, and rejected policy updates.
+- [x] Intelligence tests cover newest-tail following, scrolled-back anchoring, new-event indication, empty history, and bounded rollover.
 
 ### Phase 5: Visual polish, documentation, and regression closure
 
