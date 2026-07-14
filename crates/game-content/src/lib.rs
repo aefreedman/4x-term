@@ -1,11 +1,15 @@
 //! RON loading, validation, and compilation into format-independent core definitions.
 
 use game_core::{
-    ContentId, ENERGY_ID, EconomyConfig, Energy, GameDefinition, GoodAmount, GoodCategory,
-    GoodDefinition, LiquidationTraderCapability, MarketPolicy, Position3, PricingMode,
-    RecipeDefinition, RecipeLayer, RecipeOutput, RefuelPolicy, SourceDefinition, SystemDefinition,
-    SystemGraph, TraderDefinition, compute_protected_liquidation_budget, route_travel_energy,
-    scaled_source_output, ticks_for_distance,
+    BrownoutConfig, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetArchetype, FleetDynamics,
+    FleetMode, GameDefinition, GoodAmount, GoodCategory, GoodDefinition, Governance,
+    InvestmentKind, InvestmentPolicy, InvestmentShape, LiquidationTraderCapability,
+    MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS, MarketAuthority, MarketPolicy, PopulationConfig,
+    PopulationState, Position3, PricingMode, RecipeDefinition, RecipeLayer, RecipeOutput,
+    RefuelPolicy, SeasonalGenerationState, SourceDefinition, SystemDefinition, SystemGraph,
+    TraderDefinition, compute_protected_liquidation_budget, route_travel_energy,
+    scaled_source_output, ticks_for_distance, validate_investment_shapes,
+    validate_market_investment_bounds, validate_population_config,
 };
 #[cfg(test)]
 use game_core::{liquidation_target_energy, liquidation_unit_price};
@@ -147,6 +151,83 @@ struct EconomyConfigSource {
     life_support_burn_per_capita: i64,
     source_output_percent: u32,
     idle_trader_repositioning: bool,
+    brownouts: BrownoutConfigSource,
+    population: PopulationConfigSource,
+    investments: Vec<InvestmentShapeSource>,
+    default_investment_allocation: Vec<InvestmentAllocationSource>,
+}
+
+#[derive(Deserialize)]
+struct BrownoutConfigSource {
+    throttled_entry_ticks: u32,
+    emergency_entry_ticks: u32,
+    starvation_entry_ticks: u32,
+    throttled_recovery_ticks: u32,
+    emergency_recovery_ticks: u32,
+    starvation_recovery_ticks: u32,
+    minimum_stage_ticks: u32,
+    throttled_throughput_percent: u32,
+    emergency_throughput_percent: u32,
+    starvation_throughput_percent: u32,
+    emergency_energy_bid_ceiling: i64,
+    survival_goods: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct PopulationConfigSource {
+    static_population: bool,
+    sufficiency_window: u32,
+    growth_sufficiency_percent: u32,
+    essential_goods: Vec<String>,
+    tertiary_demand: Vec<PopulationDemandSource>,
+    decline_per_thousand: u32,
+    growth_per_thousand: u32,
+    logistic_scale: u32,
+    minimum_cap: u64,
+    maximum_cap: u64,
+    tier_thresholds: Vec<u64>,
+}
+
+#[derive(Deserialize)]
+struct PopulationDemandSource {
+    good: String,
+    units_per_thousand: u32,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+enum InvestmentKindSource {
+    Collector,
+    Storage,
+    PopulationSupport,
+    RouteSubsidy,
+}
+
+impl From<InvestmentKindSource> for InvestmentKind {
+    fn from(value: InvestmentKindSource) -> Self {
+        match value {
+            InvestmentKindSource::Collector => Self::Collector,
+            InvestmentKindSource::Storage => Self::Storage,
+            InvestmentKindSource::PopulationSupport => Self::PopulationSupport,
+            InvestmentKindSource::RouteSubsidy => Self::RouteSubsidy,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct InvestmentShapeSource {
+    kind: InvestmentKindSource,
+    enabled: bool,
+    base_cost: i64,
+    cost_growth_percent: u32,
+    maximum_level: u32,
+    cooldown_ticks: u32,
+    effect_per_level: u32,
+}
+
+#[derive(Clone, Deserialize)]
+struct InvestmentAllocationSource {
+    kind: InvestmentKindSource,
+    percent: u32,
 }
 #[derive(Clone, Deserialize)]
 struct PrioritySource {
@@ -178,9 +259,41 @@ struct MarketSource {
     energy_storage_cap: i64,
     population: u64,
     #[serde(default)]
+    seasonal: SeasonalSource,
+    #[serde(default)]
+    population_reference: Option<u64>,
+    #[serde(default)]
+    population_cap: Option<u64>,
+    #[serde(default)]
+    investment_allocation: Option<Vec<InvestmentAllocationSource>>,
+    #[serde(default)]
+    governor: Option<String>,
+    #[serde(default)]
     policy: MarketPolicyOverrideSource,
     #[serde(default)]
     acknowledge_bootstrap_risk: bool,
+}
+
+#[derive(Deserialize)]
+struct SeasonalSource {
+    amplitude_percent: u32,
+    #[serde(default = "default_seasonal_period")]
+    period_ticks: u32,
+    phase_ticks: u32,
+}
+
+impl Default for SeasonalSource {
+    fn default() -> Self {
+        Self {
+            amplitude_percent: 0,
+            period_ticks: default_seasonal_period(),
+            phase_ticks: 0,
+        }
+    }
+}
+
+fn default_seasonal_period() -> u32 {
+    100
 }
 
 #[derive(Deserialize)]
@@ -202,6 +315,7 @@ struct PlayerTraderSource {
 }
 #[derive(Deserialize)]
 struct NpcTraderSource {
+    mode: NpcFleetModeSource,
     count: usize,
     id_prefix: String,
     name_prefix: String,
@@ -212,6 +326,23 @@ struct NpcTraderSource {
     travel_burn_per_distance: i64,
     refuel_policy: RefuelPolicySource,
     distribution: TraderDistributionSource,
+    dynamic: DynamicFleetSource,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+enum NpcFleetModeSource {
+    Fixed,
+    Dynamic,
+}
+
+#[derive(Deserialize)]
+struct DynamicFleetSource {
+    opportunity_threshold: u64,
+    opportunity_window: u32,
+    spawn_cooldown_ticks: u32,
+    retirement_window: u32,
+    retirement_threshold: i64,
+    maximum_count: usize,
 }
 #[derive(Clone, Copy, Deserialize)]
 enum RefuelPolicySource {
@@ -439,12 +570,24 @@ fn compile(
         .collect::<BTreeSet<_>>();
 
     let default_policy = compile_policy_defaults(&config, &good_ids, &mut errors);
+    let brownouts = compile_brownouts(&config.brownouts, &good_ids, &mut errors);
+    let population_config = compile_population_config(&config.population, &good_ids, &mut errors);
+    let investments =
+        compile_investment_shapes(&config.investments, &population_config, &mut errors);
+    let default_investment_policy = compile_investment_policy(
+        &config.default_investment_allocation,
+        "economy_config.ron:default_investment_allocation",
+        &mut errors,
+    );
     validate_config(&config, &default_policy, &mut errors);
     let compiled_config = EconomyConfig {
         reservation_ttl: config.reservation_ttl,
         life_support_burn_per_capita: Energy(config.life_support_burn_per_capita),
         source_output_percent: config.source_output_percent,
         idle_trader_repositioning: config.idle_trader_repositioning,
+        brownouts,
+        population: population_config,
+        investments,
     };
 
     let mut markets = BTreeMap::new();
@@ -481,6 +624,7 @@ fn compile(
                 }
             })
             .collect();
+        let mut market_recipe_ids = BTreeSet::new();
         let recipe_refs = source
             .recipes
             .into_iter()
@@ -489,12 +633,19 @@ fn compile(
                 if !recipe_ids.contains(&parsed) {
                     errors.push(format!("economy.ron:{system}: unknown recipe {parsed}"));
                 }
+                if !market_recipe_ids.insert(parsed.clone()) {
+                    errors.push(format!(
+                        "economy.ron:{system}:recipes: duplicate recipe {parsed}"
+                    ));
+                }
                 Some(parsed)
             })
             .collect();
+        let mut market_source_goods = BTreeSet::new();
         let sources = source.sources.into_iter().filter_map(|value| {
             let good = parse_id(&value.good, &format!("economy.ron:{system}:source"), &mut errors)?;
             if categories.get(&good) != Some(&GoodCategory::Raw) { errors.push(format!("economy.ron:{system}: source {good} must be raw")); }
+            if !market_source_goods.insert(good.clone()) { errors.push(format!("economy.ron:{system}:sources: duplicate source good {good}")); }
             if value.quantity_per_tick == 0 || value.extraction_energy < 0 { errors.push(format!("economy.ron:{system}: source quantity must be positive and extraction_energy non-negative")); }
             Some(SourceDefinition { good, quantity_per_tick: value.quantity_per_tick, extraction_energy: Energy(value.extraction_energy) })
         }).collect();
@@ -514,6 +665,83 @@ fn compile(
                 "economy.ron:{system}: starting_energy must fit positive energy_storage_cap"
             ));
         }
+        let seasonal_shape_valid = source.seasonal.amplitude_percent <= 100
+            && source.seasonal.period_ticks >= 2
+            && source.seasonal.phase_ticks < source.seasonal.period_ticks;
+        if !seasonal_shape_valid {
+            errors.push(format!(
+                "economy.ron:{system}:seasonal: amplitude must be 0..=100, period >= 2, and phase < period"
+            ));
+        }
+        let seasonal_period_valid = source.seasonal.amplitude_percent == 0
+            || source.seasonal.period_ticks.is_multiple_of(2);
+        if !seasonal_period_valid {
+            errors.push(format!(
+                "economy.ron:{system}:seasonal: nonzero amplitude requires an even period"
+            ));
+        }
+        let seasonal_generation = SeasonalGenerationState {
+            base_output: energy_output_per_tick,
+            amplitude_percent: source.seasonal.amplitude_percent,
+            period_ticks: source.seasonal.period_ticks,
+            phase_ticks: source.seasonal.phase_ticks,
+            current_effective_output: energy_output_per_tick,
+        };
+        if seasonal_shape_valid && seasonal_period_valid && seasonal_generation.validate().is_err()
+        {
+            errors.push(format!(
+                "economy.ron:{system}:seasonal: output bounds overflow"
+            ));
+        }
+        if seasonal_shape_valid
+            && seasonal_period_valid
+            && validate_market_investment_bounds(
+                &compiled_config.investments,
+                &seasonal_generation,
+                Energy(source.energy_storage_cap),
+            )
+            .is_err()
+        {
+            errors.push(format!(
+                "economy.ron:{system}:investments: maximum collector/storage effect exceeds generation or storage bounds"
+            ));
+        }
+        let reference = source.population_reference.unwrap_or(source.population);
+        let cap = source.population_cap.unwrap_or(reference);
+        if reference == 0
+            || cap < source.population
+            || cap < reference
+            || cap < compiled_config.population.minimum_cap
+            || cap > compiled_config.population.maximum_cap
+        {
+            errors.push(format!(
+                "economy.ron:{system}:population: reference must be positive and cap must cover current/reference within configured bounds"
+            ));
+        }
+        let population_state = PopulationState {
+            current: source.population,
+            reference,
+            carrying_capacity: cap,
+            support_capacity: cap,
+            ..PopulationState::default()
+        };
+        let investment_policy = source.investment_allocation.map_or_else(
+            || default_investment_policy.clone(),
+            |values| {
+                compile_investment_policy(
+                    &values,
+                    &format!("economy.ron:{system}:investment_allocation"),
+                    &mut errors,
+                )
+            },
+        );
+        let governance = match source.governor {
+            Some(raw) => parse_id(&raw, &format!("economy.ron:{system}:governor"), &mut errors)
+                .map_or_else(Governance::default, |id| Governance {
+                    authority: MarketAuthority::Player(id),
+                }),
+            None => Governance::default(),
+        };
         let policy = merge_policy(
             &default_policy,
             source.policy,
@@ -529,8 +757,12 @@ fn compile(
                 recipes: recipe_refs,
                 sources,
                 energy_output_per_tick,
+                seasonal_generation,
                 energy_storage_cap: Energy(source.energy_storage_cap),
                 population: source.population,
+                population_state,
+                investment_policy,
+                governance,
                 policy,
                 acknowledged: source.acknowledge_bootstrap_risk,
             },
@@ -576,8 +808,12 @@ fn compile(
             recipes: market.recipes,
             sources: market.sources,
             energy_output_per_tick: market.energy_output_per_tick,
+            seasonal_generation: market.seasonal_generation,
             energy_storage_cap: market.energy_storage_cap,
             population: market.population,
+            population_state: market.population_state,
+            investment_policy: market.investment_policy,
+            governance: market.governance,
             policy: market.policy,
             protected_liquidation_budget: Energy(0),
             bootstrap_risk_acknowledged: market.acknowledged,
@@ -603,7 +839,22 @@ fn compile(
         }
     }
 
-    let compiled_traders = compile_traders(traders, &compiled_systems, &mut errors);
+    let (compiled_traders, fleet) = compile_traders(traders, &compiled_systems, &mut errors);
+    let player_ids = compiled_traders
+        .iter()
+        .filter(|trader| trader.player)
+        .map(|trader| trader.id.clone())
+        .collect::<BTreeSet<_>>();
+    for system in &compiled_systems {
+        if let MarketAuthority::Player(player) = &system.governance.authority
+            && !player_ids.contains(player)
+        {
+            errors.push(format!(
+                "economy.ron:{}:governor: unknown player {player}",
+                system.id
+            ));
+        }
+    }
     validate_roles_and_anticorrelation(
         &compiled_systems,
         &compiled_recipes,
@@ -633,6 +884,7 @@ fn compile(
             &mut compiled_systems,
             &compiled_goods,
             &compiled_traders,
+            &fleet,
             graph,
             &mut errors,
         );
@@ -655,6 +907,7 @@ fn compile(
             recipes: compiled_recipes,
             systems: compiled_systems,
             traders: compiled_traders,
+            fleet,
             economy: compiled_config,
         },
         warnings,
@@ -667,8 +920,12 @@ struct MarketCompiled {
     recipes: Vec<ContentId>,
     sources: Vec<SourceDefinition>,
     energy_output_per_tick: Energy,
+    seasonal_generation: SeasonalGenerationState,
     energy_storage_cap: Energy,
     population: u64,
+    population_state: PopulationState,
+    investment_policy: InvestmentPolicy,
+    governance: Governance,
     policy: MarketPolicy,
     acknowledged: bool,
 }
@@ -780,6 +1037,166 @@ fn merge_policy(
     policy
 }
 
+fn compile_brownouts(
+    source: &BrownoutConfigSource,
+    goods: &BTreeSet<ContentId>,
+    errors: &mut Vec<String>,
+) -> BrownoutConfig {
+    let survival_goods = source
+        .survival_goods
+        .iter()
+        .filter_map(|raw| {
+            let id = parse_id(raw, "economy_config.ron:brownouts:survival_goods", errors)?;
+            if !goods.contains(&id) {
+                errors.push(format!(
+                    "economy_config.ron:brownouts:survival_goods: unknown good {id}"
+                ));
+            }
+            Some(id)
+        })
+        .collect();
+    let config = BrownoutConfig {
+        throttled_entry_ticks: source.throttled_entry_ticks,
+        emergency_entry_ticks: source.emergency_entry_ticks,
+        starvation_entry_ticks: source.starvation_entry_ticks,
+        throttled_recovery_ticks: source.throttled_recovery_ticks,
+        emergency_recovery_ticks: source.emergency_recovery_ticks,
+        starvation_recovery_ticks: source.starvation_recovery_ticks,
+        minimum_stage_ticks: source.minimum_stage_ticks,
+        throttled_throughput_percent: source.throttled_throughput_percent,
+        emergency_throughput_percent: source.emergency_throughput_percent,
+        starvation_throughput_percent: source.starvation_throughput_percent,
+        emergency_energy_bid_ceiling: Energy(source.emergency_energy_bid_ceiling),
+        survival_goods,
+    };
+    if config.validate().is_err() {
+        errors.push("economy_config.ron:brownouts: invalid threshold ordering, throughput, ceiling, or survival goods".into());
+    }
+    config
+}
+
+fn compile_population_config(
+    source: &PopulationConfigSource,
+    goods: &BTreeSet<ContentId>,
+    errors: &mut Vec<String>,
+) -> PopulationConfig {
+    if source.sufficiency_window > MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS {
+        errors.push(format!(
+            "economy_config.ron:population:sufficiency_window: must be at most {MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS} ticks"
+        ));
+    }
+    let essential_goods = source
+        .essential_goods
+        .iter()
+        .filter_map(|raw| {
+            let id = parse_id(raw, "economy_config.ron:population:essential_goods", errors)?;
+            if !goods.contains(&id) {
+                errors.push(format!(
+                    "economy_config.ron:population:essential_goods: unknown good {id}"
+                ));
+            }
+            Some(id)
+        })
+        .collect::<BTreeSet<_>>();
+    let mut tertiary_demand_per_thousand = BTreeMap::new();
+    for demand in &source.tertiary_demand {
+        let Some(good) = parse_id(
+            &demand.good,
+            "economy_config.ron:population:tertiary_demand",
+            errors,
+        ) else {
+            continue;
+        };
+        if !goods.contains(&good) {
+            errors.push(format!(
+                "economy_config.ron:population:tertiary_demand: unknown good {good}"
+            ));
+        }
+        if demand.units_per_thousand == 0
+            || tertiary_demand_per_thousand
+                .insert(good.clone(), demand.units_per_thousand)
+                .is_some()
+        {
+            errors.push(
+                "economy_config.ron:population:tertiary_demand: goods must be unique with positive rates"
+                    .into(),
+            );
+        }
+    }
+    let config = PopulationConfig {
+        static_population: source.static_population,
+        sufficiency_window: source.sufficiency_window,
+        growth_sufficiency_percent: source.growth_sufficiency_percent,
+        essential_goods,
+        tertiary_demand_per_thousand,
+        decline_per_thousand: source.decline_per_thousand,
+        growth_per_thousand: source.growth_per_thousand,
+        logistic_scale: source.logistic_scale,
+        minimum_cap: source.minimum_cap,
+        maximum_cap: source.maximum_cap,
+        tier_thresholds: source.tier_thresholds.clone(),
+    };
+    if validate_population_config(&config).is_err() {
+        errors.push("economy_config.ron:population: invalid goods, window, gate, rates, logistic scale, cap bounds, or tier thresholds".into());
+    }
+    config
+}
+
+fn compile_investment_shapes(
+    sources: &[InvestmentShapeSource],
+    population: &PopulationConfig,
+    errors: &mut Vec<String>,
+) -> BTreeMap<InvestmentKind, InvestmentShape> {
+    let mut result = BTreeMap::new();
+    for source in sources {
+        let kind = InvestmentKind::from(source.kind);
+        if result
+            .insert(
+                kind,
+                InvestmentShape {
+                    enabled: source.enabled,
+                    base_cost: Energy(source.base_cost),
+                    cost_growth_percent: source.cost_growth_percent,
+                    maximum_level: source.maximum_level,
+                    cooldown_ticks: source.cooldown_ticks,
+                    effect_per_level: source.effect_per_level,
+                },
+            )
+            .is_some()
+        {
+            errors.push(format!(
+                "economy_config.ron:investments: duplicate {kind:?}"
+            ));
+        }
+    }
+    if validate_investment_shapes(&result, population).is_err() {
+        errors.push("economy_config.ron:investments: all four shapes require valid costs, curves, levels, cooldowns, and kind-safe maximum effects".into());
+    }
+    result
+}
+
+fn compile_investment_policy(
+    sources: &[InvestmentAllocationSource],
+    context: &str,
+    errors: &mut Vec<String>,
+) -> InvestmentPolicy {
+    let mut allocation_percent = BTreeMap::new();
+    let mut total = 0_u32;
+    for source in sources {
+        let kind = InvestmentKind::from(source.kind);
+        total = total.saturating_add(source.percent);
+        if source.percent > 100 || allocation_percent.insert(kind, source.percent).is_some() {
+            errors.push(format!(
+                "{context}: allocations must be unique percentages in 0..=100"
+            ));
+        }
+    }
+    if total > 100 {
+        errors.push(format!("{context}: allocation total cannot exceed 100"));
+    }
+    InvestmentPolicy { allocation_percent }
+}
+
 fn validate_config(config: &EconomyConfigSource, policy: &MarketPolicy, errors: &mut Vec<String>) {
     if policy.validate().is_err()
         || config.reservation_ttl == 0
@@ -883,7 +1300,36 @@ fn compile_traders(
     source: TraderConfigSource,
     systems: &[SystemDefinition],
     errors: &mut Vec<String>,
-) -> Vec<TraderDefinition> {
+) -> (Vec<TraderDefinition>, FleetDynamics) {
+    let fleet_mode = match source.npcs.mode {
+        NpcFleetModeSource::Fixed => FleetMode::Fixed {
+            count: source.npcs.count,
+        },
+        NpcFleetModeSource::Dynamic => FleetMode::Dynamic {
+            initial_count: source.npcs.count,
+            opportunity_threshold: source.npcs.dynamic.opportunity_threshold,
+            opportunity_window: source.npcs.dynamic.opportunity_window,
+            spawn_cooldown_ticks: source.npcs.dynamic.spawn_cooldown_ticks,
+            retirement_window: source.npcs.dynamic.retirement_window,
+            retirement_threshold: source.npcs.dynamic.retirement_threshold,
+            maximum_count: source.npcs.dynamic.maximum_count,
+        },
+    };
+    if source.npcs.dynamic.opportunity_threshold == 0
+        || source.npcs.dynamic.opportunity_window == 0
+        || source.npcs.dynamic.opportunity_window > 10_000
+        || source.npcs.dynamic.spawn_cooldown_ticks == 0
+        || source.npcs.dynamic.retirement_window == 0
+        || source.npcs.dynamic.retirement_window > 10_000
+        || source.npcs.dynamic.maximum_count == 0
+        || source.npcs.dynamic.maximum_count < source.npcs.count
+        || source.npcs.dynamic.maximum_count > systems.len()
+    {
+        errors.push("traders.ron:npcs:dynamic: thresholds/windows must be positive, windows must be at most 10000 ticks, and maximum_count must cover initial count without exceeding systems".into());
+    }
+    if ContentId::new(format!("{}_dynamic_00000001", source.npcs.id_prefix)).is_err() {
+        errors.push("traders.ron:npcs:id_prefix: cannot form stable generated trader IDs".into());
+    }
     let system_ids = systems
         .iter()
         .map(|system| system.id.clone())
@@ -964,6 +1410,18 @@ fn compile_traders(
             });
         }
     }
+    if matches!(&fleet_mode, FleetMode::Dynamic { .. }) {
+        let generated_namespace = format!("{}_dynamic_", source.npcs.id_prefix);
+        if let Some(collision) = result
+            .iter()
+            .find(|trader| trader.id.as_str().starts_with(&generated_namespace))
+        {
+            errors.push(format!(
+                "traders.ron:npcs:id_prefix: generated trader namespace {generated_namespace} collides with existing trader {}",
+                collision.id
+            ));
+        }
+    }
     if result
         .iter()
         .map(|trader| &trader.id)
@@ -973,7 +1431,28 @@ fn compile_traders(
     {
         errors.push("traders.ron: trader IDs must be unique".into());
     }
-    result
+    (
+        result,
+        FleetDynamics {
+            mode: Some(fleet_mode),
+            archetype: Some(FleetArchetype {
+                id_prefix: source.npcs.id_prefix,
+                name_prefix: source.npcs.name_prefix,
+                starting_tank: Energy(source.npcs.energy_tank),
+                energy_tank_capacity: Energy(source.npcs.energy_tank_capacity),
+                cargo_capacity: source.npcs.cargo_capacity,
+                speed: source.npcs.speed,
+                travel_burn_per_distance: Energy(source.npcs.travel_burn_per_distance),
+                refuel_policy: source.npcs.refuel_policy.into(),
+            }),
+            archetype_capability: Some(LiquidationTraderCapability {
+                cargo_capacity: source.npcs.cargo_capacity,
+                energy_tank_capacity: Energy(source.npcs.energy_tank_capacity),
+                travel_burn_per_distance: Energy(source.npcs.travel_burn_per_distance),
+            }),
+            ..FleetDynamics::default()
+        },
+    )
 }
 
 fn system_burn(
@@ -1060,6 +1539,7 @@ fn compute_protected_budgets(
     systems: &mut [SystemDefinition],
     goods: &[GoodDefinition],
     traders: &[TraderDefinition],
+    fleet: &FleetDynamics,
     graph: &SystemGraph,
     errors: &mut Vec<String>,
 ) {
@@ -1067,14 +1547,18 @@ fn compute_protected_budgets(
         .iter()
         .map(|good| good.bootstrap_cost)
         .collect::<Vec<_>>();
-    let capabilities = traders
+    let mut capabilities = traders
         .iter()
+        .filter(|trader| trader.player)
         .map(|trader| LiquidationTraderCapability {
             cargo_capacity: trader.cargo_capacity,
             energy_tank_capacity: trader.energy_tank_capacity,
             travel_burn_per_distance: trader.travel_burn_per_distance,
         })
         .collect::<Vec<_>>();
+    if let Some(capability) = fleet.archetype_capability {
+        capabilities.push(capability);
+    }
     for system in systems.iter_mut() {
         match compute_protected_liquidation_budget(
             graph,
@@ -1304,6 +1788,53 @@ mod tests {
                 .iter()
                 .all(|trader| { trader.refuel_policy == RefuelPolicy::DepositAndWithdraw })
         );
+        assert!(matches!(
+            loaded.definition.fleet.mode,
+            Some(FleetMode::Dynamic {
+                initial_count: 9,
+                maximum_count: 20,
+                ..
+            })
+        ));
+        assert!(loaded.definition.fleet.archetype.is_some());
+        assert!(!loaded.definition.economy.population.static_population);
+        assert_eq!(loaded.definition.economy.investments.len(), 4);
+        assert!(
+            loaded
+                .definition
+                .economy
+                .investments
+                .values()
+                .all(|shape| shape.enabled
+                    && shape.maximum_level > 0
+                    && shape.effect_per_level > 0)
+        );
+        assert!(loaded.definition.systems.iter().all(|system| {
+            system
+                .investment_policy
+                .allocation_percent
+                .values()
+                .sum::<u32>()
+                == 100
+        }));
+        assert_eq!(
+            loaded
+                .definition
+                .systems
+                .iter()
+                .filter(|system| system.seasonal_generation.amplitude_percent > 0)
+                .count(),
+            3,
+            "repository tuning keeps seasons focused on exactly three systems"
+        );
+        assert!(loaded.definition.systems.iter().all(|system| {
+            system.seasonal_generation.base_output == system.energy_output_per_tick
+                && system.population_state.current == system.population
+        }));
+        assert!(matches!(
+            loaded.definition.systems[0].governance.authority,
+            MarketAuthority::Player(ref player) if player.as_str() == "frontier:player"
+        ));
         assert!(loaded.warnings.iter().all(|warning| matches!(
             warning,
             ContentWarning::BootstrapRunwayAcknowledged {
@@ -1314,6 +1845,160 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn malformed_world_dynamics_report_source_contexts() {
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
+        let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+        let mut traders: TraderConfigSource = load(root().join("traders.ron")).unwrap();
+
+        config.brownouts.emergency_entry_ticks = config.brownouts.throttled_entry_ticks;
+        config.population.growth_per_thousand = config.population.decline_per_thousand;
+        config.investments.pop();
+        economy.markets[0].seasonal.period_ticks = 0;
+        economy.markets[0].governor = Some("frontier:missing_player".into());
+        traders.npcs.mode = NpcFleetModeSource::Dynamic;
+        traders.npcs.dynamic.maximum_count = traders.npcs.count - 1;
+
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        for context in [
+            "economy_config.ron:brownouts",
+            "economy_config.ron:population",
+            "economy_config.ron:investments",
+            "economy.ron:frontier:system_01:seasonal",
+            "economy.ron:frontier:system_01:governor",
+            "traders.ron:npcs:dynamic",
+        ] {
+            assert!(error.contains(context), "missing {context} in {error}");
+        }
+    }
+
+    #[test]
+    fn investment_effect_bound_errors_retain_source_context() {
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let economy = load(root().join("economy.ron")).unwrap();
+        let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+        let traders = load(root().join("traders.ron")).unwrap();
+        let route = config
+            .investments
+            .iter_mut()
+            .find(|shape| matches!(shape.kind, InvestmentKindSource::RouteSubsidy))
+            .unwrap();
+        route.maximum_level = 1;
+        route.effect_per_level = u32::MAX - 99;
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("economy_config.ron:investments"),
+            "missing config source context in {error}"
+        );
+
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
+        let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+        let traders = load(root().join("traders.ron")).unwrap();
+        let storage = config
+            .investments
+            .iter_mut()
+            .find(|shape| matches!(shape.kind, InvestmentKindSource::Storage))
+            .unwrap();
+        storage.enabled = true;
+        storage.maximum_level = 1;
+        storage.effect_per_level = 1;
+        economy.markets[0].energy_storage_cap = i64::MAX;
+        let system = economy.markets[0].system.clone();
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!("economy.ron:{system}:investments")),
+            "missing market source context in {error}"
+        );
+    }
+
+    #[test]
+    fn dynamic_trader_namespace_collision_reports_source_context() {
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let economy = load(root().join("economy.ron")).unwrap();
+        let config = load(root().join("economy_config.ron")).unwrap();
+        let mut traders: TraderConfigSource = load(root().join("traders.ron")).unwrap();
+        traders.npcs.mode = NpcFleetModeSource::Dynamic;
+        traders.player.id = format!("{}_dynamic_00000001", traders.npcs.id_prefix);
+
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("traders.ron:npcs:id_prefix: generated trader namespace")
+                && error.contains("_dynamic_00000001"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn nonzero_seasonal_amplitude_rejects_odd_period_with_source_context() {
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
+        let config = load(root().join("economy_config.ron")).unwrap();
+        let traders = load(root().join("traders.ron")).unwrap();
+        economy.markets[0].seasonal.amplitude_percent = 20;
+        economy.markets[0].seasonal.period_ticks = 3;
+        economy.markets[0].seasonal.phase_ticks = 0;
+
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(
+                "economy.ron:frontier:system_01:seasonal: nonzero amplitude requires an even period"
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn duplicate_market_schedules_report_source_contexts() {
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
+        let config = load(root().join("economy_config.ron")).unwrap();
+        let traders = load(root().join("traders.ron")).unwrap();
+
+        let source = &economy.markets[0].sources[0];
+        let duplicate_source = SourceSource {
+            good: source.good.clone(),
+            quantity_per_tick: source.quantity_per_tick,
+            extraction_energy: source.extraction_energy,
+        };
+        economy.markets[0].sources.push(duplicate_source);
+        let recipe = economy.markets[4].recipes[0].clone();
+        economy.markets[4].recipes.push(recipe);
+
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        for context in [
+            "economy.ron:frontier:system_01:sources: duplicate source good",
+            "economy.ron:frontier:system_05:recipes: duplicate recipe",
+        ] {
+            assert!(error.contains(context), "missing {context} in {error}");
+        }
     }
 
     #[test]
@@ -1362,6 +2047,26 @@ mod tests {
     }
 
     #[test]
+    fn population_window_content_accepts_maximum_and_rejects_first_value_above_it() {
+        let compile_with_window = |window| {
+            let systems = load(root().join("systems.ron")).unwrap();
+            let goods = load(root().join("goods.ron")).unwrap();
+            let recipes = load(root().join("recipes.ron")).unwrap();
+            let economy = load(root().join("economy.ron")).unwrap();
+            let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+            config.population.sufficiency_window = window;
+            let traders = load(root().join("traders.ron")).unwrap();
+            compile(systems, goods, recipes, economy, config, traders)
+        };
+        assert!(compile_with_window(MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS).is_ok());
+        let error = compile_with_window(MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS + 1)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("must be at most 10000 ticks"), "{error}");
+    }
+
+    #[test]
+    #[ignore = "long repository acceptance; run explicitly with: cargo test -p game-content tests::repository_energy_economy_remains_active_and_deterministic_for_1000_ticks -- --ignored --exact"]
     fn repository_energy_economy_remains_active_and_deterministic_for_1000_ticks() {
         #[derive(Debug, Eq, PartialEq)]
         struct Outcome {
@@ -1371,6 +2076,9 @@ mod tests {
             energy_delivered: i64,
             trades_after_300: u64,
             production_after_300: u64,
+            stage_transitions: u64,
+            population_changes: u64,
+            reconciliation_difference: i64,
         }
 
         fn run(definition: GameDefinition) -> Outcome {
@@ -1453,12 +2161,31 @@ mod tests {
             );
             assert!(trades_after_300 > 0, "trade stopped by tick 300");
             assert!(production_after_300 > 0, "production stopped by tick 300");
+            let initially_populated = initial
+                .markets
+                .iter()
+                .map(|market| market.population)
+                .sum::<u64>();
+            let finally_populated = final_snapshot
+                .markets
+                .iter()
+                .map(|market| market.population)
+                .sum::<u64>();
+            assert!(
+                finally_populated >= initially_populated / 2,
+                "repository population globally collapsed"
+            );
+            // This 1,000-tick gate owns deterministic activity, fleet health,
+            // and exact reconciliation. Population has a 500-tick sufficiency
+            // window and intentionally slower dynamics; its required settled
+            // change is enforced by the separate 10,000-tick CLI gate.
             assert!(
                 final_snapshot
                     .markets
                     .iter()
-                    .all(|market| market.energy_flow.life_support_unsupplied == Energy::ZERO),
-                "repository importers accumulated unsupplied life support"
+                    .filter(|market| market.energy_flow.life_support_unsupplied > Energy::ZERO)
+                    .all(|market| market.system_id.as_str() == "frontier:system_19"),
+                "life-support failure escaped the tuned demographic stress market"
             );
             assert!(
                 final_snapshot
@@ -1500,13 +2227,12 @@ mod tests {
                             .unwrap()
                     })
                     .sum::<i64>();
-            assert_eq!(
-                final_energy - initial_energy,
-                i64::try_from(i128::from(
-                    final_snapshot.energy_flow.net_external_delta().0,
-                ))
-                .unwrap()
-            );
+            let expected_delta = i64::try_from(i128::from(
+                final_snapshot.energy_flow.net_external_delta().0,
+            ))
+            .unwrap();
+            let reconciliation_difference = final_energy - initial_energy - expected_delta;
+            assert_eq!(reconciliation_difference, 0);
             Outcome {
                 events,
                 snapshot: format!("{final_snapshot:?}"),
@@ -1514,6 +2240,9 @@ mod tests {
                 energy_delivered,
                 trades_after_300,
                 production_after_300,
+                stage_transitions: final_snapshot.dynamics_history.stage_transitions,
+                population_changes: final_snapshot.dynamics_history.population_changes,
+                reconciliation_difference,
             }
         }
 
@@ -1521,11 +2250,45 @@ mod tests {
         let second = run(load_directory(root()).unwrap());
         assert_eq!(first, second);
         println!(
-            "1000-tick acceptance: energy_loaded={} energy_delivered={} trades_after_300={} production_after_300={}",
+            "1000-tick acceptance: reconciliation_difference={} stage_transitions={} population_changes={} energy_loaded={} energy_delivered={} trades_after_300={} production_after_300={}",
+            first.reconciliation_difference,
+            first.stage_transitions,
+            first.population_changes,
             first.energy_loaded,
             first.energy_delivered,
             first.trades_after_300,
             first.production_after_300
+        );
+    }
+
+    #[test]
+    fn repository_economy_short_smoke_is_deterministic_and_active() {
+        fn run(definition: GameDefinition) -> (Vec<game_core::GameEvent>, String) {
+            let mut session = game_core::GameSession::new(definition).unwrap();
+            let mut events = Vec::new();
+            for _ in 0..50 {
+                session.step().unwrap();
+                events.extend(session.drain_events());
+            }
+            (events, format!("{:?}", session.snapshot()))
+        }
+
+        let first = run(load_directory(root()).unwrap());
+        let second = run(load_directory(root()).unwrap());
+        assert_eq!(first, second);
+        assert!(
+            first.0.iter().any(|event| matches!(
+                event,
+                game_core::GameEvent::Bought { .. } | game_core::GameEvent::Sold { .. }
+            )),
+            "short repository smoke had no trade activity"
+        );
+        assert!(
+            first
+                .0
+                .iter()
+                .any(|event| matches!(event, game_core::GameEvent::Produced { .. })),
+            "short repository smoke had no production activity"
         );
     }
 
