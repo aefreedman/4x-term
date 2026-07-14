@@ -174,11 +174,19 @@ pub enum InputLayer {
     Detail,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SystemDetailKind {
+    #[default]
+    Overview,
+    Market,
+}
+
 /// All state local to the terminal adapter.
 #[derive(Clone, Debug)]
 pub struct UiState {
     pub activity: Activity,
     pub input_layer: InputLayer,
+    pub system_detail: SystemDetailKind,
     pub selected_system: Option<ContentId>,
     pub system_sort: SystemSortKey,
     pub sort_direction: SortDirection,
@@ -202,6 +210,7 @@ impl Default for UiState {
         Self {
             activity: Activity::Systems,
             input_layer: InputLayer::Root,
+            system_detail: SystemDetailKind::Overview,
             selected_system: None,
             system_sort: SystemSortKey::Name,
             sort_direction: SortDirection::Ascending,

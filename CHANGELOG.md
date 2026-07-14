@@ -24,6 +24,7 @@
 
 - Replaced the all-at-once terminal dashboard with F1–F4 Systems, Trade, Governance, and Intelligence modes, contextual controls, and cell-based compact (`80x30`) and regular (`160x45`) layouts.
 - Systems, Trade, and Governance tables now use deterministic selected-row viewports with position/more indicators; compact Trade prioritizes its selected action and unavailable reason.
+- Systems navigation wraps, selected remote markets have an explicit read-only view, Governance can jump between sections, warning markers reflect actual severity, and shortcut accents are consistent across primary surfaces.
 - Route previews, active travel, direct connections, and player location now use readable system names with jump, distance, timing, and route-specific required-energy summaries instead of exposing internal content IDs.
 - Event log entries now resolve system, trader, good, and production-process IDs to readable display names.
 - Player cargo now displays readable good names instead of internal content IDs.

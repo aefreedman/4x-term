@@ -25,9 +25,9 @@ cargo run -p game-cli
 
 The interface is organized into four modes:
 
-- `F1` **Systems**: `↑`/`↓` or `j`/`k` selects a system; `Enter` opens compact detail; `o` changes the sort column; `d` reverses sort direction. Press `F2` to carry the selected destination into a route proposal.
+- `F1` **Systems**: `↑`/`↓` or `j`/`k` wraps through systems; `Enter` opens overview detail; `m` opens the selected system's read-only market; `o` changes the sort column; `d` reverses sort direction. Press `F2` to carry the selected destination into a route proposal.
 - `F2` **Trade**: `↑`/`↓` or `j`/`k` selects a good; `n` enters quantity; `b` buys; `x` sells; `t` or `Enter` commits the displayed route proposal; `Esc` clears it.
-- `F3` **Governance**: `↑`/`↓` or `j`/`k` selects a policy, import, or investment row; `←`/`→` edits an available governed row; `i` inspects the stable Systems selection; `Esc` returns to the governed market. Autonomous markets are explicitly read-only.
+- `F3` **Governance**: `↑`/`↓` or `j`/`k` selects a row; `Tab`/`Shift-Tab` jumps between policy, import, and investment sections; `←`/`→` edits an available governed row; `i` inspects the stable Systems selection; `Esc` returns to the governed market. Autonomous markets are explicitly read-only.
 - `F4` **Intelligence**: `↑`/`↓` or `j`/`k` scrolls the bounded event history.
 
 Global controls are `Space` to pause/resume, `s` to single-step while paused, `r` to change tick rate, `?` for contextual help, and `q` to quit. Unavailable actions are shown as disabled with a reason.

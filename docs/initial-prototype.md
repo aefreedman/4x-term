@@ -463,9 +463,9 @@ Terminal dimensions are cell counts, not pixels. `80x30` cells is the minimum su
 
 ### Required controls
 
-- `F1` Systems: `↑`/`↓` or `j`/`k` selects; `Enter` opens compact detail and `Esc` returns; `o` cycles sort column; `d` reverses direction; `F2` carries the selection into a route proposal.
+- `F1` Systems: `↑`/`↓` or `j`/`k` wraps through systems; `Enter` opens overview detail; `m` opens the selected system's read-only market; `Esc` returns; `o` cycles sort column; `d` reverses direction; `F2` carries the selection into a route proposal.
 - `F2` Trade: `↑`/`↓` or `j`/`k` selects a good; `n` opens quantity entry; `b` buys; `x` sells; `t` or `Enter` commits the displayed proposal; `Esc` clears it.
-- `F3` Governance: `↑`/`↓` or `j`/`k` selects a row; `←`/`→` edits an available governed row; `i` inspects the stable Systems selection; `Esc` returns to the governed market.
+- `F3` Governance: `↑`/`↓` or `j`/`k` selects a row; `Tab`/`Shift-Tab` jumps between policy, import, and investment sections; `←`/`→` edits an available governed row; `i` inspects the stable Systems selection; `Esc` returns to the governed market.
 - `F4` Intelligence: `↑`/`↓` or `j`/`k` scrolls events; reaching the newest event resumes tail-follow.
 - Global: `Space` pauses/resumes, `s` advances exactly one tick while paused, `r` cycles tick rate, `?` opens contextual help, and `q` quits cleanly.
 

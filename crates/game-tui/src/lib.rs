@@ -5,8 +5,8 @@ pub mod state;
 
 pub use input::{InputAction, route_key};
 pub use state::{
-    Activity, InputLayer, LayoutClass, SortDirection, SystemOrderItem, SystemSortKey, UiState,
-    classify_layout, order_systems,
+    Activity, InputLayer, LayoutClass, SortDirection, SystemDetailKind, SystemOrderItem,
+    SystemSortKey, UiState, classify_layout, order_systems,
 };
 
 use anyhow::Result;
@@ -290,7 +290,16 @@ async fn handle_key_for_layout(
             ui.sort_direction = ui.sort_direction.toggled();
             sync_system_row(ui, view);
         }
-        InputAction::OpenDetail => ui.input_layer = InputLayer::Detail,
+        InputAction::OpenDetail => {
+            ui.system_detail = SystemDetailKind::Overview;
+            ui.input_layer = InputLayer::Detail;
+        }
+        InputAction::OpenMarketDetail => {
+            ui.system_detail = SystemDetailKind::Market;
+            ui.input_layer = InputLayer::Detail;
+        }
+        InputAction::NextSection => jump_governance_section(ui, view, 1),
+        InputAction::PreviousSection => jump_governance_section(ui, view, -1),
         InputAction::OpenQuantity => {
             if view.local_trade.market.is_empty() {
                 ui.message = "No local market goods are available".into();
@@ -546,7 +555,7 @@ fn move_selection(ui: &mut UiState, view: &ApplicationView, delta: isize) {
             let current = selected_system_id(view, ui, &ordered)
                 .and_then(|selected| ordered.iter().position(|system| system.id == selected))
                 .unwrap_or(0);
-            ui.system_index = shifted(current, ordered.len(), delta);
+            ui.system_index = wrapped_shifted(current, ordered.len(), delta);
             ui.selected_system = ordered.get(ui.system_index).map(|system| system.id.clone());
         }
         Activity::Governance => {
@@ -570,6 +579,32 @@ fn shifted(current: usize, len: usize, delta: isize) -> usize {
         0
     } else {
         current.saturating_add_signed(delta).min(len - 1)
+    }
+}
+
+fn wrapped_shifted(current: usize, len: usize, delta: isize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    ((current as isize + delta).rem_euclid(len as isize)) as usize
+}
+
+fn jump_governance_section(ui: &mut UiState, view: &ApplicationView, delta: isize) {
+    let mut starts = vec![0];
+    if !view.inspection.market.is_empty() {
+        starts.push(2);
+    }
+    if !view.inspection.governor.investments.is_empty() {
+        starts.push(2 + view.inspection.market.len());
+    }
+    let current = starts
+        .iter()
+        .rposition(|start| *start <= ui.governance_index)
+        .unwrap_or(0);
+    let section = wrapped_shifted(current, starts.len(), delta);
+    ui.governance_index = starts[section];
+    if ui.governance_index >= 2 + view.inspection.market.len() {
+        ui.investment_index = 0;
     }
 }
 
@@ -678,9 +713,17 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
             );
         frame.render_widget(Clear, popup);
         frame.render_widget(
-            Paragraph::new(format!(
-                "Good: {good}\nQuantity: {input}_\nBuy total: {buy_total} · Sell total: {sell_total}\nEnter confirm · Esc cancel"
-            ))
+            Paragraph::new(vec![
+                Line::from(format!("Good: {good}")),
+                Line::from(format!("Quantity: {input}_")),
+                Line::from(format!("Buy total: {buy_total} · Sell total: {sell_total}")),
+                Line::from(vec![
+                    shortcut_span("Enter"),
+                    Span::raw(" confirm · "),
+                    shortcut_span("Esc"),
+                    Span::raw(" cancel"),
+                ]),
+            ])
             .block(Block::bordered().title("Trade Quantity Preview")),
             popup,
         );
@@ -698,28 +741,33 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
 
 fn render_activity_bar(frame: &mut Frame<'_>, area: Rect, active: Activity) {
     let entries = [
-        (Activity::Systems, "F1 Systems"),
-        (Activity::Trade, "F2 Trade"),
-        (Activity::Governance, "F3 Governance"),
-        (Activity::Intelligence, "F4 Intelligence"),
+        (Activity::Systems, "F1", "Systems"),
+        (Activity::Trade, "F2", "Trade"),
+        (Activity::Governance, "F3", "Governance"),
+        (Activity::Intelligence, "F4", "Intelligence"),
     ];
-    let spans = entries.into_iter().flat_map(|(activity, label)| {
+    let mut spans = Vec::new();
+    for (activity, key, label) in entries {
         let is_active = activity == active;
-        let style = if is_active {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
-        let marker = if is_active { "* " } else { "  " };
-        [
-            Span::styled(format!(" {marker}{label} "), style),
-            Span::raw(" "),
-        ]
-    });
-    frame.render_widget(Paragraph::new(Line::from_iter(spans)), area);
+        spans.push(Span::styled(
+            if is_active { " * " } else { "   " },
+            if is_active {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            },
+        ));
+        spans.push(shortcut_span(key));
+        spans.push(Span::styled(
+            format!(" {label}  "),
+            if is_active {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            },
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn render_global_status(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView) {
@@ -747,9 +795,19 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
     match ui.activity {
         Activity::Systems => {
             if ui.input_layer == InputLayer::Detail {
-                spans.push(Span::raw("System detail · Esc return"));
+                spans.push(Span::raw(match ui.system_detail {
+                    SystemDetailKind::Overview => "System overview · ",
+                    SystemDetailKind::Market => "Market inspection · ",
+                }));
+                spans.push(shortcut_span("Esc"));
+                spans.push(Span::raw(" return"));
             } else {
-                spans.push(Span::raw("↑/↓ Select · Enter detail · S("));
+                spans.push(shortcut_span("↑/↓"));
+                spans.push(Span::raw(" Select · "));
+                spans.push(shortcut_span("Enter"));
+                spans.push(Span::raw(" overview · ("));
+                spans.push(shortcut_span("M"));
+                spans.push(Span::raw(")arket · S("));
                 spans.push(shortcut_span("o"));
                 spans.push(Span::raw(format!(")rt {} · (", ui.system_sort.label())));
                 spans.push(shortcut_span("D"));
@@ -763,17 +821,19 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
                         && system.id != view.player.location
                         && system.route_ticks_from_player.is_some()
                 });
+                spans.push(shortcut_span("F2"));
                 if view.player.traveling {
-                    spans.push(Span::raw("F2 route disabled: in transit"));
+                    spans.push(Span::raw(" route disabled: in transit"));
                 } else if route_available {
-                    spans.push(Span::raw("F2 propose selected route"));
+                    spans.push(Span::raw(" propose selected route"));
                 } else {
-                    spans.push(Span::raw("F2 route disabled: unreachable/already here"));
+                    spans.push(Span::raw(" route disabled: unreachable/already here"));
                 }
             }
         }
         Activity::Trade => {
-            spans.push(Span::raw("↑/↓ Good · ("));
+            spans.push(shortcut_span("↑/↓"));
+            spans.push(Span::raw(" Good · ("));
             spans.push(shortcut_span("N"));
             spans.push(Span::raw(format!(") Qty {} · ", ui.trade_quantity)));
             if let Some(row) = view.local_trade.market.get(ui.market_index) {
@@ -816,28 +876,39 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
                         route.required_energy.0
                     )));
                 } else {
-                    spans.push(Span::raw(")ravel · Esc clear route"));
+                    spans.push(Span::raw(")ravel · "));
+                    spans.push(shortcut_span("Esc"));
+                    spans.push(Span::raw(" clear route"));
                 }
             } else {
                 spans.push(Span::raw(")ravel disabled: route details unavailable"));
             }
         }
         Activity::Governance => {
-            spans.push(Span::raw("↑/↓ Row · "));
+            spans.push(shortcut_span("↑/↓"));
+            spans.push(Span::raw(" Row · "));
+            spans.push(shortcut_span("Tab/Shift-Tab"));
+            spans.push(Span::raw(" Section · "));
             if view.inspection.governor.governed && ui.governance_inspection.is_none() {
-                spans.push(Span::raw("←/→ Edit · "));
+                spans.push(shortcut_span("←/→"));
+                spans.push(Span::raw(" Edit · "));
             } else {
                 spans.push(Span::raw("Edit disabled: read-only · "));
             }
             spans.push(Span::raw("("));
             spans.push(shortcut_span("I"));
-            spans.push(Span::raw(")nspect Systems selection · Esc governed target"));
+            spans.push(Span::raw(")nspect Systems selection · "));
+            spans.push(shortcut_span("Esc"));
+            spans.push(Span::raw(" governed target"));
         }
         Activity::Intelligence => {
-            spans.push(Span::raw("↑/↓ Scroll events · newest resumes tail-follow"));
+            spans.push(shortcut_span("↑/↓"));
+            spans.push(Span::raw(" Scroll events · newest resumes tail-follow"));
         }
     }
-    spans.push(Span::raw(" · Space run · "));
+    spans.push(Span::raw(" · "));
+    spans.push(shortcut_span("Space"));
+    spans.push(Span::raw(" run · "));
     spans.push(shortcut_span("s"));
     spans.push(Span::raw(" step · "));
     spans.push(shortcut_span("r"));
@@ -867,6 +938,19 @@ fn shortcut_span(label: &'static str) -> Span<'static> {
     )
 }
 
+fn mnemonic_line(
+    before: impl Into<String>,
+    key: &'static str,
+    after: impl Into<String>,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(before.into()),
+        Span::raw("("),
+        shortcut_span(key),
+        Span::raw(format!("){}", after.into())),
+    ])
+}
+
 fn action_reason(reason: &str) -> &str {
     reason
         .strip_prefix("Buy unavailable: ")
@@ -891,6 +975,15 @@ fn focused(ui: &UiState, activity: Activity) -> Style {
     }
 }
 
+fn system_risk(system: &game_app::SystemListItem) -> u8 {
+    match (system.health, system.brownout_stage.label()) {
+        (game_app::EnergyHealth::Deficit, _) | (_, "Starvation") => 3,
+        (game_app::EnergyHealth::Low, _) | (_, "Emergency") => 2,
+        (_, "Throttled") => 1,
+        _ => 0,
+    }
+}
+
 fn system_order_items(view: &ApplicationView) -> Vec<SystemOrderItem> {
     view.systems
         .iter()
@@ -902,13 +995,7 @@ fn system_order_items(view: &ApplicationView) -> Vec<SystemOrderItem> {
                 .checked_div(capacity)
                 .unwrap_or(0)
                 .min(100) as u32;
-            let risk = match system.health {
-                game_app::EnergyHealth::Deficit => 3,
-                game_app::EnergyHealth::Low => 2,
-                game_app::EnergyHealth::Healthy | game_app::EnergyHealth::Full => {
-                    u8::from(system.brownout_stage.label() != "normal")
-                }
-            };
+            let risk = system_risk(system);
             SystemOrderItem {
                 id: system.id.clone(),
                 name: system.name.clone(),
@@ -949,17 +1036,22 @@ fn render_systems_activity(
     ui: &UiState,
     layout_class: LayoutClass,
 ) {
+    if ui.input_layer == InputLayer::Detail {
+        match ui.system_detail {
+            SystemDetailKind::Overview => {
+                render_system_inspector(frame, area, view, ui, layout_class)
+            }
+            SystemDetailKind::Market => render_system_market(frame, area, view, ui),
+        }
+        return;
+    }
     let panes = match layout_class {
         LayoutClass::Regular => Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
             .split(area),
         LayoutClass::Compact => {
-            if ui.input_layer == InputLayer::Detail {
-                render_system_inspector(frame, area, view, ui, layout_class);
-            } else {
-                render_systems_table(frame, area, view, ui);
-            }
+            render_systems_table(frame, area, view, ui);
             return;
         }
         LayoutClass::Unsupported => unreachable!("unsupported layouts return before composition"),
@@ -996,7 +1088,7 @@ fn render_systems_table(frame: &mut Frame<'_>, area: Rect, view: &ApplicationVie
             if system.player_governed {
                 flags.push("GOV");
             }
-            if ordered_system.risk > 0 {
+            if ordered_system.risk >= 2 {
                 flags.push("WARN");
             }
             let energy = format!(
@@ -1017,7 +1109,7 @@ fn render_systems_table(frame: &mut Frame<'_>, area: Rect, view: &ApplicationVie
                 Style::default()
                     .bg(Color::DarkGray)
                     .add_modifier(Modifier::BOLD)
-            } else if ordered_system.risk > 0 {
+            } else if ordered_system.risk >= 2 {
                 Style::default().fg(Color::LightRed)
             } else {
                 Style::default()
@@ -1091,6 +1183,14 @@ fn right_cell(value: impl Into<String>) -> Cell<'static> {
     Cell::from(Line::from(value.into()).alignment(Alignment::Right))
 }
 
+fn governance_control_cell(editable: bool, suffix: &'static str) -> Cell<'static> {
+    if editable {
+        Cell::from(Line::from(vec![shortcut_span("←/→"), Span::raw(suffix)]))
+    } else {
+        Cell::from("read-only")
+    }
+}
+
 fn energy_gauge(percent: u32, width: usize) -> String {
     let filled = (percent.min(100) as usize * width).div_ceil(100);
     format!("[{}{}]", "#".repeat(filled), "-".repeat(width - filled))
@@ -1146,7 +1246,7 @@ fn render_system_inspector(
     let flags = [
         system.player_location.then_some("LOC"),
         system.player_governed.then_some("GOV"),
-        (system.health.label() == "low" || system.health.label() == "deficit").then_some("WARNING"),
+        (system_risk(system) >= 2).then_some("WARNING"),
     ]
     .into_iter()
     .flatten()
@@ -1237,6 +1337,75 @@ fn render_system_inspector(
     );
 }
 
+fn render_system_market(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: &UiState) {
+    let ordered = order_systems(&system_order_items(view), ui.system_sort, ui.sort_direction);
+    let selected = selected_system_id(view, ui, &ordered);
+    let Some(system) = selected
+        .as_ref()
+        .and_then(|selected| view.systems.iter().find(|system| &system.id == selected))
+    else {
+        frame.render_widget(
+            Paragraph::new("No system selected")
+                .block(Block::bordered().title("Market Inspection")),
+            area,
+        );
+        return;
+    };
+    let remote = system.id != view.player.location;
+    let title = if remote {
+        format!("Remote Market — {} (read-only)", system.name)
+    } else {
+        format!("Local Market Inspection — {} (read-only)", system.name)
+    };
+    if view.inspection.system.id != system.id {
+        frame.render_widget(
+            Paragraph::new("Market details are not available for the selected system yet")
+                .block(Block::bordered().title(title)),
+            area,
+        );
+        return;
+    }
+    let mut rows = view
+        .inspection
+        .market
+        .iter()
+        .map(|row| {
+            Row::new(vec![
+                Cell::from(row.name.clone()),
+                right_cell(row.inventory.to_string()),
+                right_cell(row.target.to_string()),
+                right_cell(format!("{} E", row.buy_quote.0)),
+                right_cell(format!("{} E", row.sell_quote.0)),
+            ])
+        })
+        .collect::<Vec<_>>();
+    if rows.is_empty() {
+        rows.push(Row::new(vec![Cell::from("No market goods available")]));
+    }
+    frame.render_widget(
+        Table::new(
+            rows,
+            [
+                Constraint::Min(18),
+                Constraint::Length(12),
+                Constraint::Length(12),
+                Constraint::Length(14),
+                Constraint::Length(14),
+            ],
+        )
+        .header(bold_row([
+            "Good",
+            "Stock",
+            "Target",
+            "Market buys",
+            "Market sells",
+        ]))
+        .column_spacing(1)
+        .block(Block::bordered().title(title)),
+        area,
+    );
+}
+
 fn render_governance_activity(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -1317,11 +1486,7 @@ fn render_governance_activity(
             Cell::from(if selected { ">" } else { " " }),
             Cell::from(name),
             right_cell(value),
-            Cell::from(if editable {
-                "←/→ edit"
-            } else {
-                "read-only"
-            }),
+            governance_control_cell(editable, " edit"),
         ])
         .style(selected_style(selected))
     });
@@ -1369,11 +1534,7 @@ fn render_governance_activity(
                 Cell::from(market.name.clone()),
                 right_cell(format!("{priority}%")),
                 right_cell(market.funded_demand.to_string()),
-                Cell::from(if editable {
-                    "←/→ ±10%"
-                } else {
-                    "read-only"
-                }),
+                governance_control_cell(editable, " ±10%"),
             ])
             .style(selected_style(selected))
         })
@@ -1763,7 +1924,13 @@ fn render_trade_action(
         || {
             vec![
                 Line::from("No goods are listed at the local market."),
-                Line::from("(B)uy unavailable · sell (X) unavailable"),
+                Line::from(vec![
+                    Span::raw("("),
+                    shortcut_span("B"),
+                    Span::raw(")uy unavailable · sell ("),
+                    shortcut_span("X"),
+                    Span::raw(") unavailable"),
+                ]),
             ]
         },
         |row| {
@@ -1784,20 +1951,22 @@ fn render_trade_action(
                         buy_total
                             .map_or_else(|| "overflow".into(), |total| format!("{} E", total.0))
                     )),
-                    Line::from(format!(
-                        "(B)uy {}",
-                        availability_label(buy_reason.as_deref())
-                    )),
+                    mnemonic_line(
+                        "",
+                        "B",
+                        format!("uy {}", availability_label(buy_reason.as_deref())),
+                    ),
                     Line::from(format!(
                         "Sell {} E/unit · Total {}",
                         row.buy_quote.0,
                         sell_total
                             .map_or_else(|| "overflow".into(), |total| format!("{} E", total.0))
                     )),
-                    Line::from(format!(
-                        "Sell (X) {}",
-                        availability_label(sell_reason.as_deref())
-                    )),
+                    mnemonic_line(
+                        "Sell ",
+                        "X",
+                        format!(" {}", availability_label(sell_reason.as_deref())),
+                    ),
                 ]
             } else {
                 vec![
@@ -1829,14 +1998,16 @@ fn render_trade_action(
                             view.player.tank_energy.0.saturating_add(total.0)
                         }),
                     )),
-                    Line::from(format!(
-                        "(B)uy {}",
-                        availability_label(buy_reason.as_deref())
-                    )),
-                    Line::from(format!(
-                        "Sell (X) {}",
-                        availability_label(sell_reason.as_deref())
-                    )),
+                    mnemonic_line(
+                        "",
+                        "B",
+                        format!("uy {}", availability_label(buy_reason.as_deref())),
+                    ),
+                    mnemonic_line(
+                        "Sell ",
+                        "X",
+                        format!(" {}", availability_label(sell_reason.as_deref())),
+                    ),
                 ]
             }
         },
@@ -1930,15 +2101,35 @@ fn render_trade_route(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView,
             },
         );
         let command = route.map_or_else(
-            || "(T)ravel disabled: exact route details unavailable · Esc clears proposal".into(),
+            || {
+                Line::from(vec![
+                    Span::raw("("),
+                    shortcut_span("T"),
+                    Span::raw(")ravel disabled: exact route details unavailable · "),
+                    shortcut_span("Esc"),
+                    Span::raw(" clears proposal"),
+                ])
+            },
             |route| {
                 if route.required_energy > view.player.tank_energy {
-                    format!(
-                        "Travel disabled: needs {} E; tank holds {} E · Esc clears proposal",
-                        route.required_energy.0, view.player.tank_energy.0
-                    )
+                    Line::from(vec![
+                        Span::raw(format!(
+                            "Travel disabled: needs {} E; tank holds {} E · ",
+                            route.required_energy.0, view.player.tank_energy.0
+                        )),
+                        shortcut_span("Esc"),
+                        Span::raw(" clears proposal"),
+                    ])
                 } else {
-                    "(T)ravel / Enter to commit · Esc clears proposal".into()
+                    Line::from(vec![
+                        Span::raw("("),
+                        shortcut_span("T"),
+                        Span::raw(")ravel / "),
+                        shortcut_span("Enter"),
+                        Span::raw(" to commit · "),
+                        shortcut_span("Esc"),
+                        Span::raw(" clears proposal"),
+                    ])
                 }
             },
         );
@@ -1950,12 +2141,16 @@ fn render_trade_route(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView,
             )),
             Line::from(summary),
             Line::from(energy),
-            Line::from(command),
+            command,
         ]
     } else {
         vec![
             Line::from("No Route Proposal"),
-            Line::from("Select a destination in Systems, then press F2."),
+            Line::from(vec![
+                Span::raw("Select a destination in Systems, then press "),
+                shortcut_span("F2"),
+                Span::raw("."),
+            ]),
         ]
     };
     frame.render_widget(
@@ -2321,22 +2516,94 @@ fn route_summary_from_system(view: &ApplicationView, destination: &game_app::Con
     "Route details unavailable".into()
 }
 
-fn help_text(activity: Activity) -> String {
+fn help_text(activity: Activity) -> Vec<Line<'static>> {
     let contextual = match activity {
-        Activity::Systems => {
-            "Systems: ↑/↓ select · (O) sort column · (D) reverse · F2 propose route"
-        }
-        Activity::Trade => {
-            "Trade: ↑/↓ good · (N) quantity · (B)uy · sell (X) · (T)ravel/Enter · Esc clear route"
-        }
-        Activity::Governance => {
-            "Governance: ↑/↓ row · ←/→ edit · (I)nspect Systems selection · Esc governed target"
-        }
-        Activity::Intelligence => "Intelligence: ↑/↓ events · reaching newest resumes tail-follow",
+        Activity::Systems => Line::from(vec![
+            Span::raw("Systems: "),
+            shortcut_span("↑/↓"),
+            Span::raw(" select · "),
+            shortcut_span("Enter"),
+            Span::raw(" overview · ("),
+            shortcut_span("M"),
+            Span::raw(")arket · ("),
+            shortcut_span("O"),
+            Span::raw(") sort · ("),
+            shortcut_span("D"),
+            Span::raw(") reverse · "),
+            shortcut_span("F2"),
+            Span::raw(" propose route"),
+        ]),
+        Activity::Trade => Line::from(vec![
+            Span::raw("Trade: "),
+            shortcut_span("↑/↓"),
+            Span::raw(" good · ("),
+            shortcut_span("N"),
+            Span::raw(") quantity · ("),
+            shortcut_span("B"),
+            Span::raw(")uy · sell ("),
+            shortcut_span("X"),
+            Span::raw(") · ("),
+            shortcut_span("T"),
+            Span::raw(")ravel/"),
+            shortcut_span("Enter"),
+            Span::raw(" · "),
+            shortcut_span("Esc"),
+            Span::raw(" clear route"),
+        ]),
+        Activity::Governance => Line::from(vec![
+            Span::raw("Governance: "),
+            shortcut_span("↑/↓"),
+            Span::raw(" row · "),
+            shortcut_span("Tab/Shift-Tab"),
+            Span::raw(" section · "),
+            shortcut_span("←/→"),
+            Span::raw(" edit · ("),
+            shortcut_span("I"),
+            Span::raw(")nspect Systems selection · "),
+            shortcut_span("Esc"),
+            Span::raw(" governed target"),
+        ]),
+        Activity::Intelligence => Line::from(vec![
+            Span::raw("Intelligence: "),
+            shortcut_span("↑/↓"),
+            Span::raw(" events · reaching newest resumes tail-follow"),
+        ]),
     };
-    format!(
-        "{contextual}\n\nActivities: F1 Systems · F2 Trade · F3 Governance · F4 Intelligence\nGlobal: Space pause/run · (S) single step · (R) rate · (?) help · (Q) quit\nOverlays own input; Enter confirms and Esc cancels."
-    )
+    vec![
+        contextual,
+        Line::default(),
+        Line::from(vec![
+            Span::raw("Activities: "),
+            shortcut_span("F1"),
+            Span::raw(" Systems · "),
+            shortcut_span("F2"),
+            Span::raw(" Trade · "),
+            shortcut_span("F3"),
+            Span::raw(" Governance · "),
+            shortcut_span("F4"),
+            Span::raw(" Intelligence"),
+        ]),
+        Line::from(vec![
+            Span::raw("Global: "),
+            shortcut_span("Space"),
+            Span::raw(" pause/run · "),
+            shortcut_span("S"),
+            Span::raw(" step · "),
+            shortcut_span("R"),
+            Span::raw(" rate · "),
+            shortcut_span("?"),
+            Span::raw(" help · "),
+            shortcut_span("Q"),
+            Span::raw(" quit"),
+        ]),
+        Line::from(vec![
+            Span::raw("Overlays own input; "),
+            shortcut_span("Enter"),
+            Span::raw(" confirms and "),
+            shortcut_span("Esc"),
+            Span::raw(" cancels."),
+        ]),
+    ]
 }
 
 #[cfg(test)]
@@ -3107,6 +3374,163 @@ mod tests {
             footer_has_accent,
             "shortcut characters need a consistent accent style"
         );
+    }
+
+    #[test]
+    fn system_warn_marker_only_marks_actual_warning_states() {
+        let mut view = test_view();
+        view.systems[0].brownout_stage = BrownoutStage::Normal;
+        view.systems[0].health = EnergyHealth::Healthy;
+        assert_eq!(system_order_items(&view)[0].risk, 0);
+        assert_eq!(
+            rendered_at(160, 45, &view, &UiState::default())
+                .matches("WARN")
+                .count(),
+            0
+        );
+
+        view.systems[0].brownout_stage = BrownoutStage::Throttled;
+        assert_eq!(system_order_items(&view)[0].risk, 1);
+        assert_eq!(
+            rendered_at(160, 45, &view, &UiState::default())
+                .matches("WARN")
+                .count(),
+            0
+        );
+
+        view.systems[0].health = EnergyHealth::Low;
+        assert!(system_order_items(&view)[0].risk >= 2);
+        assert_eq!(
+            rendered_at(160, 45, &view, &UiState::default())
+                .matches("WARN")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn selected_remote_market_has_an_explicit_read_only_detail_surface() {
+        let mut view = test_view();
+        view.inspection.system = SystemIdentityView {
+            id: id("core:s1"),
+            name: "Brasshaven".into(),
+        };
+        view.inspection.read_only_market = true;
+        view.selected_system = id("core:s1");
+        let mut remote = view.systems[0].clone();
+        remote.id = id("core:s1");
+        remote.name = "Brasshaven".into();
+        remote.player_location = false;
+        remote.player_governed = false;
+        view.systems.push(remote);
+        let rendered = rendered_at(
+            80,
+            30,
+            &view,
+            &UiState {
+                selected_system: Some(id("core:s1")),
+                input_layer: InputLayer::Detail,
+                system_detail: SystemDetailKind::Market,
+                ..UiState::default()
+            },
+        );
+        assert!(rendered.contains("Remote Market — Brasshaven (read-only)"));
+        assert!(rendered.contains("Ore"));
+        assert!(rendered.contains("9 E"));
+        assert!(rendered.contains("11 E"));
+    }
+
+    #[tokio::test]
+    async fn systems_navigation_wraps_and_governance_tab_jumps_sections() {
+        let app = game_app::spawn(test_session());
+        let mut ui = UiState::default();
+        let mut view = app.views.borrow().clone();
+        handle_key(KeyCode::Up, &mut ui, &view, &app).await.unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(view.selected_system, id("core:s1"));
+        handle_key(KeyCode::Down, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(view.selected_system, id("core:s0"));
+
+        handle_key(KeyCode::F(3), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(ui.governance_index, 0);
+        handle_key(KeyCode::Tab, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.governance_index, 2);
+        handle_key(KeyCode::Tab, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.governance_index, 2 + view.inspection.market.len());
+        handle_key(KeyCode::Tab, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.governance_index, 0);
+        handle_key(KeyCode::BackTab, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.governance_index, 2 + view.inspection.market.len());
+        app.shutdown().await.unwrap();
+    }
+
+    #[test]
+    fn shortcut_keys_use_one_accent_color_in_primary_surfaces() {
+        fn text_is_color(
+            buffer: &ratatui::buffer::Buffer,
+            mut y_range: std::ops::Range<u16>,
+            text: &str,
+            color: Color,
+        ) -> bool {
+            let width = text.chars().count() as u16;
+            y_range.any(|y| {
+                (0..buffer.area.width.saturating_sub(width).saturating_add(1)).any(|start| {
+                    let candidate = (start..start + width)
+                        .map(|x| buffer.cell((x, y)).map_or("", |cell| cell.symbol()))
+                        .collect::<String>();
+                    candidate == text
+                        && (start..start + width)
+                            .all(|x| buffer.cell((x, y)).is_some_and(|cell| cell.fg == color))
+                })
+            })
+        }
+
+        let view = test_view();
+        let backend = TestBackend::new(160, 45);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, &view, &UiState::default()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert!(text_is_color(buffer, 0..1, "F1", Color::Yellow));
+        for key in ["↑/↓", "Enter", "F2", "Space"] {
+            assert!(text_is_color(buffer, 43..45, key, Color::Yellow), "{key}");
+        }
+
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render(
+                    frame,
+                    &view,
+                    &UiState {
+                        activity: Activity::Trade,
+                        ..UiState::default()
+                    },
+                )
+            })
+            .unwrap();
+        assert!(text_is_color(
+            terminal.backend().buffer(),
+            12..22,
+            "B",
+            Color::Yellow
+        ));
     }
 
     #[test]
