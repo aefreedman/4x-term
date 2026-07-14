@@ -10,6 +10,9 @@ pub enum InputAction {
     None,
     Quit,
     CloseLayer,
+    QuantityDigit(char),
+    QuantityBackspace,
+    ConfirmQuantity,
     Switch(Activity),
     ToggleRun,
     Step,
@@ -18,6 +21,7 @@ pub enum InputAction {
     MoveUp,
     MoveDown,
     OpenQuantity,
+    OpenDetail,
     Buy,
     Sell,
     BeginTravel,
@@ -41,10 +45,27 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
             .unwrap_or(InputAction::None);
     }
 
-    if ui.input_layer != InputLayer::Root {
-        return matches!(code, KeyCode::Esc)
-            .then_some(InputAction::CloseLayer)
-            .unwrap_or(InputAction::None);
+    match ui.input_layer {
+        InputLayer::Quantity => {
+            return match code {
+                KeyCode::Char(digit) if digit.is_ascii_digit() => InputAction::QuantityDigit(digit),
+                KeyCode::Backspace => InputAction::QuantityBackspace,
+                KeyCode::Enter => InputAction::ConfirmQuantity,
+                KeyCode::Esc => InputAction::CloseLayer,
+                _ => InputAction::None,
+            };
+        }
+        InputLayer::Help => {
+            return matches!(code, KeyCode::Esc | KeyCode::Char('?'))
+                .then_some(InputAction::CloseLayer)
+                .unwrap_or(InputAction::None);
+        }
+        InputLayer::Detail => {
+            return matches!(code, KeyCode::Esc)
+                .then_some(InputAction::CloseLayer)
+                .unwrap_or(InputAction::None);
+        }
+        InputLayer::Root => {}
     }
 
     match code {
@@ -66,6 +87,7 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
             KeyCode::Down | KeyCode::Char('j') => InputAction::MoveDown,
             KeyCode::Char('o') => InputAction::Sort,
             KeyCode::Char('d') => InputAction::ToggleSortDirection,
+            KeyCode::Enter => InputAction::OpenDetail,
             _ => InputAction::None,
         },
         Activity::Trade => match code {

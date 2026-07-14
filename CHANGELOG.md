@@ -22,8 +22,9 @@
 
 ### Changed
 
-- Replaced the all-at-once terminal dashboard with a responsive activity shell and an ID-stable, sortable Systems table with compact and regular inspectors.
-- Route previews, active travel, direct connections, and player location now use readable system names with jump, distance, and timing summaries instead of exposing internal content IDs.
+- Replaced the all-at-once terminal dashboard with F1–F4 Systems, Trade, Governance, and Intelligence modes, contextual controls, and cell-based compact (`80x30`) and regular (`160x45`) layouts.
+- Systems, Trade, and Governance tables now use deterministic selected-row viewports with position/more indicators; compact Trade prioritizes its selected action and unavailable reason.
+- Route previews, active travel, direct connections, and player location now use readable system names with jump, distance, timing, and route-specific required-energy summaries instead of exposing internal content IDs.
 - Event log entries now resolve system, trader, good, and production-process IDs to readable display names.
 - Player cargo now displays readable good names instead of internal content IDs.
 - NPC trader setup now begins with nine evenly distributed traders and uses Dynamic production mode with designer-editable archetype, response, cooldown, retirement, and maximum-count parameters in `content/traders.ron`.
@@ -41,5 +42,8 @@
 
 ### Fixed
 
+- Canonical typed key routing now governs live input precedence; obsolete punctuation and case-sensitive governance aliases are inert, and no-action keys leave UI and application state unchanged.
+- Route proposals survive unrelated inspection changes and rejected commits, cannot be replaced during travel, and display energy only from the route view matching the proposed destination.
+- Textual active, selection, warning, severity, read-only, empty, disabled, and shortcut cues remain meaningful without color; extreme displayed allocation and usage values are formatted without overflow.
 - Long-run dynamic-fleet diagnostics now skip brownout-suppressed zero-bid opportunities, and route subsidies retain cost-aware processor solvency ceilings.
 - Logistic population growth now preserves compatible fractional carries exactly and uses unbiased round-half-to-even conversion for incompatible carrying-capacity changes, preventing both tiny-population stalls and premature growth.

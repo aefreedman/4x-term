@@ -47,25 +47,62 @@ fn layout_classifier_uses_both_cell_dimensions_at_exact_edges() {
 fn every_system_sort_is_deterministic_in_both_directions() {
     let rows = vec![
         system("core:b", "Beta", 2, 20, 60, 200, Some(9)),
-        system("core:a", "Alpha", 1, 10, 40, 100, Some(5)),
-        system("core:c", "Alpha", 1, 10, 40, 100, None),
+        system("core:a", "Alpha", 3, 10, 80, 100, Some(5)),
+        system("core:c", "Alpha", 1, 30, 40, 300, None),
     ];
-    for key in SystemSortKey::ALL {
+    let expected = [
+        (
+            SystemSortKey::Name,
+            ["core:a", "core:c", "core:b"],
+            ["core:b", "core:a", "core:c"],
+        ),
+        (
+            SystemSortKey::Risk,
+            ["core:c", "core:b", "core:a"],
+            ["core:a", "core:b", "core:c"],
+        ),
+        (
+            SystemSortKey::Runway,
+            ["core:a", "core:b", "core:c"],
+            ["core:c", "core:b", "core:a"],
+        ),
+        (
+            SystemSortKey::EnergyFillPercent,
+            ["core:c", "core:b", "core:a"],
+            ["core:a", "core:b", "core:c"],
+        ),
+        (
+            SystemSortKey::Population,
+            ["core:a", "core:b", "core:c"],
+            ["core:c", "core:b", "core:a"],
+        ),
+        (
+            SystemSortKey::RouteTicks,
+            ["core:a", "core:b", "core:c"],
+            ["core:b", "core:a", "core:c"],
+        ),
+    ];
+    assert_eq!(SystemSortKey::ALL.len(), expected.len());
+    for (key, ascending_ids, descending_ids) in expected {
         let ascending = order_systems(&rows, key, SortDirection::Ascending);
         let descending = order_systems(&rows, key, SortDirection::Descending);
-        assert_eq!(ascending.len(), rows.len(), "ascending {key:?}");
-        assert_eq!(descending.len(), rows.len(), "descending {key:?}");
-        let mut ids = ascending
-            .iter()
-            .map(|row| row.id.clone())
-            .collect::<Vec<_>>();
-        ids.sort();
-        assert_eq!(ids, vec![id("core:a"), id("core:b"), id("core:c")]);
-        assert_ne!(ascending, descending, "direction must affect {key:?}");
+        assert_eq!(
+            ascending
+                .iter()
+                .map(|row| row.id.to_string())
+                .collect::<Vec<_>>(),
+            ascending_ids
+        );
+        assert_eq!(
+            descending
+                .iter()
+                .map(|row| row.id.to_string())
+                .collect::<Vec<_>>(),
+            descending_ids
+        );
         assert_eq!(
             order_systems(&rows, key, SortDirection::Ascending),
-            ascending,
-            "sorting must be deterministic for {key:?}"
+            ascending
         );
     }
 }

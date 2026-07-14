@@ -429,13 +429,13 @@ ApplicationView
 ├── simulation status and tick number
 ├── SystemListView[20]
 ├── selected SystemDetailView
-├── selected MarketView
+├── local and inspected MarketView
 ├── PlayerStatusView
 ├── proposed or active RouteView
 └── recent EventView entries
 ```
 
-The system list includes ID, display name, coordinates, and summary economic data. The selected-system view includes named direct connections as well as a named, leg-by-leg shortest route from the player's current system, total route distance, total travel duration, and active-leg progress. Stable IDs remain available for commands but are never used as player-facing route or location labels. The market view includes inventory, target inventory, and current buy/sell quotes. The player-status view includes named location, cargo, finances, trade-history totals, and economy-wide comparative statistics.
+The system list includes ID, display name, coordinates, and summary economic data. The selected-system view includes named direct connections as well as a named, leg-by-leg shortest route from the player's current system, total route distance, total travel duration, exact required energy for that route and destination, and active-leg progress. Stable IDs remain available for commands but are never used as player-facing route or location labels. The market view includes inventory, target inventory, and current buy/sell quotes. The player-status view includes named location, cargo, finances, trade-history totals, and economy-wide comparative statistics.
 
 View models must not expose `bevy_ecs::Entity`, ECS queries, Ratatui types, or mutable references.
 
@@ -445,37 +445,31 @@ The prototype is menu- and table-oriented. It does not render a spatial ASCII ma
 
 ### Layout
 
+The shell has a style-independent active-mode marker, global simulation status, one mode body, and contextual controls:
+
 ```text
-┌──────────────── Systems ────────────────┐
-│ selectable list of 20 systems           │
-├──────────────── Details ────────────────┤
-│ coordinates, routes, distance, status   │
-├──────────────── Market ─────────────────┤
-│ goods, inventory, demand, buy/sell      │
-├──────────── Player / Trade ─────────────┤
-│ status, cargo, buy/sell, route preview   │
-├──────────────── Events ─────────────────┤
-│ recent simulation events                │
-└──────────────── Controls ───────────────┘
-│ paused/running | tick | rate | quit     │
-└─────────────────────────────────────────┘
+┌─ * F1 Systems ─ F2 Trade ─ F3 Governance ─ F4 Intelligence ─┐
+│ PAUSED/RUNNING · tick · rate · location · tank               │
+├──────────────────── active mode body ─────────────────────────┤
+│ Systems: sortable viewport + exact selected-system detail     │
+│ Trade: local market + selected action + route + player        │
+│ Governance: policy/import/investment interactive viewports    │
+│ Intelligence: event viewport + player/fleet/world summaries   │
+├──────────────── contextual controls and disabled reasons ─────┤
+└────────────────────────────────────────────────────────────────┘
 ```
 
-The final implementation may use side-by-side panes when terminal width permits.
+Terminal dimensions are cell counts, not pixels. `80x30` cells is the minimum supported compact layout. `160x45` cells enables the regular layout with side-by-side panes; dimensions between those thresholds use compact stacking. Smaller terminals show resize guidance and retain only quit input. Interactive tables deterministically slice their viewport around the stable selected row and show position/more indicators.
 
 ### Required controls
 
-- Move focus between panes
-- Move selection within a list or table
-- Pause/resume continuous simulation
-- Advance exactly one tick while paused
-- Change among a small set of tick rates
-- Select a market good and buy or sell a quantity
-- Preview and begin travel to any reachable system
-- Inspect player finances, cargo, trade totals, and comparative status
-- Quit cleanly
+- `F1` Systems: `↑`/`↓` or `j`/`k` selects; `Enter` opens compact detail and `Esc` returns; `o` cycles sort column; `d` reverses direction; `F2` carries the selection into a route proposal.
+- `F2` Trade: `↑`/`↓` or `j`/`k` selects a good; `n` opens quantity entry; `b` buys; `x` sells; `t` or `Enter` commits the displayed proposal; `Esc` clears it.
+- `F3` Governance: `↑`/`↓` or `j`/`k` selects a row; `←`/`→` edits an available governed row; `i` inspects the stable Systems selection; `Esc` returns to the governed market.
+- `F4` Intelligence: `↑`/`↓` or `j`/`k` scrolls events; reaching the newest event resumes tail-follow.
+- Global: `Space` pauses/resumes, `s` advances exactly one tick while paused, `r` cycles tick rate, `?` opens contextual help, and `q` quits cleanly.
 
-Exact key bindings will be documented in the UI and may remain provisional.
+The visible footer preserves textual shortcut notation and uses color only as a redundant accent. Unavailable commands are hidden or marked disabled with a textual reason. Overlays own input before global and mode actions. The TUI remains menu- and table-oriented and does not render a spatial ASCII map.
 
 ### Terminal lifecycle
 
@@ -549,7 +543,10 @@ Each market keeps cumulative diagnostic accounting for currency paid to and rece
 
 ### TUI
 
-- Input maps to the expected request or local focus change.
+- Canonical key routing applies unsupported-layout, overlay, global, then active-mode precedence before the live handler executes a typed input action.
+- Keys routed to no action do not mutate local UI or application state.
+- Stable selections remain visible in sliced Systems, Trade, and Governance viewports.
+- Compact `80x30` and regular `160x45` cell layouts render selected values, unavailable reasons, read-only/empty/severe states, and textual semantic fallbacks without exposing stable IDs.
 - `ratatui::backend::TestBackend` can render every pane.
 - Rendering does not require access to the ECS world.
 
@@ -569,13 +566,13 @@ The prototype is complete when the repository contains:
 
 1. Run the executable.
 2. The content loader validates and compiles the 20-system map and economy.
-3. The TUI opens paused and displays all systems.
-4. Selecting a system displays its 3D position, connected routes, route distances, inventory, and prices.
+3. The TUI opens paused in F1 Systems and makes all systems reachable through its selected-row viewport.
+4. Selecting a system displays its 3D position, connected routes, route distances, exact selected values, inventory, and prices.
 5. Single-step advances exactly one logical tick and refreshes the views.
 6. Continuous mode advances ticks asynchronously while input remains responsive.
 7. Raw goods are produced, primary and secondary goods are processed, and tertiary consumers remove goods.
 8. Automated traders can choose profitable multi-hop destinations and travel over distance-dependent route legs.
-9. The player can buy goods, select any reachable destination, travel there, and sell goods under the same market rules.
-10. The TUI shows the player's finances, cargo, trading totals, and comparative position in the economy.
+9. The player can select a reachable destination in F1, preview its exact route and required energy in F2, commit travel explicitly, and buy or sell goods under the same market rules.
+10. F2 and F4 show the player's exact finances, cargo, trading totals, and comparative position; F3 distinguishes editable governance from read-only inspection.
 11. Quitting shuts down the application task and restores the terminal.
 12. The same simulation behavior is exercised by tests without initializing a terminal.

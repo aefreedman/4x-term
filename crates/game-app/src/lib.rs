@@ -223,6 +223,8 @@ pub struct RouteView {
     pub total_distance: f64,
     pub total_ticks: u32,
     pub remaining_ticks: Option<u32>,
+    /// Exact tank energy required by this route and destination.
+    pub required_energy: Energy,
 }
 
 #[derive(Clone, Debug)]
@@ -264,7 +266,6 @@ pub struct PlayerStatusView {
     pub energy_value_rank: usize,
     pub energy_value_share_percent: f64,
     pub sales_share_percent: f64,
-    pub route_energy_required: Option<Energy>,
     pub runway_jumps: Option<u64>,
     pub traveling: bool,
 }
@@ -540,44 +541,39 @@ fn build_view(
         .markets
         .iter()
         .find(|market| market.system_id == player.system);
-    let cargo_energy_value = player
-        .cargo
-        .iter()
-        .map(|(good, quantity)| {
-            player_market
-                .and_then(|market| session.quotes(&market.system_id, good).ok())
-                .and_then(|(buy, _)| {
-                    i64::try_from(*quantity)
-                        .ok()
-                        .and_then(|q| buy.0.checked_mul(q))
-                })
-                .unwrap_or(0)
-        })
-        .sum::<i64>();
+    let cargo_energy_value = player.cargo.iter().fold(0_i64, |total, (good, quantity)| {
+        let value = player_market
+            .and_then(|market| session.quotes(&market.system_id, good).ok())
+            .map(|(buy, _)| {
+                let quantity = i64::try_from(*quantity).unwrap_or(i64::MAX);
+                buy.0.saturating_mul(quantity)
+            })
+            .unwrap_or(0);
+        total.saturating_add(value)
+    });
     let energy_values = snapshot
         .traders
         .iter()
         .map(|trader| {
-            let cargo = trader
-                .cargo
-                .iter()
-                .filter_map(|(good, quantity)| {
-                    player_market
-                        .and_then(|market| session.quotes(&market.system_id, good).ok())
-                        .and_then(|(buy, _)| {
-                            i64::try_from(*quantity)
-                                .ok()
-                                .and_then(|q| buy.0.checked_mul(q))
-                        })
-                })
-                .sum::<i64>();
+            let cargo = trader.cargo.iter().fold(0_i64, |total, (good, quantity)| {
+                let value = player_market
+                    .and_then(|market| session.quotes(&market.system_id, good).ok())
+                    .map(|(buy, _)| {
+                        let quantity = i64::try_from(*quantity).unwrap_or(i64::MAX);
+                        buy.0.saturating_mul(quantity)
+                    })
+                    .unwrap_or(0);
+                total.saturating_add(value)
+            });
             (
                 trader.id.clone(),
                 trader.energy_tank.0.saturating_add(cargo),
             )
         })
         .collect::<Vec<_>>();
-    let total_energy_value: i64 = energy_values.iter().map(|(_, worth)| *worth).sum();
+    let total_energy_value = energy_values
+        .iter()
+        .fold(0_i64, |total, (_, worth)| total.saturating_add(*worth));
     let player_energy_value = player.energy_tank.0.saturating_add(cargo_energy_value);
     let rank = 1 + energy_values
         .iter()
@@ -585,11 +581,9 @@ fn build_view(
             *worth > player_energy_value || (*worth == player_energy_value && id < &player.id)
         })
         .count();
-    let total_sales: i64 = snapshot
-        .traders
-        .iter()
-        .map(|trader| trader.ledger.sales_revenue.0)
-        .sum();
+    let total_sales = snapshot.traders.iter().fold(0_i64, |total, trader| {
+        total.saturating_add(trader.ledger.sales_revenue.0)
+    });
     let system_names = snapshot
         .markets
         .iter()
@@ -701,6 +695,7 @@ fn build_view(
             &system_names,
             &travel.route,
             player.speed,
+            player.travel_burn_per_distance,
             Some(travel.next_leg.saturating_sub(1)),
             Some(travel.remaining_ticks),
         ))
@@ -708,17 +703,19 @@ fn build_view(
         session
             .shortest_path(&player.system, &selected)
             .map(|(route, _)| {
-                build_route_view(session, &system_names, &route, player.speed, None, None)
+                build_route_view(
+                    session,
+                    &system_names,
+                    &route,
+                    player.speed,
+                    player.travel_burn_per_distance,
+                    None,
+                    None,
+                )
             })
     } else {
         None
     };
-    let route_energy_required = route.as_ref().and_then(|route| {
-        let ids = std::iter::once(route.legs.first()?.from_id.clone())
-            .chain(route.legs.iter().map(|leg| leg.to_id.clone()))
-            .collect::<Vec<_>>();
-        route_travel_energy(session.graph(), &ids, player.travel_burn_per_distance).ok()
-    });
     let runway_jumps = player_market.and_then(|market| {
         session
             .graph()
@@ -943,7 +940,10 @@ fn build_view(
                     quantity: *quantity,
                 })
                 .collect(),
-            cargo_used: player.cargo.values().sum(),
+            cargo_used: player
+                .cargo
+                .values()
+                .fold(0_u64, |total, quantity| total.saturating_add(*quantity)),
             cargo_capacity: player.cargo_capacity,
             cargo_energy_value: Energy(cargo_energy_value),
             total_energy_value: Energy(player_energy_value),
@@ -969,7 +969,6 @@ fn build_view(
             } else {
                 player.ledger.sales_revenue.0 as f64 * 100.0 / total_sales as f64
             },
-            route_energy_required,
             runway_jumps,
             traveling: player.travel.is_some(),
         },
@@ -1047,6 +1046,7 @@ fn build_route_view(
     system_names: &BTreeMap<ContentId, String>,
     route: &[ContentId],
     speed: f64,
+    travel_burn_per_distance: Energy,
     current_leg: Option<usize>,
     current_leg_remaining: Option<u32>,
 ) -> RouteView {
@@ -1075,16 +1075,19 @@ fn build_route_view(
             }
         })
         .collect::<Vec<_>>();
-    let total_ticks = legs.iter().map(|leg| leg.travel_ticks).sum();
+    let total_ticks = legs
+        .iter()
+        .fold(0_u32, |total, leg| total.saturating_add(leg.travel_ticks));
     let remaining_ticks = current_leg.map(|index| {
-        current_leg_remaining.unwrap_or(0)
-            + legs
-                .iter()
-                .skip(index + 1)
-                .map(|leg| leg.travel_ticks)
-                .sum::<u32>()
+        legs.iter()
+            .skip(index + 1)
+            .fold(current_leg_remaining.unwrap_or(0), |total, leg| {
+                total.saturating_add(leg.travel_ticks)
+            })
     });
     let destination_id = route.last().cloned().expect("routes contain a destination");
+    let required_energy = route_travel_energy(session.graph(), route, travel_burn_per_distance)
+        .unwrap_or(Energy(i64::MAX));
     RouteView {
         destination_name: system_names
             .get(&destination_id)
@@ -1094,6 +1097,7 @@ fn build_route_view(
         total_distance: legs.iter().map(|leg| leg.distance).sum(),
         total_ticks,
         remaining_ticks,
+        required_energy,
         current_leg,
         legs,
     }
@@ -1598,6 +1602,7 @@ mod tests {
         assert_eq!(route.legs[0].from_name, "S0");
         assert_eq!(route.legs[0].to_name, "S1");
         assert_eq!(route.current_leg, None);
+        assert_eq!(route.required_energy, Energy(1));
         handle
             .request(AppRequest::BeginTravel {
                 destination: id("core:s1"),

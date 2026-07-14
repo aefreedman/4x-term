@@ -23,24 +23,16 @@ From the repository root:
 cargo run -p game-cli
 ```
 
-Controls:
+The interface is organized into four modes:
 
-- `Tab`: move focus
-- Arrow keys or `j`/`k`: move selection
-- `Space`: pause or resume
-- `s`: advance one tick while paused
-- `r`: change tick rate
-- `n`: enter the quantity used by buy and sell commands
-- `b` / `x`: buy or sell the selected quantity of the selected good
-- `Enter`: travel to the selected system
-- `[` / `]`: decrease or increase the governed market's reserve horizon
-- `,` / `.`: decrease or increase the governed market's producer margin
-- `I` / `i`: decrease or increase the selected good's governed import priority
-- `-` / `+`: decrease or increase the selected autonomous investment allocation
-- `?`: show or hide help
-- `q`: quit
+- `F1` **Systems**: `↑`/`↓` or `j`/`k` selects a system; `Enter` opens compact detail; `o` changes the sort column; `d` reverses sort direction. Press `F2` to carry the selected destination into a route proposal.
+- `F2` **Trade**: `↑`/`↓` or `j`/`k` selects a good; `n` enters quantity; `b` buys; `x` sells; `t` or `Enter` commits the displayed route proposal; `Esc` clears it.
+- `F3` **Governance**: `↑`/`↓` or `j`/`k` selects a policy, import, or investment row; `←`/`→` edits an available governed row; `i` inspects the stable Systems selection; `Esc` returns to the governed market. Autonomous markets are explicitly read-only.
+- `F4` **Intelligence**: `↑`/`↓` or `j`/`k` scrolls the bounded event history.
 
-The terminal should be at least 70 columns by 24 rows. The prototype exposes current market information for all systems. Frontier System 01 is the player's authored starting governorship; every other market remains read-only. Governance edits policy through typed application requests, while investments execute autonomously each tick rather than through upkeep clicks.
+Global controls are `Space` to pause/resume, `s` to single-step while paused, `r` to change tick rate, `?` for contextual help, and `q` to quit. Unavailable actions are shown as disabled with a reason.
+
+Terminal dimensions are measured in cells. `80x30` is the minimum supported compact layout and `160x45` enables the regular side-by-side layout; smaller terminals show only resize and quit guidance. The prototype remains menu- and table-oriented and deliberately does not render a spatial ASCII map. It exposes current market information for all systems. Frontier System 01 is the player's authored starting governorship; every other market remains read-only. Governance edits policy through typed application requests, while investments execute autonomously each tick rather than through upkeep clicks.
 
 ## Designer configuration
 

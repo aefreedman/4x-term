@@ -194,7 +194,6 @@ pub struct UiState {
     pub event_scroll: u16,
     pub trade_quantity: u32,
     pub quantity_input: Option<String>,
-    pub help_visible: bool,
     pub message: String,
 }
 
@@ -218,7 +217,6 @@ impl Default for UiState {
             event_scroll: 0,
             trade_quantity: 1,
             quantity_input: None,
-            help_visible: false,
             message: String::new(),
         }
     }

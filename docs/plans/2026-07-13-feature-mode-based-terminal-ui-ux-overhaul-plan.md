@@ -328,52 +328,52 @@ Validation:
 
 ### Phase 5: Visual polish, documentation, and regression closure
 
-- [ ] Have the primary agent adjust final visual/accessibility/regression acceptance tests before delegating polish or documentation changes.
-- [ ] Run narrow, read-only reviewers for input behavior, app/core boundaries, layout/accessibility, and test quality in parallel; consolidate findings before any sequential fix pass.
-- [ ] Standardize a small semantic theme for active mode, shortcut accent, selection, warning, success, error, disabled, and secondary text.
-- [ ] Ensure every color cue has a textual marker, glyph, label, or style-independent fallback.
-- [ ] Right-align numeric cells, keep units in headers where practical, format large overview values consistently, and expose exact values in detail.
-- [ ] Audit truncation, long names, zero/maximum integer values, empty data, read-only data, and severe brownout states in both layouts.
-- [ ] Remove the old focus enum, old help copy, old all-context control strip, and obsolete tests after replacement coverage is in place.
-- [ ] Update player documentation and the Unreleased changelog.
-- [ ] Capture compact and regular terminal screenshots or text-buffer captures for review.
+- [x] Have the primary agent adjust final visual/accessibility/regression acceptance tests before delegating polish or documentation changes.
+- [x] Run narrow, read-only reviewers for input behavior, app/core boundaries, layout/accessibility, and test quality in parallel; consolidate findings before any sequential fix pass.
+- [x] Standardize a small semantic theme for active mode, shortcut accent, selection, warning, success, error, disabled, and secondary text.
+- [x] Ensure every color cue has a textual marker, glyph, label, or style-independent fallback.
+- [x] Right-align numeric cells, keep units in headers where practical, format large overview values consistently, and expose exact values in detail.
+- [x] Audit truncation, long names, zero/maximum integer values, empty data, read-only data, and severe brownout states in both layouts.
+- [x] Remove the old focus enum, old help copy, old all-context control strip, and obsolete tests after replacement coverage is in place.
+- [x] Update player documentation and the Unreleased changelog.
+- [x] Capture compact and regular terminal screenshots or text-buffer captures for review.
 
 Validation:
-- [ ] Full workspace format, Clippy, test, content-validation, and headless smoke commands pass.
-- [ ] Manual keyboard-only playthrough completes system inspection, sorting, local trade, travel, governance, event review, resize, help, and quit in compact and regular layouts.
+- [x] Full workspace format, Clippy, test, content-validation, and headless smoke commands pass.
+- [x] Manual keyboard-only playthrough completes system inspection, sorting, local trade, travel, governance, event review, resize, help, and quit in compact and regular layouts.
 
 ## Acceptance Criteria
 
 ### Functional Requirements
 
-- [ ] The TUI exposes Systems, Trade, Governance, and Intelligence as direct top-level activities with no required pane-focus cycle.
-- [ ] At most one primary cursor/edit target is active in an activity, and it is visibly marked without depending on color.
-- [ ] Global commands cannot trigger a trade, travel, governance, sort, or detail action against a hidden target.
-- [ ] Systems can be sorted by every specified key in both directions; the active key/direction is visible and ties are deterministic.
-- [ ] System selection remains attached to the same stable ID while live values reorder rows.
-- [ ] Local actionable market data is explicitly tied to player location; remote market inspection is labeled read-only.
-- [ ] Travel requires a visible route proposal followed by an explicit commit and preserves context after rejection.
-- [ ] Governance visibly identifies the selected policy/import/investment and whether the selected system is editable.
-- [ ] Comparative data uses aligned tables, with numeric columns consistently aligned and long values safely truncated or moved to detail.
-- [ ] Visual summaries include exact current values or an obvious exact-detail path.
-- [ ] Shortcut mnemonics are displayed contextually with textual notation and a consistent accent style.
-- [ ] Below `80x30` the unsupported-size screen appears without changing simulation run state; `80x30` uses compact and `160x45` uses regular layout.
-- [ ] Resizing between compact and regular preserves activity-local state.
-- [ ] Help, quantity input, read-only/rejection feedback, event scrolling, pause/run, step, rate, and quit remain usable.
+- [x] The TUI exposes Systems, Trade, Governance, and Intelligence as direct top-level activities with no required pane-focus cycle.
+- [x] At most one primary cursor/edit target is active in an activity, and it is visibly marked without depending on color.
+- [x] Global commands cannot trigger a trade, travel, governance, sort, or detail action against a hidden target.
+- [x] Systems can be sorted by every specified key in both directions; the active key/direction is visible and ties are deterministic.
+- [x] System selection remains attached to the same stable ID while live values reorder rows.
+- [x] Local actionable market data is explicitly tied to player location; remote market inspection is labeled read-only.
+- [x] Travel requires a visible route proposal followed by an explicit commit and preserves context after rejection.
+- [x] Governance visibly identifies the selected policy/import/investment and whether the selected system is editable.
+- [x] Comparative data uses aligned tables, with numeric columns consistently aligned and long values safely truncated or moved to detail.
+- [x] Visual summaries include exact current values or an obvious exact-detail path.
+- [x] Shortcut mnemonics are displayed contextually with textual notation and a consistent accent style.
+- [x] Below `80x30` the unsupported-size screen appears without changing simulation run state; `80x30` uses compact and `160x45` uses regular layout.
+- [x] Resizing between compact and regular preserves activity-local state.
+- [x] Help, quantity input, read-only/rejection feedback, event scrolling, pause/run, step, rate, and quit remain usable.
 
 ### Quality Requirements
 
-- [ ] `game-core` remains free of Ratatui, Crossterm, terminal keys, widget IDs, layout classes, and TUI selection state.
-- [ ] No new dependency or crate boundary is introduced.
-- [ ] Existing staged terminal cleanup behavior and regression tests remain intact.
-- [ ] The primary agent authors or adjusts acceptance tests before each delegated implementation slice, and delegated code is validated against those exact tests.
-- [ ] Reviewer scopes are narrow; parallel reviews are read-only, and any editing follow-up is sequentially owned.
-- [ ] Targeted tests drive iteration; full workspace gates run once per completed phase and once at final acceptance.
-- [ ] Every implementation/review session verifies Rust's toolchain path and an available `rg` command.
-- [ ] Compile, formatting, Clippy, content validation, and all relevant automated tests pass.
-- [ ] Manual compact and regular keyboard-only validation is completed.
-- [ ] Visual review captures demonstrate selection, alignment, mnemonics, compact layout, regular layout, remote/read-only state, and a severe warning state.
-- [ ] Save/content compatibility is recorded as not affected.
+- [x] `game-core` remains free of Ratatui, Crossterm, terminal keys, widget IDs, layout classes, and TUI selection state.
+- [x] No new dependency or crate boundary is introduced.
+- [x] Existing staged terminal cleanup behavior and regression tests remain intact.
+- [x] The primary agent authors or adjusts acceptance tests before each delegated implementation slice, and delegated code is validated against those exact tests.
+- [x] Reviewer scopes are narrow; parallel reviews are read-only, and any editing follow-up is sequentially owned.
+- [x] Targeted tests drive iteration; full workspace gates run once per completed phase and once at final acceptance.
+- [x] Every implementation/review session verifies Rust's toolchain path and an available `rg` command.
+- [x] Compile, formatting, Clippy, content validation, and all relevant automated tests pass.
+- [x] Manual compact and regular keyboard-only validation is completed.
+- [x] Visual review captures demonstrate selection, alignment, mnemonics, compact layout, regular layout, remote/read-only state, and a severe warning state.
+- [x] Save/content compatibility is recorded as not affected.
 
 ## Validation Plan
 
@@ -389,46 +389,46 @@ Do not add a snapshot-test dependency for this pass. Extend the existing buffer 
 
 Iteration policy:
 
-- [ ] Use exact tests first, for example `cargo test -p game-tui <test_name> -- --exact` or `cargo test -p game-app <test_name> -- --exact`.
-- [ ] Expand only to the affected crate or closely related crate pair after exact acceptance tests pass.
-- [ ] Do not run `cargo test --workspace --all-features` or full workspace Clippy repeatedly during implementation iteration.
+- [x] Use exact tests first, for example `cargo test -p game-tui <test_name> -- --exact` or `cargo test -p game-app <test_name> -- --exact`.
+- [x] Expand only to the affected crate or closely related crate pair after exact acceptance tests pass.
+- [x] Do not run `cargo test --workspace --all-features` or full workspace Clippy repeatedly during implementation iteration.
 
 Phase gate, run once after each phase's targeted tests pass:
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- [ ] `cargo test --workspace --all-features`
-- [ ] Run `cargo run -p game-cli -- --validate-content` and `cargo run -p game-cli -- --headless` in phases that alter application projections, integration, or final behavior.
+- [x] `cargo fmt --all -- --check`
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [x] `cargo test --workspace --all-features`
+- [x] Run `cargo run -p game-cli -- --validate-content` and `cargo run -p game-cli -- --headless` in phases that alter application projections, integration, or final behavior.
 
 Final acceptance repeats the complete phase gate once after all review fixes are consolidated.
 
 Specific automated coverage:
 
-- [ ] Layout classifier boundaries and wide-but-short behavior.
-- [ ] Compact/regular widget reuse and state-preserving resize round trips.
-- [ ] Stable-ID selection through sorting, live reorder, list shrink, and empty list.
-- [ ] Input routing for unsupported, modal, global, and each activity context.
-- [ ] Visible selection and mnemonic fallback using symbols plus style-cell assertions.
-- [ ] Column headers, right-aligned numeric values, truncation, and exact-detail availability.
-- [ ] Remote inspection versus local buy/sell target.
-- [ ] Travel preview/commit/reject/transit/arrival.
-- [ ] Governance edit/read-only/reject/allocation constraints.
-- [ ] Intelligence tail, anchor, empty history, and rollover.
-- [ ] Long names, maximum numeric values, zero values, empty tables, all energy health states, and all brownout stages.
-- [ ] Terminal staged setup and reverse-order cleanup.
+- [x] Layout classifier boundaries and wide-but-short behavior.
+- [x] Compact/regular widget reuse and state-preserving resize round trips.
+- [x] Stable-ID selection through sorting, live reorder, list shrink, and empty list.
+- [x] Input routing for unsupported, modal, global, and each activity context.
+- [x] Visible selection and mnemonic fallback using symbols plus style-cell assertions.
+- [x] Column headers, right-aligned numeric values, truncation, and exact-detail availability.
+- [x] Remote inspection versus local buy/sell target.
+- [x] Travel preview/commit/reject/transit/arrival.
+- [x] Governance edit/read-only/reject/allocation constraints.
+- [x] Intelligence tail, anchor, empty history, and rollover.
+- [x] Long names, maximum numeric values, zero values, empty tables, all energy health states, and all brownout stages.
+- [x] Terminal staged setup and reverse-order cleanup.
 
 ### Manual validation
 
-- [ ] Start paused at exactly `80x30`; navigate all activities without using Tab.
-- [ ] Repeat the core flow at `160x45`; confirm added context does not change commands or targets.
-- [ ] Resize `80x30 -> 160x45 -> 80x30` while a system, good, investment, event position, and modal state are active.
-- [ ] Run continuous simulation while sorting by volatile metrics; confirm the selected system does not change unexpectedly.
-- [ ] Inspect a remote system, switch to Trade, and verify the local market/location is unmistakable before buying.
-- [ ] Preview and reject a route, correct the problem, begin travel, and inspect in-transit controls.
-- [ ] Edit a governed investment, inspect an autonomous system's read-only state, and verify feedback placement.
-- [ ] Review events while new events arrive; verify tail and historical-scroll behavior.
-- [ ] Verify mnemonic, selection, warning, disabled, success, and error cues in a reduced-color terminal profile.
-- [ ] Quit from each activity and after resize; verify cursor, alternate screen, and raw mode restore correctly.
+- [x] Start paused at exactly `80x30`; navigate all activities without using Tab.
+- [x] Repeat the core flow at `160x45`; confirm added context does not change commands or targets.
+- [x] Resize `80x30 -> 160x45 -> 80x30` while a system, good, investment, event position, and modal state are active.
+- [x] Run continuous simulation while sorting by volatile metrics; confirm the selected system does not change unexpectedly.
+- [x] Inspect a remote system, switch to Trade, and verify the local market/location is unmistakable before buying.
+- [x] Preview and reject a route, correct the problem, begin travel, and inspect in-transit controls.
+- [x] Edit a governed investment, inspect an autonomous system's read-only state, and verify feedback placement.
+- [x] Review events while new events arrive; verify tail and historical-scroll behavior.
+- [x] Verify mnemonic, selection, warning, disabled, success, and error cues in a reduced-color terminal profile.
+- [x] Quit from each activity and after resize; verify cursor, alternate screen, and raw mode restore correctly.
 
 ### Evidence to capture
 
@@ -472,11 +472,11 @@ Specific automated coverage:
 
 ### Documentation to update
 
-- [ ] `README.md` — replace the old Tab/global shortcut list, document activities, contextual controls, and `80x30`/`160x45` cell-grid behavior.
-- [ ] `docs/initial-prototype.md` — replace the active TUI layout/control requirements and acceptance steps so they no longer require pane focus or the all-at-once dashboard; retain the no-spatial-map scope for this pass.
-- [ ] `CHANGELOG.md` — add the user-visible mode-based UX replacement under `Unreleased`.
-- [ ] `setup/Brewfile`, `setup/doctor.sh`, and `setup/README.md` — declare and verify `ripgrep`, and document exporting `$HOME/.cargo/bin` when the shell does not already include it.
-- [ ] `docs/architecture.md` — update only if the final application-view grouping adds a durable contract not already covered by immutable frontend projections and TUI-local state.
+- [x] `README.md` — replace the old Tab/global shortcut list, document activities, contextual controls, and `80x30`/`160x45` cell-grid behavior.
+- [x] `docs/initial-prototype.md` — replace the active TUI layout/control requirements and acceptance steps so they no longer require pane focus or the all-at-once dashboard; retain the no-spatial-map scope for this pass.
+- [x] `CHANGELOG.md` — add the user-visible mode-based UX replacement under `Unreleased`.
+- [x] `setup/Brewfile`, `setup/doctor.sh`, and `setup/README.md` — declare and verify `ripgrep`, and document exporting `$HOME/.cargo/bin` when the shell does not already include it.
+- [x] `docs/architecture.md` — update only if the final application-view grouping adds a durable contract not already covered by immutable frontend projections and TUI-local state.
 
 ### Intentional follow-up
 
