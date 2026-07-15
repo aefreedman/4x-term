@@ -147,7 +147,7 @@ All subtraction is saturating at zero only after checked wide accumulation. Nega
 
 ### D2. Carrier fees follow the existing four-stage brownout ladder
 
-`carrier_fee_bps` is authored for `Normal`, `Throttled`, `Emergency`, and `Starvation`. The schedule must be strictly increasing and each value must be below 10,000 basis points.
+`carrier_fee_bps` is authored for `Normal`, `Throttled`, `Emergency`, and `Starvation`. The schedule must be strictly increasing and each value must be below 10,000 basis points. `Normal` here means whatever variant `game-core` already uses for the healthy non-brownout state; reuse that exact enum rather than introducing a parallel stage type or name.
 
 For gross payload `P` and planned loaded-route burn `B`:
 
@@ -192,7 +192,7 @@ projected_arrival_headroom = max(0,
 candidate_net_cap = min(remaining_requested_net, projected_arrival_headroom)
 ```
 
-This is a checked signed-wide sizing projection only. It does not mutate forecast state or create a hard storage claim.
+This is a checked signed-wide sizing projection only. It does not mutate forecast state or create a hard storage claim. The projection depends only on the destination and the horizon `H`, not on the carrier or source, so implementations may memoize it per `(destination, H)` within one matching phase rather than recomputing it per candidate triple; this is the one hot loop in matching and the memoization must not change any result.
 
 The payload helper chooses the **largest gross integer payload** satisfying all of the following:
 
@@ -928,7 +928,7 @@ Before delegation, the main agent authors the complete `EL-INV-LEGACY` executabl
 - [ ] Reject `core:energy` from quotes, local buy/sell, trade limits, reservations, automated ordinary opportunity collection, liquidation, and reroute paths.
 - [ ] Remove Energy quote-only config and tests.
 - [ ] Replace generic cargo Energy paths and ledger dimensions with tank/bulk/contract transfer dimensions.
-- [ ] Bound market-to-tank withdrawal by D1 exportable Energy including active source claims/export reserve.
+- [ ] Bound market-to-tank withdrawal by D1 exportable Energy including active source claims/export reserve. This bound applies to every withdrawal path, including the automated NPC tank-balancing pass in D13 phase 8; list that path explicitly in the `EL-INV-LEGACY` rejection/bounding matrix.
 - [ ] Add exact owned-bulk-to-tank and owned-bulk-to-market commands.
 - [ ] Preserve `RecordExternalDelivery` as an explicitly external diagnostic boundary.
 - [ ] Prove every removed entry point rejects Energy without mutation while ordinary-goods behavior remains unchanged.
