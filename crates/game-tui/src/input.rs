@@ -34,6 +34,7 @@ pub enum InputAction {
     Buy,
     Sell,
     BeginTravel,
+    TravelUntilArrival,
     ClearContext,
     Inspect,
     Sort,
@@ -116,6 +117,7 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
             KeyCode::Char('B') => InputAction::OpenBuyOrder,
             KeyCode::Char('S') => InputAction::OpenSellOrder,
             KeyCode::Char('t') | KeyCode::Enter => InputAction::BeginTravel,
+            KeyCode::Char('g') => InputAction::TravelUntilArrival,
             KeyCode::Tab => InputAction::NextSection,
             KeyCode::BackTab => InputAction::PreviousSection,
             KeyCode::Esc => InputAction::ClearContext,
@@ -195,6 +197,10 @@ mod tests {
         assert_eq!(
             route_key(KeyCode::Char('S'), &ui, true),
             InputAction::OpenSellOrder
+        );
+        assert_eq!(
+            route_key(KeyCode::Char('g'), &ui, true),
+            InputAction::TravelUntilArrival
         );
     }
 }

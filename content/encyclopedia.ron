@@ -137,6 +137,7 @@
         title: "Governance Policies",
         paragraphs: [
           "A governed market exposes a limited set of policies. Autonomous markets manage those policies themselves.",
+          "A market target is the amount of a good the market tries to keep available. A governor can change each base target; the target affects demand but does not create stock or guarantee that purchases can be funded. For population-scaled goods, the effective target rises or falls with population relative to that base.",
           "The operating-reserve horizon controls how many ticks of expected production costs the market protects before spending Energy elsewhere.",
           "In cost-aware pricing, producer margin adds a markup to recorded production cost before scarcity affects the selling price.",
           "Import priority changes a market's normal buying offer for a good relative to its selling price. It does not change how much stock the market targets or how many units it wants. For recipe inputs, offers can be capped so the finished product can still cover its input and operating costs.",

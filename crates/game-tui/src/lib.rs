@@ -17,7 +17,7 @@ use crossterm::terminal::{
 };
 use futures_util::StreamExt;
 use game_app::{
-    AppHandle, AppRequest, ApplicationView, InvestmentKind, InvestmentStatus, RunState,
+    AppHandle, AppRequest, ApplicationView, InvestmentKind, InvestmentStatus, RunControl, RunState,
 };
 use ratatui::Frame;
 use ratatui::backend::CrosstermBackend;
@@ -343,9 +343,9 @@ async fn handle_key_for_layout(
         InputAction::ToggleHelp => ui.input_layer = InputLayer::Help,
         InputAction::ToggleRun => {
             let state = if view.run_state == RunState::Paused {
-                RunState::Running
+                RunControl::Running
             } else {
-                RunState::Paused
+                RunControl::Paused
             };
             app.request(AppRequest::SetRunState(state)).await?;
         }
@@ -526,6 +526,33 @@ async fn handle_key_for_layout(
                 ui.message = "No route proposal; select a system and enter Trade with F2".into();
             }
         }
+        InputAction::TravelUntilArrival => {
+            let destination = if view.player.traveling {
+                view.selected_route
+                    .as_ref()
+                    .map(|route| route.destination_id.clone())
+            } else {
+                ui.route_proposal.clone()
+            };
+            if let Some(destination) = destination {
+                match app
+                    .request(AppRequest::TravelUntilArrival {
+                        destination: destination.clone(),
+                    })
+                    .await
+                {
+                    Ok(()) => {
+                        ui.message = format!(
+                            "Running until arrival at {}",
+                            system_name(view, &destination)
+                        );
+                    }
+                    Err(error) => ui.message = error.to_string(),
+                }
+            } else {
+                ui.message = "No active journey or route proposal".into();
+            }
+        }
         InputAction::ClearContext if ui.activity == Activity::Trade => {
             ui.route_proposal = None;
             ui.message = "Route proposal cleared".into();
@@ -614,7 +641,32 @@ async fn edit_governance(
         return;
     }
 
-    let import_index = row - 2;
+    let target_index = row - 2;
+    if let Some(market) = view.inspection.market.get(target_index) {
+        let next = if delta > 0 {
+            market.authored_target.saturating_add(1)
+        } else {
+            market.authored_target.saturating_sub(1).max(1)
+        };
+        if next == market.authored_target {
+            ui.message = "Market target is already at its minimum of 1".into();
+            return;
+        }
+        match app
+            .request(AppRequest::SetMarketTarget {
+                system,
+                good: market.good_id.clone(),
+                target: next,
+            })
+            .await
+        {
+            Ok(()) => ui.message = format!("{} target updated to {next}", market.name),
+            Err(error) => ui.message = error.to_string(),
+        }
+        return;
+    }
+
+    let import_index = target_index - view.inspection.market.len();
     if let Some(market) = view.inspection.market.get(import_index) {
         let mut policy = view.inspection.governor.policy.clone();
         let current = policy
@@ -696,11 +748,12 @@ fn move_selection(ui: &mut UiState, view: &ApplicationView, delta: isize) {
         }
         Activity::Governance => {
             let policy_rows = 2;
-            let import_rows = view.inspection.market.len();
-            let total = policy_rows + import_rows + view.inspection.governor.investments.len();
+            let market_rows = view.inspection.market.len();
+            let investment_start = policy_rows + market_rows.saturating_mul(2);
+            let total = investment_start + view.inspection.governor.investments.len();
             ui.governance_index = shifted(ui.governance_index, total, delta);
-            if ui.governance_index >= policy_rows + import_rows {
-                ui.investment_index = ui.governance_index - policy_rows - import_rows;
+            if ui.governance_index >= investment_start {
+                ui.investment_index = ui.governance_index - investment_start;
             }
         }
         Activity::Trade => match ui.trade_region {
@@ -831,9 +884,10 @@ fn jump_governance_section(ui: &mut UiState, view: &ApplicationView, delta: isiz
     let mut starts = vec![0];
     if !view.inspection.market.is_empty() {
         starts.push(2);
+        starts.push(2 + view.inspection.market.len());
     }
     if !view.inspection.governor.investments.is_empty() {
-        starts.push(2 + view.inspection.market.len());
+        starts.push(2 + view.inspection.market.len().saturating_mul(2));
     }
     let current = starts
         .iter()
@@ -841,7 +895,7 @@ fn jump_governance_section(ui: &mut UiState, view: &ApplicationView, delta: isiz
         .unwrap_or(0);
     let section = wrapped_shifted(current, starts.len(), delta);
     ui.governance_index = starts[section];
-    if ui.governance_index >= 2 + view.inspection.market.len() {
+    if ui.governance_index >= 2 + view.inspection.market.len().saturating_mul(2) {
         ui.investment_index = 0;
     }
 }
@@ -885,8 +939,9 @@ fn clamp_selection(ui: &mut UiState, view: &ApplicationView) {
     let destinations = trade_destination_ids(view, ui);
     ui.reconcile_trade_destination(&destinations);
     clamp_encyclopedia_selection(ui, view);
-    let governance_rows =
-        2 + view.inspection.market.len() + view.inspection.governor.investments.len();
+    let governance_rows = 2
+        + view.inspection.market.len().saturating_mul(2)
+        + view.inspection.governor.investments.len();
     ui.governance_index = ui.governance_index.min(governance_rows.saturating_sub(1));
     ui.investment_index = ui
         .investment_index
@@ -1131,10 +1186,10 @@ fn render_activity_bar(frame: &mut Frame<'_>, area: Rect, active: Activity) {
 fn render_global_status(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView) {
     let status = format!(
         "{} · Tick {} · Rate {} · Location {} · Tank {}/{} E",
-        if view.run_state == RunState::Paused {
-            "PAUSED"
-        } else {
-            "RUNNING"
+        match view.run_state {
+            RunState::Paused => "PAUSED",
+            RunState::Running => "RUNNING",
+            RunState::RunningUntilArrival => "RUNNING TO ARRIVAL",
         },
         view.tick,
         view.tick_rate.label(),
@@ -1249,6 +1304,13 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
             } else {
                 spans.push(Span::raw(")ravel disabled: route details unavailable"));
             }
+            spans.push(Span::raw(" · ("));
+            spans.push(shortcut_span("g"));
+            if view.player.traveling || matching_route.is_some() {
+                spans.push(Span::raw(") run to arrival"));
+            } else {
+                spans.push(Span::raw(") run to arrival disabled"));
+            }
         }
         Activity::Governance => {
             spans.push(shortcut_span("↑/↓"));
@@ -1282,7 +1344,11 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
     }
     spans.push(Span::raw(" · "));
     spans.push(shortcut_span("Space"));
-    spans.push(Span::raw(" run · "));
+    spans.push(Span::raw(match view.run_state {
+        RunState::Paused => " run · ",
+        RunState::Running => " pause · ",
+        RunState::RunningUntilArrival => " pause/cancel auto-arrival · ",
+    }));
     spans.push(shortcut_span("."));
     spans.push(Span::raw(" step (paused) · "));
     spans.push(shortcut_span("r"));
@@ -1683,6 +1749,28 @@ fn render_system_inspector(
             }
         )),
     ];
+    if system.production.is_empty() {
+        lines.push(Line::from(
+            "Configured production capability: no goods produced",
+        ));
+    } else {
+        lines.push(Line::from("Configured production capability:"));
+        lines.extend(system.production.iter().map(|output| {
+            let mut methods = Vec::new();
+            if output.source_quantity_per_tick > 0 {
+                methods.push(format!(
+                    "source base {}/tick",
+                    output.source_quantity_per_tick
+                ));
+            }
+            methods.extend(
+                output.recipes.iter().map(|recipe| {
+                    format!("{} {}/run", recipe.recipe_name, recipe.quantity_per_run)
+                }),
+            );
+            Line::from(format!("• {} — {}", output.good_name, methods.join("; ")))
+        }));
+    }
     if system.id == view.inspection.system.id {
         let energy = &view.inspection.market_energy;
         lines.push(Line::from(format!(
@@ -1805,7 +1893,8 @@ fn render_governance_activity(
             Constraint::Length(4),
             Constraint::Length(5),
             Constraint::Length(5),
-            Constraint::Min(8),
+            Constraint::Length(5),
+            Constraint::Min(7),
         ])
         .split(area);
     let governor = &view.inspection.governor;
@@ -1892,10 +1981,73 @@ fn render_governance_activity(
         panes[1],
     );
 
-    let import_capacity = usize::from(panes[2].height.saturating_sub(3)).max(1);
-    let import_selected = ui
+    let target_capacity = usize::from(panes[2].height.saturating_sub(3)).max(1);
+    let target_selected = ui
         .governance_index
         .checked_sub(2)
+        .filter(|index| *index < view.inspection.market.len())
+        .unwrap_or(0);
+    let (target_start, target_end) = viewport(
+        view.inspection.market.len(),
+        target_selected,
+        target_capacity,
+    );
+    let mut target_rows = view.inspection.market[target_start..target_end]
+        .iter()
+        .enumerate()
+        .map(|(offset, market)| {
+            let index = target_start + offset;
+            let selected = ui.governance_index == index + 2;
+            Row::new(vec![
+                Cell::from(if selected { ">" } else { " " }),
+                Cell::from(market.name.clone()),
+                right_cell(market.inventory.to_string()),
+                right_cell(market.authored_target.to_string()),
+                right_cell(market.target.to_string()),
+                governance_control_cell(editable, " ±1"),
+            ])
+            .style(selected_style(selected))
+        })
+        .collect::<Vec<_>>();
+    if target_rows.is_empty() {
+        target_rows.push(Row::new(vec![
+            Cell::from("—"),
+            Cell::from("No market targets"),
+        ]));
+    }
+    frame.render_widget(
+        Table::new(
+            target_rows,
+            [
+                Constraint::Length(1),
+                Constraint::Percentage(30),
+                Constraint::Length(8),
+                Constraint::Length(8),
+                Constraint::Length(9),
+                Constraint::Min(9),
+            ],
+        )
+        .header(bold_row([
+            "",
+            "Good",
+            "Stock",
+            "Base",
+            "Effective",
+            "Control",
+        ]))
+        .column_spacing(1)
+        .block(Block::bordered().title(format!(
+            "Market Targets · {}",
+            viewport_label(target_start, target_end, view.inspection.market.len())
+        ))),
+        panes[2],
+    );
+
+    let import_offset = 2 + view.inspection.market.len();
+    let import_capacity = usize::from(panes[3].height.saturating_sub(3)).max(1);
+    let import_selected = ui
+        .governance_index
+        .checked_sub(import_offset)
         .filter(|index| *index < view.inspection.market.len())
         .unwrap_or(0);
     let (import_start, import_end) = viewport(
@@ -1908,7 +2060,7 @@ fn render_governance_activity(
         .enumerate()
         .map(|(offset, market)| {
             let index = import_start + offset;
-            let selected = ui.governance_index == index + 2;
+            let selected = ui.governance_index == index + import_offset;
             let priority = governor
                 .policy
                 .import_priorities
@@ -1948,17 +2100,17 @@ fn render_governance_activity(
             "Import Priorities · {}",
             viewport_label(import_start, import_end, view.inspection.market.len())
         ))),
-        panes[2],
+        panes[3],
     );
 
-    let investment_start = 2 + view.inspection.market.len();
+    let investment_start = 2 + view.inspection.market.len().saturating_mul(2);
     let total = governor
         .investments
         .iter()
         .fold(0_u32, |total, investment| {
             total.saturating_add(investment.allocation_percent)
         });
-    let investment_capacity = usize::from(panes[3].height.saturating_sub(3)).max(1);
+    let investment_capacity = usize::from(panes[4].height.saturating_sub(3)).max(1);
     let investment_selected = ui
         .governance_index
         .checked_sub(investment_start)
@@ -2055,7 +2207,7 @@ fn render_governance_activity(
             ]))
             .column_spacing(1)
             .block(Block::bordered().title(title)),
-            panes[3],
+            panes[4],
         );
     } else {
         frame.render_widget(
@@ -2080,7 +2232,7 @@ fn render_governance_activity(
             ]))
             .column_spacing(1)
             .block(Block::bordered().title(title)),
-            panes[3],
+            panes[4],
         );
     }
 }
@@ -2499,12 +2651,11 @@ fn render_trade_route(
                             || format_route_chain(route),
                             |leg| format!("Current leg: {} → {}", leg.from_name, leg.to_name),
                         )),
-                        Line::from(
-                            view.local_trade
-                                .unavailable_reason
-                                .clone()
-                                .unwrap_or_else(|| "Local trading disabled during transit".into()),
-                        ),
+                        Line::from(vec![
+                            Span::raw("("),
+                            shortcut_span("g"),
+                            Span::raw(") run to arrival · Local trading disabled"),
+                        ]),
                     ]
                 } else {
                     vec![
@@ -2518,12 +2669,11 @@ fn render_trade_route(
                             || format_route_chain(route),
                             |leg| format!("Current leg: {} → {}", leg.from_name, leg.to_name),
                         )),
-                        Line::from(
-                            view.local_trade
-                                .unavailable_reason
-                                .clone()
-                                .unwrap_or_else(|| "Local trading disabled during transit".into()),
-                        ),
+                        Line::from(vec![
+                            Span::raw("("),
+                            shortcut_span("g"),
+                            Span::raw(") run to arrival · Local trading disabled"),
+                        ]),
                     ]
                 }
             },
@@ -2562,7 +2712,9 @@ fn render_trade_route(
                 Line::from(vec![
                     Span::raw("("),
                     shortcut_span("T"),
-                    Span::raw(")ravel disabled: exact route details unavailable · "),
+                    Span::raw(")ravel / ("),
+                    shortcut_span("g"),
+                    Span::raw(") disabled: exact route details unavailable · "),
                     shortcut_span("Esc"),
                     Span::raw(" clears proposal"),
                 ])
@@ -2571,7 +2723,7 @@ fn render_trade_route(
                 if route.required_energy > view.player.tank_energy {
                     Line::from(vec![
                         Span::raw(format!(
-                            "Travel disabled: needs {} E; tank holds {} E · ",
+                            "Travel / g disabled: needs {} E; tank holds {} E · ",
                             route.required_energy.0, view.player.tank_energy.0
                         )),
                         shortcut_span("Esc"),
@@ -2583,7 +2735,9 @@ fn render_trade_route(
                         shortcut_span("T"),
                         Span::raw(")ravel / "),
                         shortcut_span("Enter"),
-                        Span::raw(" to commit · "),
+                        Span::raw(" · ("),
+                        shortcut_span("g"),
+                        Span::raw(") run to arrival · "),
                         shortcut_span("Esc"),
                         Span::raw(" clears proposal"),
                     ])
@@ -3401,7 +3555,9 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
             shortcut_span("T"),
             Span::raw(")ravel/"),
             shortcut_span("Enter"),
-            Span::raw(" · "),
+            Span::raw(" · ("),
+            shortcut_span("g"),
+            Span::raw(") run to arrival · "),
             shortcut_span("Esc"),
             Span::raw(" clear route"),
         ]),
@@ -3410,7 +3566,7 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
             shortcut_span("↑/↓"),
             Span::raw(" row · "),
             shortcut_span("Tab/Shift-Tab"),
-            Span::raw(" section · "),
+            Span::raw(" section · targets show persistent Base → population-scaled Effective · "),
             shortcut_span("←/→"),
             Span::raw(" edit · ("),
             shortcut_span("I"),
@@ -3480,9 +3636,9 @@ mod tests {
         EncyclopediaSectionView, EncyclopediaView, EnergyHealth, GovernorInvestmentPolicy,
         GovernorMarketPolicy, GovernorView, InvestmentView, LocalTradeLimitsView, LocalTradeView,
         MarketEnergyView, MarketRow, PlayerStatusView, PopulationView, PresentationEvent,
-        RouteLegView, RouteView, SeasonalGenerationView, SystemIdentityView, SystemInspectionView,
-        SystemListItem, TickRate, TradeDestinationAvailability, TradeMarketComparisonView,
-        TradeQuantityLimitView,
+        ProductionOutputView, ProductionRecipeView, RouteLegView, RouteView,
+        SeasonalGenerationView, SystemIdentityView, SystemInspectionView, SystemListItem, TickRate,
+        TradeDestinationAvailability, TradeMarketComparisonView, TradeQuantityLimitView,
     };
     use game_core::{
         BrownoutStage, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetDynamics, FleetMode,
@@ -3666,6 +3822,7 @@ mod tests {
             name: "Ore".into(),
             inventory: 10,
             target: 10,
+            authored_target: 10,
             buy_quote: Energy(9),
             sell_quote: Energy(11),
             unit_cost: Energy(8),
@@ -3749,6 +3906,16 @@ mod tests {
                     distance: 3.5,
                     travel_ticks: 4,
                 }],
+                production: vec![ProductionOutputView {
+                    good_id: id("core:ore"),
+                    good_name: "Ore".into(),
+                    source_quantity_per_tick: 2,
+                    recipes: vec![ProductionRecipeView {
+                        recipe_id: id("core:smelt"),
+                        recipe_name: "Smelting".into(),
+                        quantity_per_run: 1,
+                    }],
+                }],
             }],
             selected_system: system.id.clone(),
             selected_route: None,
@@ -3808,6 +3975,7 @@ mod tests {
                         name: "Ore".into(),
                         inventory: 3,
                         target: 20,
+                        authored_target: 20,
                         buy_quote: Energy(13),
                         sell_quote: Energy(15),
                         unit_cost: Energy(8),
@@ -4187,7 +4355,18 @@ mod tests {
             .unwrap();
         view = app.views.borrow().clone();
         assert_eq!(view.inspection.governor.policy.producer_margin_percent, 16);
-        ui.governance_index = 2 + view.inspection.market.len();
+        ui.governance_index = 2;
+        let previous_target = view.inspection.market[0].authored_target;
+        handle_key(KeyCode::Right, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view = app.views.borrow().clone();
+        assert_eq!(
+            view.inspection.market[0].authored_target,
+            previous_target + 1
+        );
+
+        ui.governance_index = 2 + view.inspection.market.len().saturating_mul(2);
         handle_key(KeyCode::Right, &mut ui, &view, &app)
             .await
             .unwrap();
@@ -4204,7 +4383,7 @@ mod tests {
             .policy
             .import_priorities
             .insert(invalid.inspection.market[0].good_id.clone(), 10_000);
-        ui.governance_index = 2;
+        ui.governance_index = 2 + invalid.inspection.market.len();
         handle_key(KeyCode::Right, &mut ui, &invalid, &app)
             .await
             .unwrap();
@@ -4265,6 +4444,8 @@ mod tests {
             },
         );
         assert!(compact_detail.contains("System Detail"));
+        assert!(compact_detail.contains("Configured production capability"));
+        assert!(compact_detail.contains("Ore — source base 2/tick; Smelting 1/run"));
         assert!(!compact_detail.contains("Systems — Name"));
 
         for (width, height) in [(160, 45), (200, 60)] {
@@ -4272,8 +4453,23 @@ mod tests {
             assert!(rendered.contains("F1 Systems"));
             assert!(rendered.contains("Systems — Name ↑"));
             assert!(rendered.contains("Selected System Overview"));
+            assert!(rendered.contains("Configured production capability"));
+            assert!(rendered.contains("Ore — source base 2/tick; Smelting 1/run"));
             assert!(!rendered.contains("Local Market"));
         }
+
+        let mut no_production = view;
+        no_production.systems[0].production.clear();
+        let rendered = rendered_at(
+            80,
+            30,
+            &no_production,
+            &UiState {
+                input_layer: InputLayer::Detail,
+                ..UiState::default()
+            },
+        );
+        assert!(rendered.contains("Configured production capability: no goods produced"));
     }
 
     #[test]
@@ -4453,11 +4649,21 @@ mod tests {
         handle_key(KeyCode::Tab, &mut ui, &view, &app)
             .await
             .unwrap();
+        assert_eq!(
+            ui.governance_index,
+            2 + view.inspection.market.len().saturating_mul(2)
+        );
+        handle_key(KeyCode::Tab, &mut ui, &view, &app)
+            .await
+            .unwrap();
         assert_eq!(ui.governance_index, 0);
         handle_key(KeyCode::BackTab, &mut ui, &view, &app)
             .await
             .unwrap();
-        assert_eq!(ui.governance_index, 2 + view.inspection.market.len());
+        assert_eq!(
+            ui.governance_index,
+            2 + view.inspection.market.len().saturating_mul(2)
+        );
         app.shutdown().await.unwrap();
     }
 
@@ -4582,6 +4788,7 @@ mod tests {
             );
             assert!(governance.contains("Governance — Aster Reach"));
             assert!(governance.contains(">"));
+            assert!(governance.contains("Market Targets"));
             assert!(governance.contains("Allocation"));
             assert!(governance.contains("Total"));
 
@@ -4655,6 +4862,28 @@ mod tests {
             .unwrap();
         assert_eq!(rejected.route_proposal, Some(id("core:missing")));
         assert!(!rejected.message.is_empty());
+        app.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_to_arrival_shortcut_starts_the_route_and_arms_auto_pause() {
+        let app = game_app::spawn(test_session());
+        app.request(AppRequest::SelectSystem(id("core:s1")))
+            .await
+            .unwrap();
+        let view = app.views.borrow().clone();
+        let mut ui = UiState {
+            activity: Activity::Trade,
+            route_proposal: Some(id("core:s1")),
+            ..UiState::default()
+        };
+        handle_key(KeyCode::Char('g'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        let running = app.views.borrow().clone();
+        assert_eq!(running.run_state, RunState::RunningUntilArrival);
+        assert!(running.player.traveling);
+        assert!(ui.message.contains("Running until arrival"));
         app.shutdown().await.unwrap();
     }
 
@@ -5046,7 +5275,7 @@ mod tests {
                 "missing compact Trade fact: {fact}"
             );
         }
-        assert!(rendered.contains("(T)ravel / Enter to commit"));
+        assert!(rendered.contains("(T)ravel / Enter · (g) run to arrival"));
     }
 
     #[test]

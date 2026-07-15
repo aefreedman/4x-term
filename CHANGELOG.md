@@ -22,6 +22,9 @@
 - Authored, progression-ready player trade-network access with offline reservation-contract rejection in the headless core, immutable application projection, and visible TUI capability state.
 - A responsive, explicitly scrollable F5 Encyclopedia backed by frontend-independent factual sections and articles for systems, energy, brownouts, population, goods, markets, recipes, governance, investments, traders, reservations, travel, and trade-network access.
 - Read-only selected-good destination market comparisons with player-relative route time and energy facts, plus stable-ID Trade region selection that previews routes without committing travel.
+- A Trade shortcut that starts or continues the active journey, runs the simulation through the arrival tick, and pauses automatically.
+- Governor-authorized per-good market targets with immediate demand projection and typed rejection behavior.
+- Systems production-capability views that distinguish raw source output per tick from recipe output per run.
 
 ### Changed
 

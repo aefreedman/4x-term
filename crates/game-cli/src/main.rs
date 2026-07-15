@@ -1052,6 +1052,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
                 | GameEvent::ReservationReleased { .. }
                 | GameEvent::SaleDeferred { .. }
                 | GameEvent::PolicyChanged { .. }
+                | GameEvent::MarketTargetChanged { .. }
                 | GameEvent::TickAdvanced(_)
                 | GameEvent::Rejected(_) => {}
             }

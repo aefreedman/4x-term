@@ -141,7 +141,7 @@ pub struct RecipeDefinition {
     pub margin_percent: Option<u32>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceDefinition {
     pub good: ContentId,
     pub quantity_per_tick: u32,
@@ -1964,6 +1964,7 @@ pub enum GovernorRejectionReason {
     InvalidPolicy,
     InvalidInvestmentAllocation,
     UnknownMarket,
+    UnknownGood,
     Arithmetic,
 }
 
@@ -1975,6 +1976,7 @@ impl GovernorRejectionReason {
             Self::InvalidPolicy => "invalid market policy",
             Self::InvalidInvestmentAllocation => "invalid investment allocation",
             Self::UnknownMarket => "unknown market",
+            Self::UnknownGood => "unknown good",
             Self::Arithmetic => "policy arithmetic failed",
         }
     }
@@ -2088,6 +2090,11 @@ pub enum GameEvent {
     PolicyChanged {
         system: ContentId,
     },
+    MarketTargetChanged {
+        system: ContentId,
+        good: ContentId,
+        target: u32,
+    },
     Rejected(String),
 }
 
@@ -2131,6 +2138,11 @@ pub enum GameCommand {
     SetGovernorInvestmentPolicy {
         system: ContentId,
         policy: GovernorInvestmentPolicy,
+    },
+    SetGovernorMarketTarget {
+        system: ContentId,
+        good: ContentId,
+        target: u32,
     },
     /// A core-owned, auditable boundary for diagnostics and future adapters.
     /// This is deliberately not exposed through the player application API.
@@ -2180,6 +2192,8 @@ pub enum CoreError {
     InvalidPolicy,
     #[error("player is not authorized to govern this market")]
     UnauthorizedMarketPolicy,
+    #[error("market target must be greater than zero")]
+    InvalidMarketTarget,
     #[error("invalid investment allocation")]
     InvalidInvestmentPolicy,
     #[error("invalid physical definition")]
@@ -2211,6 +2225,9 @@ pub struct MarketSnapshot {
     pub position: Position3,
     pub inventory: BTreeMap<ContentId, u64>,
     pub targets: BTreeMap<ContentId, u32>,
+    pub authored_targets: BTreeMap<ContentId, u32>,
+    pub recipes: Vec<ContentId>,
+    pub sources: Vec<SourceDefinition>,
     pub energy_stock: Energy,
     pub energy_storage_cap: Energy,
     pub reserved_energy: Energy,
@@ -2689,6 +2706,19 @@ impl GameSession {
                     },
                 );
             }
+            let authored_targets = system.targets;
+            let mut effective_targets = authored_targets.clone();
+            for (good, units_per_thousand) in &population_config.tertiary_demand_per_thousand {
+                effective_targets.insert(
+                    good.clone(),
+                    population_demand_target(
+                        authored_targets.get(good).copied().unwrap_or(0),
+                        system.population_state.current,
+                        system.population_state.reference,
+                        *units_per_thousand,
+                    )?,
+                );
+            }
             world.spawn((
                 StableId(system.id),
                 DisplayName(system.name),
@@ -2697,8 +2727,8 @@ impl GameSession {
                 system.policy,
                 Market {
                     inventory: system.inventory,
-                    authored_targets: system.targets.clone(),
-                    targets: system.targets,
+                    authored_targets,
+                    targets: effective_targets,
                     recipes: system.recipes,
                     sources: system.sources,
                     cost_basis: bases,
@@ -2811,7 +2841,8 @@ impl GameSession {
             GameCommand::SetMarketPolicy { system, .. }
             | GameCommand::SetInvestmentPolicy { system, .. }
             | GameCommand::SetGovernorMarketPolicy { system, .. }
-            | GameCommand::SetGovernorInvestmentPolicy { system, .. } => Some(system.clone()),
+            | GameCommand::SetGovernorInvestmentPolicy { system, .. }
+            | GameCommand::SetGovernorMarketTarget { system, .. } => Some(system.clone()),
             _ => None,
         };
         let investment_command = matches!(
@@ -2882,6 +2913,11 @@ impl GameSession {
             GameCommand::SetGovernorInvestmentPolicy { system, policy } => {
                 self.set_player_investment_policy(&system, policy.into())
             }
+            GameCommand::SetGovernorMarketTarget {
+                system,
+                good,
+                target,
+            } => self.set_player_market_target(&system, &good, target),
             GameCommand::RecordExternalDelivery {
                 system,
                 good,
@@ -2903,6 +2939,9 @@ impl GameSession {
                         }
                         CoreError::InvalidInvestmentPolicy if investment_command => {
                             GovernorRejectionReason::InvalidInvestmentAllocation
+                        }
+                        CoreError::Unknown { kind: "good", .. } => {
+                            GovernorRejectionReason::UnknownGood
                         }
                         CoreError::Unknown { .. } => GovernorRejectionReason::UnknownMarket,
                         CoreError::Overflow => GovernorRejectionReason::Arithmetic,
@@ -3247,6 +3286,9 @@ impl GameSession {
                 position: pos.0,
                 inventory: m.inventory.clone(),
                 targets: m.targets.clone(),
+                authored_targets: m.authored_targets.clone(),
+                recipes: m.recipes.clone(),
+                sources: m.sources.clone(),
                 energy_stock: m.energy_stock().unwrap_or(Energy(0)),
                 energy_storage_cap: m.energy_storage_cap,
                 reserved_energy: m.reserved_energy,
@@ -3413,7 +3455,7 @@ impl GameSession {
                 .unwrap_or(policy.default_target),
         );
         if target == 0 {
-            return Err(CoreError::InvalidPolicy);
+            return Ok(SCALE);
         }
         let stock = market.inventory.get(good).copied().unwrap_or(0);
         let shortage = target.saturating_sub(stock).min(target);
@@ -4168,6 +4210,51 @@ impl GameSession {
         merged.operating_reserve_ticks = policy.operating_reserve_ticks;
         merged.import_priorities = policy.import_priorities;
         self.apply_market_policy(system, market_entity, merged)
+    }
+
+    fn set_player_market_target(
+        &mut self,
+        system: &ContentId,
+        good: &ContentId,
+        target: u32,
+    ) -> Result<(), CoreError> {
+        let market_entity = self.player_governs(system)?;
+        if target == 0 {
+            return Err(CoreError::InvalidMarketTarget);
+        }
+        if !self.world.resource::<Catalog>().goods.contains_key(good) {
+            return Err(CoreError::Unknown {
+                kind: "good",
+                id: good.to_string(),
+            });
+        }
+        let market = self.world.get::<Market>(market_entity).unwrap();
+        let effective = self
+            .world
+            .resource::<EconomyConfig>()
+            .population
+            .tertiary_demand_per_thousand
+            .get(good)
+            .map_or(Ok(target), |units_per_thousand| {
+                population_demand_target(
+                    target,
+                    market.population_state.current,
+                    market.population_state.reference,
+                    *units_per_thousand,
+                )
+            })?;
+        let mut market = self.world.get_mut::<Market>(market_entity).unwrap();
+        market.authored_targets.insert(good.clone(), target);
+        market.targets.insert(good.clone(), effective);
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::MarketTargetChanged {
+                system: system.clone(),
+                good: good.clone(),
+                target: effective,
+            });
+        Ok(())
     }
 
     fn set_player_investment_policy(
@@ -10122,6 +10209,143 @@ mod tests {
             GameSession::new(overflow),
             Err(CoreError::InvalidWorldDynamics)
         ));
+    }
+
+    #[test]
+    fn population_scaled_targets_are_effective_in_the_initial_snapshot() {
+        let ore = id("core:ore");
+        let mut dynamic = definition();
+        dynamic.economy.population.static_population = false;
+        dynamic
+            .economy
+            .population
+            .tertiary_demand_per_thousand
+            .insert(ore.clone(), 2);
+        dynamic.systems[0].population = 10;
+        dynamic.systems[0].population_state.current = 10;
+        dynamic.systems[0].population_state.reference = 5;
+        dynamic.systems[0].population_state.carrying_capacity = 10;
+        dynamic.systems[0].population_state.support_capacity = 10;
+        dynamic.systems[1].population = 10;
+        dynamic.systems[1].population_state.current = 10;
+        dynamic.systems[1].population_state.reference = 5;
+        dynamic.systems[1].population_state.carrying_capacity = 10;
+        dynamic.systems[1].population_state.support_capacity = 10;
+        dynamic.systems[1].targets.remove(&ore);
+        let mut session = GameSession::new(dynamic).unwrap();
+        let snapshot = session.snapshot();
+        assert_eq!(snapshot.markets[0].authored_targets[&ore], 10);
+        assert_eq!(snapshot.markets[0].targets[&ore], 20);
+        assert!(!snapshot.markets[1].authored_targets.contains_key(&ore));
+        assert_eq!(snapshot.markets[1].targets[&ore], 1);
+
+        let mut static_definition = definition();
+        static_definition
+            .economy
+            .population
+            .tertiary_demand_per_thousand
+            .insert(ore.clone(), 2);
+        static_definition.systems[0].targets.remove(&ore);
+        static_definition.systems[0].population = 10;
+        let mut static_session = GameSession::new(static_definition).unwrap();
+        assert_eq!(static_session.snapshot().markets[0].targets[&ore], 1);
+
+        let mut zero_population = definition();
+        zero_population.economy.population.static_population = false;
+        zero_population
+            .economy
+            .population
+            .tertiary_demand_per_thousand
+            .insert(ore.clone(), 2);
+        zero_population.systems[0].targets.remove(&ore);
+        zero_population.systems[0].population = 0;
+        zero_population.systems[0].population_state.current = 0;
+        zero_population.systems[0].population_state.reference = 1;
+        zero_population.systems[0]
+            .population_state
+            .carrying_capacity = 0;
+        zero_population.systems[0].population_state.support_capacity = 0;
+        let mut zero_session = GameSession::new(zero_population).unwrap();
+        assert_eq!(zero_session.snapshot().markets[0].targets[&ore], 0);
+        assert!(zero_session.quotes(&id("core:s0"), &ore).is_ok());
+        zero_session.step().unwrap();
+    }
+
+    #[test]
+    fn governor_market_targets_are_authorized_immediate_and_persistent() {
+        let ore = id("core:ore");
+        let mut definition = definition();
+        definition.systems[1].governance = Governance::default();
+        definition
+            .economy
+            .population
+            .tertiary_demand_per_thousand
+            .insert(ore.clone(), 1);
+        let mut session = GameSession::new(definition).unwrap();
+
+        session
+            .submit(GameCommand::SetGovernorMarketTarget {
+                system: id("core:s0"),
+                good: ore.clone(),
+                target: 200,
+            })
+            .unwrap();
+        let market = session
+            .snapshot()
+            .markets
+            .into_iter()
+            .find(|market| market.system_id == id("core:s0"))
+            .unwrap();
+        assert_eq!(market.targets[&ore], 200);
+        assert_eq!(market.demand[&ore].advertised, 100);
+        assert!(session.drain_events().iter().any(|event| matches!(
+            event,
+            GameEvent::MarketTargetChanged { system, good, target }
+                if system == &id("core:s0") && good == &ore && *target == 200
+        )));
+
+        session.step().unwrap();
+        let after_step = session
+            .snapshot()
+            .markets
+            .into_iter()
+            .find(|market| market.system_id == id("core:s0"))
+            .unwrap();
+        assert_eq!(after_step.targets[&ore], 200);
+
+        let before = session.snapshot();
+        assert_eq!(
+            session.submit(GameCommand::SetGovernorMarketTarget {
+                system: id("core:s0"),
+                good: ore.clone(),
+                target: 0,
+            }),
+            Err(CoreError::InvalidMarketTarget)
+        );
+        assert_eq!(
+            session.submit(GameCommand::SetGovernorMarketTarget {
+                system: id("core:s1"),
+                good: ore,
+                target: 50,
+            }),
+            Err(CoreError::UnauthorizedMarketPolicy)
+        );
+        assert!(matches!(
+            session.submit(GameCommand::SetGovernorMarketTarget {
+                system: id("core:s0"),
+                good: id("core:missing"),
+                target: 50,
+            }),
+            Err(CoreError::Unknown { kind: "good", .. })
+        ));
+        assert!(session.drain_events().iter().any(|event| matches!(
+            event,
+            GameEvent::GovernorPolicyRejected {
+                reason: GovernorRejectionReason::UnknownGood,
+                ..
+            }
+        )));
+        assert_eq!(session.snapshot().markets, before.markets);
     }
 
     #[test]

@@ -10,10 +10,11 @@ The captures demonstrate:
 
 - persistent F1–F5 activity bar and textual active marker;
 - stable `>` selection plus `LOC`, `GOV`, and warning labels;
+- selected-system production capability with separate source-per-tick and recipe-per-run facts;
 - local Trade versus selected-good remote market comparisons;
 - explicit destination selection, route proposal, or disabled reason;
 - focused one-transaction order limits, total cost, tank/cargo consequences, and maximum-quantity shortcut;
-- Governance row selection, allocation totals, and read-only labeling;
+- Governance row selection, editable base/effective market targets, allocation totals, and read-only labeling;
 - Intelligence event range and player/fleet summaries;
 - factual Encyclopedia sections, article selection, and scroll status;
 - compact and regular compositions without internal content IDs.
@@ -22,7 +23,7 @@ The captures demonstrate:
 
 Two real terminal runs completed with exit status 0:
 
-1. `80x30`: Systems navigation and sorting, Trade goods/destination switching, Governance navigation/edit attempt, Intelligence scrolling, Encyclopedia article/section scrolling, help open/close, resize to `160x45` and back to `80x30`, then quit.
+1. `80x30`: Systems navigation and sorting, Trade goods/destination switching and run-to-arrival control, Governance target navigation/editing, Intelligence scrolling, Encyclopedia article/section scrolling, help open/close, resize to `160x45` and back to `80x30`, then quit.
 2. `160x45`: visited all five activities with keyboard-only navigation, then quit.
 
 The pseudo-terminal logs were retained only under ignored `target/ui-playthroughs/`; they contain ANSI control sequences and are not source artifacts.

@@ -22,6 +22,13 @@ const EVENT_HISTORY: usize = 100;
 pub enum RunState {
     Paused,
     Running,
+    RunningUntilArrival,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunControl {
+    Paused,
+    Running,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,7 +69,7 @@ impl TickRate {
 
 #[derive(Debug)]
 pub enum AppRequest {
-    SetRunState(RunState),
+    SetRunState(RunControl),
     Step,
     SetTickRate(TickRate),
     SelectSystem(ContentId),
@@ -75,6 +82,9 @@ pub enum AppRequest {
         quantity: u32,
     },
     BeginTravel {
+        destination: ContentId,
+    },
+    TravelUntilArrival {
         destination: ContentId,
     },
     CommitTrade {
@@ -97,6 +107,11 @@ pub enum AppRequest {
         system: ContentId,
         policy: GovernorInvestmentPolicy,
     },
+    SetMarketTarget {
+        system: ContentId,
+        good: ContentId,
+        target: u32,
+    },
     CancelReservation,
     Shutdown,
 }
@@ -105,6 +120,21 @@ pub enum AppRequest {
 pub struct SystemIdentityView {
     pub id: ContentId,
     pub name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProductionOutputView {
+    pub good_id: ContentId,
+    pub good_name: String,
+    pub source_quantity_per_tick: u64,
+    pub recipes: Vec<ProductionRecipeView>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionRecipeView {
+    pub recipe_id: ContentId,
+    pub recipe_name: String,
+    pub quantity_per_run: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -124,6 +154,7 @@ pub struct SystemListItem {
     pub runway_ticks: u32,
     pub seasonal_generation: SeasonalGenerationView,
     pub connections: Vec<ConnectionView>,
+    pub production: Vec<ProductionOutputView>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -245,6 +276,7 @@ pub struct MarketRow {
     pub name: String,
     pub inventory: u64,
     pub target: u32,
+    pub authored_target: u32,
     pub buy_quote: Energy,
     pub sell_quote: Energy,
     pub unit_cost: Energy,
@@ -499,6 +531,7 @@ async fn run_owner(
     encyclopedia: EncyclopediaView,
 ) -> Result<(), CoreError> {
     let mut state = RunState::Paused;
+    let mut arrival_target = None;
     let mut rate = TickRate::Normal;
     let mut interval = tick_interval(rate);
     let mut history = VecDeque::new();
@@ -509,7 +542,14 @@ async fn run_owner(
                 let Some(envelope) = envelope else { break; };
                 let mut publish = true;
                 let result = match envelope.request {
-                    AppRequest::SetRunState(next) => { state = next; Ok(()) },
+                    AppRequest::SetRunState(next) => {
+                        state = match next {
+                            RunControl::Paused => RunState::Paused,
+                            RunControl::Running => RunState::Running,
+                        };
+                        arrival_target = None;
+                        Ok(())
+                    },
                     AppRequest::Step if state == RunState::Paused => session.step(),
                     AppRequest::Step => Ok(()),
                     AppRequest::SetTickRate(next) => { rate = next; interval = tick_interval(rate); Ok(()) },
@@ -517,11 +557,29 @@ async fn run_owner(
                     AppRequest::Buy { good, quantity } => session.submit(GameCommand::Buy { good, quantity }),
                     AppRequest::Sell { good, quantity } => session.submit(GameCommand::Sell { good, quantity }),
                     AppRequest::BeginTravel { destination } => session.submit(GameCommand::BeginTravel { destination }),
+                    AppRequest::TravelUntilArrival { destination } => {
+                        let player = session
+                            .snapshot()
+                            .traders
+                            .into_iter()
+                            .find(|trader| trader.player)
+                            .ok_or(CoreError::InvalidPlayerCount)?;
+                        let result = player.travel.as_ref().map_or_else(
+                            || session.submit(GameCommand::BeginTravel { destination: destination.clone() }),
+                            |travel| (travel.destination == destination).then_some(()).ok_or(CoreError::WrongLocation),
+                        );
+                        if result.is_ok() {
+                            arrival_target = Some(destination);
+                            state = RunState::RunningUntilArrival;
+                        }
+                        result
+                    },
                     AppRequest::CommitTrade { origin, destination, good, quantity } => session.submit(GameCommand::CommitTrade { origin, destination, good, quantity }),
                     AppRequest::DepositTank { amount } => session.submit(GameCommand::DepositTank { amount }),
                     AppRequest::WithdrawTank { amount } => session.submit(GameCommand::WithdrawTank { amount }),
                     AppRequest::SetMarketPolicy { system, policy } => session.submit(GameCommand::SetGovernorMarketPolicy { system, policy }),
                     AppRequest::SetInvestmentPolicy { system, policy } => session.submit(GameCommand::SetGovernorInvestmentPolicy { system, policy }),
+                    AppRequest::SetMarketTarget { system, good, target } => session.submit(GameCommand::SetGovernorMarketTarget { system, good, target }),
                     AppRequest::CancelReservation => session.submit(GameCommand::CancelReservation),
                     AppRequest::Shutdown => { let _ = envelope.reply.send(Ok(())); break; }
                 };
@@ -530,9 +588,23 @@ async fn run_owner(
                 if publish { views.send_replace(build_view(&mut session, selected.clone(), state, rate, &history, &encyclopedia)); }
                 let _ = envelope.reply.send(result);
             }
-            _ = interval.tick(), if state == RunState::Running => {
+            _ = interval.tick(), if state != RunState::Paused => {
                 session.step()?;
                 collect_events(&mut session, &mut history, &mut next_event_sequence);
+                if state == RunState::RunningUntilArrival
+                    && let Some(target) = &arrival_target
+                {
+                    let player = session
+                        .snapshot()
+                        .traders
+                        .into_iter()
+                        .find(|trader| trader.player)
+                        .ok_or(CoreError::InvalidPlayerCount)?;
+                    if player.travel.is_none() && &player.system == target {
+                        state = RunState::Paused;
+                        arrival_target = None;
+                    }
+                }
                 views.send_replace(build_view(&mut session, selected.clone(), state, rate, &history, &encyclopedia));
             }
         }
@@ -751,6 +823,7 @@ fn build_view(
                         travel_ticks: ticks_for_distance(*distance, player.speed),
                     })
                     .collect(),
+                production: build_production_capabilities(session.catalog(), market),
             }
         })
         .collect();
@@ -1118,6 +1191,47 @@ fn build_view(
     }
 }
 
+fn build_production_capabilities(
+    catalog: &game_core::Catalog,
+    market: &game_core::MarketSnapshot,
+) -> Vec<ProductionOutputView> {
+    let mut outputs = BTreeMap::<ContentId, (u64, Vec<ProductionRecipeView>)>::new();
+    for source in &market.sources {
+        let entry = outputs.entry(source.good.clone()).or_default();
+        entry.0 = entry.0.saturating_add(u64::from(source.quantity_per_tick));
+    }
+    for recipe_id in &market.recipes {
+        let Some(recipe) = catalog.recipes.get(recipe_id) else {
+            continue;
+        };
+        for output in &recipe.outputs {
+            outputs
+                .entry(output.good.clone())
+                .or_default()
+                .1
+                .push(ProductionRecipeView {
+                    recipe_id: recipe.id.clone(),
+                    recipe_name: recipe.name.clone(),
+                    quantity_per_run: output.quantity,
+                });
+        }
+    }
+    outputs
+        .into_iter()
+        .map(
+            |(good_id, (source_quantity_per_tick, recipes))| ProductionOutputView {
+                good_name: catalog
+                    .goods
+                    .get(&good_id)
+                    .map_or_else(|| "Unknown good".into(), |good| good.name.clone()),
+                good_id,
+                source_quantity_per_tick,
+                recipes,
+            },
+        )
+        .collect()
+}
+
 fn build_market_rows(
     session: &mut GameSession,
     market: &game_core::MarketSnapshot,
@@ -1137,6 +1251,7 @@ fn build_market_rows(
             MarketRow {
                 inventory: market.inventory.get(&id).copied().unwrap_or(0),
                 target: market.targets.get(&id).copied().unwrap_or(0),
+                authored_target: market.authored_targets.get(&id).copied().unwrap_or(0),
                 unit_cost: market
                     .cost_basis
                     .get(&id)
@@ -1486,6 +1601,16 @@ fn format_event(event: &GameEvent, labels: &EventLabels) -> String {
         GameEvent::PolicyChanged { system } => {
             format!("{} market pricing policy changed", labels.system(system))
         }
+        GameEvent::MarketTargetChanged {
+            system,
+            good,
+            target,
+        } => format!(
+            "{} target for {} changed to {}",
+            labels.system(system),
+            labels.good(good),
+            target
+        ),
         GameEvent::Rejected(reason) => format!("Rejected: {reason}"),
     }
 }
@@ -1503,10 +1628,10 @@ fn reservation_status(status: ReservationStatus) -> &'static str {
 mod tests {
     use super::*;
     use game_core::{
-        EconomyConfig, FleetDynamics, FleetMode, GameDefinition, GoodCategory, GoodDefinition,
-        Governance, InvestmentPolicy, MarketAuthority, MarketPolicy, PopulationState, Position3,
-        RefuelPolicy, SeasonalGenerationState, SourceDefinition, SystemDefinition,
-        TraderDefinition,
+        EconomyConfig, FleetDynamics, FleetMode, GameDefinition, GoodAmount, GoodCategory,
+        GoodDefinition, Governance, InvestmentPolicy, MarketAuthority, MarketPolicy,
+        PopulationState, Position3, RecipeDefinition, RecipeLayer, RecipeOutput, RefuelPolicy,
+        SeasonalGenerationState, SourceDefinition, SystemDefinition, TraderDefinition,
     };
 
     fn id(value: &str) -> ContentId {
@@ -1689,7 +1814,7 @@ mod tests {
 
             handle.request(AppRequest::SetTickRate(rate)).await.unwrap();
             handle
-                .request(AppRequest::SetRunState(RunState::Running))
+                .request(AppRequest::SetRunState(RunControl::Running))
                 .await
                 .unwrap();
             handle.views.borrow_and_update();
@@ -1701,11 +1826,50 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn travel_until_arrival_starts_runs_and_pauses_on_the_arrival_tick() {
+        let mut handle = spawn(GameSession::new(definition()).unwrap());
+        handle
+            .request(AppRequest::TravelUntilArrival {
+                destination: id("core:s1"),
+            })
+            .await
+            .unwrap();
+        let departed = handle.views.borrow_and_update().clone();
+        assert_eq!(departed.run_state, RunState::RunningUntilArrival);
+        assert!(departed.player.traveling);
+
+        tokio::time::advance(TickRate::Normal.duration()).await;
+        handle.views.changed().await.unwrap();
+        let arrived = handle.views.borrow_and_update().clone();
+        assert_eq!(arrived.tick, 1);
+        assert_eq!(arrived.run_state, RunState::Paused);
+        assert_eq!(arrived.player.location, id("core:s1"));
+        assert!(!arrived.player.traveling);
+
+        tokio::time::advance(TickRate::Normal.duration() * 2).await;
+        tokio::task::yield_now().await;
+        assert_eq!(handle.views.borrow().tick, 1);
+        handle.shutdown().await.unwrap();
+
+        let handle = spawn(GameSession::new(definition()).unwrap());
+        assert!(
+            handle
+                .request(AppRequest::TravelUntilArrival {
+                    destination: id("core:s0"),
+                })
+                .await
+                .is_err()
+        );
+        assert_eq!(handle.views.borrow().run_state, RunState::Paused);
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn changing_rate_does_not_emit_an_immediate_duplicate_tick() {
         let session = GameSession::new(definition()).unwrap();
         let mut handle = spawn(session);
         handle
-            .request(AppRequest::SetRunState(RunState::Running))
+            .request(AppRequest::SetRunState(RunControl::Running))
             .await
             .unwrap();
         handle
@@ -2413,6 +2577,81 @@ mod tests {
                 .unwrap()
                 .inventory,
             9
+        );
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_capabilities_and_governor_targets_flow_through_app_views() {
+        let mut definition = definition();
+        let alloy = id("core:alloy");
+        let smelt = id("core:smelt");
+        definition.goods.push(GoodDefinition {
+            id: alloy.clone(),
+            name: "Alloy".into(),
+            category: GoodCategory::Primary,
+            bootstrap_cost: Energy(20),
+        });
+        definition.recipes.push(RecipeDefinition {
+            id: smelt.clone(),
+            name: "Smelting".into(),
+            layer: RecipeLayer::Primary,
+            inputs: vec![GoodAmount {
+                good: id("core:ore"),
+                quantity: 2,
+            }],
+            outputs: vec![RecipeOutput {
+                good: alloy.clone(),
+                quantity: 1,
+                cost_weight: 1,
+            }],
+            operating_energy: Energy(2),
+            margin_percent: None,
+        });
+        definition.systems[0].recipes.push(smelt);
+        definition.systems[0].sources.push(SourceDefinition {
+            good: id("core:ore"),
+            quantity_per_tick: 3,
+            extraction_energy: Energy(1),
+        });
+        let handle = spawn(GameSession::new(definition).unwrap());
+        let initial = handle.views.borrow().clone();
+        let production = &initial.systems[0].production;
+        assert!(production.iter().any(|output| {
+            output.good_name == "Ore"
+                && output.source_quantity_per_tick == 3
+                && output.recipes.is_empty()
+        }));
+        assert!(production.iter().any(|output| {
+            output.good_name == "Alloy"
+                && output
+                    .recipes
+                    .iter()
+                    .any(|recipe| recipe.recipe_name == "Smelting" && recipe.quantity_per_run == 1)
+        }));
+
+        handle
+            .request(AppRequest::SetMarketTarget {
+                system: id("core:s0"),
+                good: id("core:ore"),
+                target: 25,
+            })
+            .await
+            .unwrap();
+        let updated = handle.views.borrow().clone();
+        let ore = updated
+            .inspection
+            .market
+            .iter()
+            .find(|row| row.good_id == id("core:ore"))
+            .unwrap();
+        assert_eq!(ore.target, 25);
+        assert_eq!(ore.authored_target, 25);
+        assert!(
+            updated
+                .events
+                .iter()
+                .any(|event| { event.contains("S0 target for Ore changed to 25") })
         );
         handle.shutdown().await.unwrap();
     }
