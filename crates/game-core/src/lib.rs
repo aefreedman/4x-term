@@ -1889,6 +1889,78 @@ struct PendingTradeRequest {
 #[derive(Resource, Clone, Debug, Default)]
 struct PendingTradeRequests(Vec<PendingTradeRequest>);
 
+#[derive(Clone, Debug)]
+struct OrdinaryNpcOpportunity {
+    score: i128,
+    source: ContentId,
+    destination: ContentId,
+    good: ContentId,
+    quantity: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum DynamicOpportunityKind {
+    EnergyContract,
+    OrdinaryTrade,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct DynamicOpportunityKey {
+    kind: DynamicOpportunityKind,
+    source: ContentId,
+    destination: ContentId,
+    good: Option<ContentId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DynamicSpawnCandidate {
+    score: i128,
+    opportunity: DynamicOpportunityKey,
+    archetype: ContentId,
+}
+
+impl DynamicSpawnCandidate {
+    fn selection_order(left: &Self, right: &Self) -> Ordering {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.opportunity.kind.cmp(&right.opportunity.kind))
+            .then_with(|| left.opportunity.source.cmp(&right.opportunity.source))
+            .then_with(|| {
+                left.opportunity
+                    .destination
+                    .cmp(&right.opportunity.destination)
+            })
+            .then_with(|| left.opportunity.good.cmp(&right.opportunity.good))
+            .then_with(|| left.archetype.cmp(&right.archetype))
+    }
+
+    fn is_better_than(&self, other: &Self) -> bool {
+        Self::selection_order(self, other) == Ordering::Less
+    }
+}
+
+fn retain_best_dynamic_candidate(
+    candidates: &mut BTreeMap<DynamicOpportunityKey, DynamicSpawnCandidate>,
+    candidate: DynamicSpawnCandidate,
+) {
+    match candidates.get_mut(&candidate.opportunity) {
+        Some(current) if candidate.is_better_than(current) => *current = candidate,
+        Some(_) => {}
+        None => {
+            candidates.insert(candidate.opportunity.clone(), candidate);
+        }
+    }
+}
+
+/// Phase-10-only spawn choice. It is deliberately absent from snapshots and
+/// revalidated rather than replaced during phase 13.
+#[derive(Resource, Clone, Debug, Default)]
+struct DynamicFleetOpportunityState {
+    captured_tick: Option<u64>,
+    candidate: Option<DynamicSpawnCandidate>,
+}
+
 #[derive(Resource, Clone, Debug)]
 pub struct Catalog {
     pub goods: BTreeMap<ContentId, GoodDefinition>,
@@ -2695,6 +2767,7 @@ impl GameSession {
         world.insert_resource(EventBuffer::default());
         world.insert_resource(Reservations::default());
         world.insert_resource(PendingTradeRequests::default());
+        world.insert_resource(DynamicFleetOpportunityState::default());
         world.insert_resource(EnergyContracts::default());
         world.insert_resource(PendingEnergyContractIntents::default());
         for mut system in definition.systems {
@@ -4168,8 +4241,11 @@ impl GameSession {
             })
     }
 
-    fn market_exportable_energy(&self, market_entity: Entity) -> Result<Energy, CoreError> {
-        let market = self.world.get::<Market>(market_entity).unwrap();
+    fn market_exportable_energy_for_state(
+        &self,
+        market_entity: Entity,
+        market: &Market,
+    ) -> Result<Energy, CoreError> {
         let policy = self.world.get::<MarketPolicy>(market_entity).unwrap();
         let source = &self.world.get::<StableId>(market_entity).unwrap().0;
         let life = self
@@ -4184,6 +4260,29 @@ impl GameSession {
             market.protected_liquidation_budget,
             market.energy_logistics.export_reserve,
         )
+    }
+
+    fn market_exportable_energy(&self, market_entity: Entity) -> Result<Energy, CoreError> {
+        self.market_exportable_energy_for_state(
+            market_entity,
+            self.world.get::<Market>(market_entity).unwrap(),
+        )
+    }
+
+    fn projected_market_after_exportable_withdrawal(
+        &self,
+        market_entity: Entity,
+        amount: Energy,
+    ) -> Result<Option<Market>, CoreError> {
+        if amount.0 < 0 {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        let mut market = self.world.get::<Market>(market_entity).unwrap().clone();
+        if self.market_exportable_energy_for_state(market_entity, &market)? < amount {
+            return Ok(None);
+        }
+        market.set_energy_stock(market.energy_stock()?.checked_sub(amount)?)?;
+        Ok(Some(market))
     }
 
     fn funded_quantity_with_preload_claims(
@@ -6337,6 +6436,251 @@ impl GameSession {
         self.begin_travel(e, &destination)
     }
 
+    fn ordinary_npc_opportunities(
+        &self,
+        carrier: &Trader,
+        markets: &[(ContentId, Market, MarketPolicy)],
+    ) -> Result<Vec<OrdinaryNpcOpportunity>, CoreError> {
+        let origin = markets
+            .iter()
+            .find(|(system, _, _)| system == &carrier.system)
+            .ok_or(CoreError::InvalidPhysicalDefinition)?;
+        let mut opportunities = Vec::new();
+        for (good, stock) in &origin.1.inventory {
+            if good.as_str() == ENERGY_ID || *stock == 0 {
+                continue;
+            }
+            let ask = self.ask_quote(&origin.1, &origin.2, good)?;
+            for (destination, market, policy) in markets {
+                if destination == &carrier.system {
+                    continue;
+                }
+                let bid = self.bid_quote(market, policy, good)?;
+                if bid <= ask {
+                    continue;
+                }
+                let Some((route, distance)) =
+                    self.graph().shortest_path(&carrier.system, destination)
+                else {
+                    continue;
+                };
+                let burn =
+                    route_travel_energy(self.graph(), &route, carrier.travel_burn_per_distance)?;
+                if carrier.energy_tank < burn {
+                    continue;
+                }
+                let affordable = u32::try_from(carrier.energy_tank.checked_sub(burn)?.0 / ask.0)
+                    .unwrap_or(u32::MAX);
+                let requested = u32::try_from((*stock).min(u64::from(carrier.cargo_capacity)))
+                    .unwrap_or(u32::MAX)
+                    .min(affordable);
+                let quantity = self.funded_quantity_with_preload_claims(
+                    destination,
+                    market,
+                    policy,
+                    requested,
+                    bid,
+                    FundingProtection {
+                        released_ordinary_claim: Energy::ZERO,
+                        protect_liquidation_budget: true,
+                    },
+                )?;
+                let Some(score) = profitable_opportunity_score(
+                    bid,
+                    ask,
+                    quantity,
+                    burn,
+                    distance,
+                    carrier.speed,
+                )?
+                else {
+                    continue;
+                };
+                if score <= 0 {
+                    continue;
+                }
+                opportunities.push(OrdinaryNpcOpportunity {
+                    score,
+                    source: carrier.system.clone(),
+                    destination: destination.clone(),
+                    good: good.clone(),
+                    quantity,
+                });
+            }
+        }
+        Ok(opportunities)
+    }
+
+    fn hypothetical_dynamic_trader(archetype: &FleetArchetype, source: &ContentId) -> Trader {
+        Trader {
+            system: source.clone(),
+            archetype: Some(archetype.id.clone()),
+            energy_tank: archetype.starting_tank,
+            energy_tank_capacity: archetype.energy_tank_capacity,
+            bulk_energy_capacity: archetype.bulk_energy_capacity,
+            bulk_energy: BulkEnergyHold::default(),
+            cargo: BTreeMap::new(),
+            cargo_cost_basis: BTreeMap::new(),
+            cargo_capacity: archetype.cargo_capacity,
+            speed: archetype.speed,
+            travel_burn_per_distance: archetype.travel_burn_per_distance,
+            refuel_policy: archetype.refuel_policy,
+            travel: None,
+            reservation: None,
+            ledger: TradeLedger::default(),
+        }
+    }
+
+    fn dynamic_candidates_for_archetype_source(
+        &mut self,
+        archetype: &FleetArchetype,
+        source: &ContentId,
+        projected_source_market: &Market,
+        ordinary_markets: &[(ContentId, Market, MarketPolicy)],
+    ) -> Result<Vec<DynamicSpawnCandidate>, CoreError> {
+        let hypothetical = Self::hypothetical_dynamic_trader(archetype, source);
+        let mut candidates = self
+            .ordinary_npc_opportunities(&hypothetical, ordinary_markets)?
+            .into_iter()
+            .map(|opportunity| DynamicSpawnCandidate {
+                score: opportunity.score,
+                opportunity: DynamicOpportunityKey {
+                    kind: DynamicOpportunityKind::OrdinaryTrade,
+                    source: opportunity.source,
+                    destination: opportunity.destination,
+                    good: Some(opportunity.good),
+                },
+                archetype: archetype.id.clone(),
+            })
+            .collect::<Vec<_>>();
+        candidates.extend(
+            self.hypothetical_energy_contract_opportunities(
+                &archetype.id,
+                &hypothetical,
+                projected_source_market,
+            )?
+            .into_iter()
+            .map(|opportunity| DynamicSpawnCandidate {
+                score: opportunity.score,
+                opportunity: DynamicOpportunityKey {
+                    kind: DynamicOpportunityKind::EnergyContract,
+                    source: opportunity.source,
+                    destination: opportunity.destination,
+                    good: None,
+                },
+                archetype: archetype.id.clone(),
+            }),
+        );
+        Ok(candidates)
+    }
+
+    fn derive_dynamic_fleet_opportunity(
+        &mut self,
+        selected_opportunities: &BTreeSet<DynamicOpportunityKey>,
+    ) -> Result<(u64, Option<DynamicSpawnCandidate>), CoreError> {
+        let mut markets = self
+            .world
+            .query_filtered::<(Entity, &StableId, &Market, &MarketPolicy), With<SystemMarker>>()
+            .iter(&self.world)
+            .map(|(entity, stable, market, policy)| {
+                (entity, stable.0.clone(), market.clone(), policy.clone())
+            })
+            .collect::<Vec<_>>();
+        markets.sort_by(|left, right| left.1.cmp(&right.1));
+        let ordinary_markets = markets
+            .iter()
+            .map(|(_, stable, market, policy)| (stable.clone(), market.clone(), policy.clone()))
+            .collect::<Vec<_>>();
+        let counts = self
+            .world
+            .query_filtered::<&Trader, Without<PlayerControlled>>()
+            .iter(&self.world)
+            .filter_map(|trader| trader.archetype.clone())
+            .fold(BTreeMap::<ContentId, usize>::new(), |mut counts, id| {
+                *counts.entry(id).or_default() += 1;
+                counts
+            });
+        let archetypes = self
+            .world
+            .resource::<FleetDynamics>()
+            .archetypes
+            .values()
+            .filter(|archetype| {
+                counts.get(&archetype.id).copied().unwrap_or(0) < archetype.maximum_count
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut best_by_opportunity =
+            BTreeMap::<DynamicOpportunityKey, DynamicSpawnCandidate>::new();
+        for archetype in archetypes {
+            for (source_entity, source, _, _) in &markets {
+                let Some(projected_source_market) = self
+                    .projected_market_after_exportable_withdrawal(
+                        *source_entity,
+                        archetype.starting_tank,
+                    )?
+                else {
+                    continue;
+                };
+                for candidate in self.dynamic_candidates_for_archetype_source(
+                    &archetype,
+                    source,
+                    &projected_source_market,
+                    &ordinary_markets,
+                )? {
+                    retain_best_dynamic_candidate(&mut best_by_opportunity, candidate);
+                }
+            }
+        }
+
+        // One canonical row per underlying route prevents archetype variants
+        // from inflating demand. Only routes actually selected by compatible
+        // idle carriers consume their matching canonical backlog row.
+        let mut unserved = best_by_opportunity
+            .into_values()
+            .filter(|candidate| !selected_opportunities.contains(&candidate.opportunity))
+            .collect::<Vec<_>>();
+        unserved.sort_by(DynamicSpawnCandidate::selection_order);
+        let highest = unserved.first().cloned();
+        let system_count = u64::try_from(markets.len().max(1)).map_err(|_| CoreError::Overflow)?;
+        let normalized = unserved.into_iter().try_fold(0_u64, |sum, candidate| {
+            let normalized_score = u64::try_from(candidate.score / 1_000_000)
+                .map_err(|_| CoreError::Overflow)?
+                .max(1);
+            sum.checked_add(normalized_score).ok_or(CoreError::Overflow)
+        })? / system_count;
+        Ok((normalized, highest))
+    }
+
+    fn dynamic_spawn_candidate_is_current(
+        &mut self,
+        candidate: &DynamicSpawnCandidate,
+        archetype: &FleetArchetype,
+        projected_source_market: &Market,
+    ) -> Result<bool, CoreError> {
+        let mut markets = self
+            .world
+            .query_filtered::<(&StableId, &Market, &MarketPolicy), With<SystemMarker>>()
+            .iter(&self.world)
+            .map(|(stable, market, policy)| (stable.0.clone(), market.clone(), policy.clone()))
+            .collect::<Vec<_>>();
+        markets.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(self
+            .dynamic_candidates_for_archetype_source(
+                archetype,
+                &candidate.opportunity.source,
+                projected_source_market,
+                &markets,
+            )?
+            .into_iter()
+            .any(|current| {
+                current.archetype == candidate.archetype
+                    && current.opportunity == candidate.opportunity
+                    && current.score > 0
+            }))
+    }
+
     fn evaluate_dynamic_fleet(&mut self) -> Result<(), CoreError> {
         let mode = self
             .world
@@ -6594,13 +6938,39 @@ impl GameSession {
     }
 
     fn spawn_dynamic_trader(&mut self) -> Result<bool, CoreError> {
-        let life = self
+        let tick = self.tick();
+        let (captured_for_phase, phase_candidate) = {
+            let state = self.world.resource::<DynamicFleetOpportunityState>();
+            if state.captured_tick == Some(tick) {
+                (true, state.candidate.clone())
+            } else {
+                (false, None)
+            }
+        };
+        // Phase 13 must preserve and use its exact phase-10 choice, including
+        // an explicitly captured no-choice. Lazy derivation is only for direct
+        // internal callers that have no capture for the current tick.
+        let candidate = if captured_for_phase {
+            phase_candidate
+        } else {
+            self.derive_dynamic_fleet_opportunity(&BTreeSet::new())?.1
+        };
+        let Some(candidate) = candidate else {
+            return Ok(false);
+        };
+
+        let maximum_count = match &self.world.resource::<FleetDynamics>().mode {
+            Some(FleetMode::Dynamic { maximum_count, .. }) => *maximum_count,
+            _ => return Ok(false),
+        };
+        let active_count = self
             .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
-        // Temporary Wave 1B compatibility path: ordinary dynamic spawning uses
-        // the first stable archetype below its authored cap. Phase 4 replaces
-        // this with canonical opportunity-based archetype selection.
+            .query_filtered::<Entity, (With<Trader>, Without<PlayerControlled>)>()
+            .iter(&self.world)
+            .count();
+        if active_count >= maximum_count {
+            return Ok(false);
+        }
         let counts = self
             .world
             .query_filtered::<&Trader, Without<PlayerControlled>>()
@@ -6610,64 +6980,39 @@ impl GameSession {
                 *counts.entry(id).or_default() += 1;
                 counts
             });
-        let claims = self
-            .world
-            .resource::<EnergyContracts>()
-            .active
-            .values()
-            .try_fold(
-                BTreeMap::<ContentId, Energy>::new(),
-                |mut claims, contract| {
-                    if let EnergyContractState::DeadheadingToSource { source_claim, .. } =
-                        contract.state
-                    {
-                        let next = claims
-                            .get(&contract.source)
-                            .copied()
-                            .unwrap_or(Energy::ZERO)
-                            .checked_add(source_claim)?;
-                        claims.insert(contract.source.clone(), next);
-                    }
-                    Ok::<_, CoreError>(claims)
-                },
-            )?;
-        let mut markets = self
-            .world
-            .query_filtered::<(Entity, &StableId, &Market, &MarketPolicy), With<SystemMarker>>()
-            .iter(&self.world)
-            .map(|(entity, id, market, policy)| {
-                Ok((
-                    energy_logistics::exportable_energy(
-                        market.energy_stock()?,
-                        market.reserved_energy,
-                        claims.get(&id.0).copied().unwrap_or(Energy::ZERO),
-                        market.operating_reserve(policy, life)?,
-                        market.protected_liquidation_budget,
-                        market.energy_logistics.export_reserve,
-                    )?,
-                    id.0.clone(),
-                    entity,
-                ))
-            })
-            .collect::<Result<Vec<_>, CoreError>>()?;
-        markets.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        let selected = self
+        let Some(archetype) = self
             .world
             .resource::<FleetDynamics>()
             .archetypes
-            .values()
-            .filter(|archetype| {
-                counts.get(&archetype.id).copied().unwrap_or(0) < archetype.maximum_count
-            })
-            .find_map(|archetype| {
-                markets
-                    .iter()
-                    .find(|(surplus, _, _)| *surplus >= archetype.starting_tank)
-                    .map(|(_, system, entity)| (archetype.clone(), system.clone(), *entity))
-            });
-        let Some((archetype, system, market_entity)) = selected else {
+            .get(&candidate.archetype)
+            .cloned()
+        else {
             return Ok(false);
         };
+        if counts.get(&archetype.id).copied().unwrap_or(0) >= archetype.maximum_count {
+            return Ok(false);
+        }
+
+        let system = candidate.opportunity.source.clone();
+        let market_entity = match self.market_entity(&system) {
+            Ok(entity)
+                if self
+                    .world
+                    .get::<StableId>(entity)
+                    .is_some_and(|stable| stable.0 == system) =>
+            {
+                entity
+            }
+            Ok(_) | Err(_) => return Ok(false),
+        };
+        let Some(mut market) = self
+            .projected_market_after_exportable_withdrawal(market_entity, archetype.starting_tank)?
+        else {
+            return Ok(false);
+        };
+        if !self.dynamic_spawn_candidate_is_current(&candidate, &archetype, &market)? {
+            return Ok(false);
+        }
 
         let current_sequence = self.world.resource::<FleetDynamics>().spawn_sequence;
         let next_sequence = current_sequence.checked_add(1).ok_or(CoreError::Overflow)?;
@@ -6680,32 +7025,11 @@ impl GameSession {
         {
             return Err(CoreError::InvalidPhysicalDefinition);
         }
-        let mut market = self.world.get::<Market>(market_entity).unwrap().clone();
-        let next_stock = market
-            .energy_stock()?
-            .checked_sub(archetype.starting_tank)?;
-        market.set_energy_stock(next_stock)?;
         market.energy_flow.market_to_tank = market
             .energy_flow
             .market_to_tank
             .checked_add(archetype.starting_tank)?;
-        let trader = Trader {
-            system: system.clone(),
-            archetype: Some(archetype.id.clone()),
-            energy_tank: archetype.starting_tank,
-            energy_tank_capacity: archetype.energy_tank_capacity,
-            bulk_energy_capacity: archetype.bulk_energy_capacity,
-            bulk_energy: BulkEnergyHold::default(),
-            cargo: BTreeMap::new(),
-            cargo_cost_basis: BTreeMap::new(),
-            cargo_capacity: archetype.cargo_capacity,
-            speed: archetype.speed,
-            travel_burn_per_distance: archetype.travel_burn_per_distance,
-            refuel_policy: archetype.refuel_policy,
-            travel: None,
-            reservation: None,
-            ledger: TradeLedger::default(),
-        };
+        let trader = Self::hypothetical_dynamic_trader(&archetype, &system);
         let history = self
             .world
             .resource::<AggregateDynamicsHistory>()
@@ -6725,6 +7049,11 @@ impl GameSession {
         self.world
             .resource_mut::<AggregateDynamicsHistory>()
             .fleet_spawns = history;
+        if captured_for_phase {
+            self.world
+                .resource_mut::<DynamicFleetOpportunityState>()
+                .candidate = None;
+        }
         self.world
             .resource_mut::<EventBuffer>()
             .0
@@ -6791,17 +7120,28 @@ impl GameSession {
                     Self::Ordinary(request) => &request.trader_id,
                 }
             }
+
+            fn key(&self) -> DynamicOpportunityKey {
+                DynamicOpportunityKey {
+                    kind: match self {
+                        Self::Energy(_) => DynamicOpportunityKind::EnergyContract,
+                        Self::Ordinary(_) => DynamicOpportunityKind::OrdinaryTrade,
+                    },
+                    source: self.source().clone(),
+                    destination: self.destination().clone(),
+                    good: self.good().cloned(),
+                }
+            }
         }
-        let graph = self.graph().clone();
         let markets = self
             .world
             .query_filtered::<(&StableId, &Market, &MarketPolicy), With<SystemMarker>>()
             .iter(&self.world)
-            .map(|(id, m, p)| (id.0.clone(), m.clone(), p.clone()))
+            .map(|(id, market, policy)| (id.0.clone(), market.clone(), policy.clone()))
             .collect::<Vec<_>>();
         let mut requests = Vec::new();
         let mut eligible_carriers = Vec::new();
-        for (e, id, t, lifecycle) in self
+        for (entity, id, trader, lifecycle) in self
             .world
             .query_filtered::<
                 (Entity, &StableId, &Trader, &TraderLifecycle),
@@ -6809,86 +7149,28 @@ impl GameSession {
             >()
             .iter(&self.world)
         {
-            if t.travel.is_some()
-                || !t.cargo.is_empty()
-                || t.bulk_energy.locked.is_some()
+            if trader.travel.is_some()
+                || !trader.cargo.is_empty()
+                || trader.bulk_energy.locked.is_some()
                 || self.carrier_has_active_energy_contract(&id.0)
                 || lifecycle.retirement.is_some()
             {
                 continue;
             }
             eligible_carriers.push(id.0.clone());
-            for (good, stock) in markets
-                .iter()
-                .find(|(sid, _, _)| sid == &t.system)
-                .unwrap()
-                .1
-                .inventory
-                .iter()
-            {
-                if good.as_str() == ENERGY_ID || *stock == 0 {
-                    continue;
-                }
-                let origin = markets.iter().find(|(sid, _, _)| sid == &t.system).unwrap();
-                let ask = self.ask_quote(&origin.1, &origin.2, good)?;
-                for (destination, m, p) in &markets {
-                    if destination == &t.system {
-                        continue;
-                    }
-                    let bid = self.bid_quote(m, p, good)?;
-                    if bid <= ask {
-                        continue;
-                    }
-                    let Some((route, distance)) = graph.shortest_path(&t.system, destination)
-                    else {
-                        continue;
-                    };
-                    let burn = route_travel_energy(&graph, &route, t.travel_burn_per_distance)?;
-                    if t.energy_tank < burn {
-                        continue;
-                    }
-                    let affordable = u32::try_from(t.energy_tank.checked_sub(burn)?.0 / ask.0)
-                        .unwrap_or(u32::MAX);
-                    let requested = u32::try_from((*stock).min(u64::from(t.cargo_capacity)))
-                        .unwrap_or(u32::MAX)
-                        .min(affordable);
-                    let quantity = self.funded_quantity_with_preload_claims(
-                        destination,
-                        m,
-                        p,
-                        requested,
-                        bid,
-                        FundingProtection {
-                            released_ordinary_claim: Energy::ZERO,
-                            protect_liquidation_budget: true,
-                        },
-                    )?;
-                    if quantity > 0 {
-                        let Some(score) = profitable_opportunity_score(
-                            bid,
-                            ask,
-                            quantity,
-                            burn,
-                            distance,
-                            t.speed,
-                        )? else {
-                            continue;
-                        };
-                        if score <= 0 {
-                            continue;
-                        }
-                        requests.push(Request {
-                            score,
-                            trader_id: id.0.clone(),
-                            e,
-                            source: t.system.clone(),
-                            good: good.clone(),
-                            destination: destination.clone(),
-                            quantity,
-                        });
-                    }
-                }
-            }
+            requests.extend(
+                self.ordinary_npc_opportunities(trader, &markets)?
+                    .into_iter()
+                    .map(|opportunity| Request {
+                        score: opportunity.score,
+                        trader_id: id.0.clone(),
+                        e: entity,
+                        source: opportunity.source,
+                        good: opportunity.good,
+                        destination: opportunity.destination,
+                        quantity: opportunity.quantity,
+                    }),
+            );
         }
         requests.sort_by(|a, b| {
             b.score
@@ -6897,134 +7179,6 @@ impl GameSession {
                 .then_with(|| a.good.cmp(&b.good))
                 .then_with(|| a.destination.cmp(&b.destination))
         });
-        if matches!(
-            &self.world.resource::<FleetDynamics>().mode,
-            Some(FleetMode::Dynamic { .. })
-        ) {
-            // Wave 1B compatibility path: score ordinary opportunities with the
-            // first stable archetype that remains below its per-archetype cap.
-            // Canonical cross-kind/archetype opportunity selection arrives in Phase 4.
-            let counts = self
-                .world
-                .query_filtered::<&Trader, Without<PlayerControlled>>()
-                .iter(&self.world)
-                .filter_map(|trader| trader.archetype.clone())
-                .fold(BTreeMap::<ContentId, usize>::new(), |mut counts, id| {
-                    *counts.entry(id).or_default() += 1;
-                    counts
-                });
-            let archetype = self
-                .world
-                .resource::<FleetDynamics>()
-                .archetypes
-                .values()
-                .find(|archetype| {
-                    counts.get(&archetype.id).copied().unwrap_or(0) < archetype.maximum_count
-                })
-                .cloned();
-            let mut route_scores = Vec::new();
-            if let Some(archetype) = archetype {
-                for (origin_id, origin, origin_policy) in &markets {
-                    for (good, stock) in &origin.inventory {
-                        if good.as_str() == ENERGY_ID || *stock == 0 {
-                            continue;
-                        }
-                        let ask = self.ask_quote(origin, origin_policy, good)?;
-                        if ask.0 <= 0 {
-                            continue;
-                        }
-                        for (destination_id, destination, destination_policy) in &markets {
-                            if destination_id == origin_id {
-                                continue;
-                            }
-                            let bid = self.bid_quote(destination, destination_policy, good)?;
-                            // An emergency-stage market suppresses non-survival
-                            // demand with a zero bid. Reject that non-opportunity
-                            // before passing the bid to physical funding math,
-                            // whose contract requires a positive unit price.
-                            if bid <= ask {
-                                continue;
-                            }
-                            let Some((route, distance)) =
-                                graph.shortest_path(origin_id, destination_id)
-                            else {
-                                continue;
-                            };
-                            let burn = route_travel_energy(
-                                &graph,
-                                &route,
-                                archetype.travel_burn_per_distance,
-                            )?;
-                            if archetype.starting_tank < burn {
-                                continue;
-                            }
-                            let affordable =
-                                u32::try_from(archetype.starting_tank.checked_sub(burn)?.0 / ask.0)
-                                    .unwrap_or(u32::MAX);
-                            let advertised = u32::try_from(
-                                u64::from(destination.targets.get(good).copied().unwrap_or(0))
-                                    .saturating_sub(
-                                        destination.inventory.get(good).copied().unwrap_or(0),
-                                    ),
-                            )
-                            .unwrap_or(u32::MAX);
-                            let requested =
-                                u32::try_from((*stock).min(u64::from(archetype.cargo_capacity)))
-                                    .unwrap_or(u32::MAX)
-                                    .min(affordable)
-                                    .min(advertised);
-                            let quantity = self.funded_quantity_with_preload_claims(
-                                destination_id,
-                                destination,
-                                destination_policy,
-                                requested,
-                                bid,
-                                FundingProtection {
-                                    released_ordinary_claim: Energy::ZERO,
-                                    protect_liquidation_budget: true,
-                                },
-                            )?;
-                            if let Some(score) = profitable_opportunity_score(
-                                bid,
-                                ask,
-                                quantity,
-                                burn,
-                                distance,
-                                archetype.speed,
-                            )? {
-                                route_scores.push(score);
-                            }
-                        }
-                    }
-                }
-            }
-            route_scores.sort_by(|a, b| b.cmp(a));
-            let idle_count = self
-                .world
-                .query_filtered::<(&Trader, &TraderLifecycle), Without<PlayerControlled>>()
-                .iter(&self.world)
-                .filter(|(trader, lifecycle)| {
-                    trader.travel.is_none()
-                        && trader.cargo.is_empty()
-                        && lifecycle.retirement.is_none()
-                })
-                .count();
-            let system_count = markets.len().max(1);
-            let unserved =
-                route_scores
-                    .into_iter()
-                    .skip(idle_count)
-                    .try_fold(0_u64, |sum, score| {
-                        let normalized_score = u64::try_from(score / 1_000_000)
-                            .map_err(|_| CoreError::Overflow)?
-                            .max(1);
-                        sum.checked_add(normalized_score).ok_or(CoreError::Overflow)
-                    })?
-                    / u64::try_from(system_count).map_err(|_| CoreError::Overflow)?;
-            self.world
-                .resource_mut::<FleetDynamics>()
-                .normalized_unserved_opportunity = unserved;
-        }
         let mut opportunities = requests
             .into_iter()
             .map(Opportunity::Ordinary)
@@ -7048,12 +7202,14 @@ impl GameSession {
         });
 
         let mut selected_carriers = BTreeSet::new();
+        let mut selected_opportunities = BTreeSet::new();
         let mut energy_intents = Vec::new();
         let mut ordinary_requests = Vec::new();
         for opportunity in opportunities {
             if !selected_carriers.insert(opportunity.carrier().clone()) {
                 continue;
             }
+            selected_opportunities.insert(opportunity.key());
             match opportunity {
                 Opportunity::Energy(opportunity) => {
                     energy_intents.push(EnergyContractIntent {
@@ -7077,6 +7233,26 @@ impl GameSession {
                     });
                 }
             }
+        }
+
+        let dynamic_capture = if matches!(
+            &self.world.resource::<FleetDynamics>().mode,
+            Some(FleetMode::Dynamic { .. })
+        ) {
+            Some(self.derive_dynamic_fleet_opportunity(&selected_opportunities)?)
+        } else {
+            None
+        };
+        if let Some((unserved, candidate)) = dynamic_capture {
+            let captured_tick = self.tick();
+            self.world
+                .resource_mut::<FleetDynamics>()
+                .normalized_unserved_opportunity = unserved;
+            *self.world.resource_mut::<DynamicFleetOpportunityState>() =
+                DynamicFleetOpportunityState {
+                    captured_tick: Some(captured_tick),
+                    candidate,
+                };
         }
 
         self.world

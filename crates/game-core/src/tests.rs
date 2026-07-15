@@ -216,6 +216,39 @@ fn dynamic_fleet(
     }
 }
 
+fn single_spawn_dynamic_fleet(archetype: FleetArchetype) -> FleetDynamics {
+    FleetDynamics {
+        mode: Some(FleetMode::Dynamic {
+            initial_count: 0,
+            opportunity_threshold: 1,
+            opportunity_window: 1,
+            spawn_cooldown_ticks: 10,
+            retirement_window: 10,
+            retirement_threshold: -1,
+            maximum_count: 1,
+        }),
+        archetypes: BTreeMap::from([(archetype.id.clone(), archetype)]),
+        ..FleetDynamics::default()
+    }
+}
+
+fn test_bulk_hauler() -> FleetArchetype {
+    FleetArchetype {
+        id: id("core:hauler"),
+        id_prefix: "core:hauler".into(),
+        name_prefix: "Hauler".into(),
+        initial_count: 0,
+        maximum_count: 1,
+        starting_tank: Energy(1_000),
+        energy_tank_capacity: Energy(1_500),
+        bulk_energy_capacity: Energy(1_000),
+        cargo_capacity: 1,
+        speed: 10.0,
+        travel_burn_per_distance: Energy(1),
+        refuel_policy: RefuelPolicy::DepositAndWithdraw,
+    }
+}
+
 #[test]
 fn fixed_fleet_mode_is_a_strict_lifecycle_bypass() {
     let mut session = GameSession::new(definition()).unwrap();
@@ -237,6 +270,283 @@ fn fixed_fleet_mode_is_a_strict_lifecycle_bypass() {
         event,
         GameEvent::TraderSpawned { .. } | GameEvent::TraderRetired { .. }
     )));
+}
+
+#[test]
+fn unserved_energy_demand_spawns_a_bulk_capable_archetype_at_its_source() {
+    let mut configured = local_energy_contract_definition();
+    configured.systems[0].inventory.insert(id("core:ore"), 0);
+    configured.systems[1].inventory.insert(id("core:ore"), 0);
+    configured.fleet = FleetDynamics {
+        mode: Some(FleetMode::Dynamic {
+            initial_count: 1,
+            opportunity_threshold: 1,
+            opportunity_window: 1,
+            spawn_cooldown_ticks: 10,
+            retirement_window: 10,
+            retirement_threshold: -1,
+            maximum_count: 2,
+        }),
+        archetypes: BTreeMap::from([
+            (
+                id("core:a_general"),
+                FleetArchetype {
+                    id: id("core:a_general"),
+                    id_prefix: "core:general".into(),
+                    name_prefix: "General".into(),
+                    initial_count: 1,
+                    maximum_count: 1,
+                    starting_tank: Energy(1_000),
+                    energy_tank_capacity: Energy(1_500),
+                    bulk_energy_capacity: Energy::ZERO,
+                    cargo_capacity: 20,
+                    speed: 10.0,
+                    travel_burn_per_distance: Energy(1),
+                    refuel_policy: RefuelPolicy::DepositAndWithdraw,
+                },
+            ),
+            (
+                id("core:z_hauler"),
+                FleetArchetype {
+                    id: id("core:z_hauler"),
+                    id_prefix: "core:hauler".into(),
+                    name_prefix: "Hauler".into(),
+                    initial_count: 0,
+                    maximum_count: 1,
+                    starting_tank: Energy(1_000),
+                    energy_tank_capacity: Energy(1_500),
+                    bulk_energy_capacity: Energy(1_000),
+                    cargo_capacity: 1,
+                    speed: 10.0,
+                    travel_burn_per_distance: Energy(1),
+                    refuel_policy: RefuelPolicy::DepositAndWithdraw,
+                },
+            ),
+        ]),
+        ..FleetDynamics::default()
+    };
+    configured.traders.push(TraderDefinition {
+        id: id("core:idle_general"),
+        name: "Idle General".into(),
+        system: id("core:s0"),
+        archetype: Some(id("core:a_general")),
+        energy_tank: Energy(1_000),
+        energy_tank_capacity: Energy(1_500),
+        bulk_energy_capacity: Energy::ZERO,
+        cargo_capacity: 20,
+        speed: 10.0,
+        travel_burn_per_distance: Energy(1),
+        refuel_policy: RefuelPolicy::DepositAndWithdraw,
+        player: false,
+    });
+    let mut session = GameSession::new(configured).unwrap();
+
+    session.collect_automated_trader_requests().unwrap();
+    assert!(
+        session
+            .world
+            .resource::<FleetDynamics>()
+            .normalized_unserved_opportunity
+            > 0
+    );
+    session.evaluate_dynamic_fleet().unwrap();
+
+    let spawned = session
+        .snapshot()
+        .traders
+        .into_iter()
+        .find(|trader| trader.archetype == Some(id("core:z_hauler")))
+        .unwrap();
+    assert_eq!(spawned.archetype, Some(id("core:z_hauler")));
+    assert_eq!(spawned.system, id("core:s0"));
+}
+
+#[test]
+fn unserved_ordinary_demand_spawns_the_higher_scoring_general_archetype() {
+    let mut configured = definition();
+    configured.systems[1].targets.insert(id("core:ore"), 1_000);
+    configured.fleet = FleetDynamics {
+        mode: Some(FleetMode::Dynamic {
+            initial_count: 0,
+            opportunity_threshold: 1,
+            opportunity_window: 1,
+            spawn_cooldown_ticks: 10,
+            retirement_window: 10,
+            retirement_threshold: -1,
+            maximum_count: 1,
+        }),
+        archetypes: BTreeMap::from([
+            (
+                id("core:a_hauler"),
+                FleetArchetype {
+                    id: id("core:a_hauler"),
+                    id_prefix: "core:hauler".into(),
+                    name_prefix: "Hauler".into(),
+                    initial_count: 0,
+                    maximum_count: 1,
+                    starting_tank: Energy(100),
+                    energy_tank_capacity: Energy(500),
+                    bulk_energy_capacity: Energy(1_000),
+                    cargo_capacity: 1,
+                    speed: 10.0,
+                    travel_burn_per_distance: Energy(1),
+                    refuel_policy: RefuelPolicy::DepositAndWithdraw,
+                },
+            ),
+            (
+                id("core:z_general"),
+                FleetArchetype {
+                    id: id("core:z_general"),
+                    id_prefix: "core:general".into(),
+                    name_prefix: "General".into(),
+                    initial_count: 0,
+                    maximum_count: 1,
+                    starting_tank: Energy(100),
+                    energy_tank_capacity: Energy(500),
+                    bulk_energy_capacity: Energy::ZERO,
+                    cargo_capacity: 20,
+                    speed: 10.0,
+                    travel_burn_per_distance: Energy(1),
+                    refuel_policy: RefuelPolicy::DepositAndWithdraw,
+                },
+            ),
+        ]),
+        ..FleetDynamics::default()
+    };
+    let mut session = GameSession::new(configured).unwrap();
+
+    session.collect_automated_trader_requests().unwrap();
+    assert!(
+        session
+            .world
+            .resource::<FleetDynamics>()
+            .normalized_unserved_opportunity
+            > 0
+    );
+    session.evaluate_dynamic_fleet().unwrap();
+
+    let spawned = session
+        .snapshot()
+        .traders
+        .into_iter()
+        .find(|trader| !trader.player)
+        .unwrap();
+    assert_eq!(spawned.archetype, Some(id("core:z_general")));
+    assert_eq!(spawned.system, id("core:s0"));
+}
+
+#[test]
+fn hypothetical_energy_spawn_reserves_starting_tank_before_scoring_payload() {
+    let mut configured = local_energy_contract_definition();
+    configured.systems[0].inventory.insert(id(ENERGY_ID), 1_100);
+    configured.systems[0].inventory.insert(id("core:ore"), 0);
+    configured.systems[1].inventory.insert(id("core:ore"), 0);
+    configured.fleet = single_spawn_dynamic_fleet(test_bulk_hauler());
+    let mut session = GameSession::new(configured).unwrap();
+    let before = session.snapshot();
+
+    session.collect_automated_trader_requests().unwrap();
+    assert_eq!(
+        session
+            .world
+            .resource::<FleetDynamics>()
+            .normalized_unserved_opportunity,
+        0
+    );
+    session.evaluate_dynamic_fleet().unwrap();
+
+    let after = session.snapshot();
+    assert_eq!(
+        after.traders.iter().filter(|trader| !trader.player).count(),
+        0
+    );
+    assert_eq!(
+        after.markets[0].energy_stock,
+        before.markets[0].energy_stock
+    );
+    assert_eq!(after.dynamics_history.fleet_spawns, 0);
+}
+
+#[test]
+fn stale_captured_energy_opportunity_does_not_spawn() {
+    let mut configured = local_energy_contract_definition();
+    configured.systems[0].inventory.insert(id("core:ore"), 0);
+    configured.systems[1].inventory.insert(id("core:ore"), 0);
+    configured.fleet = single_spawn_dynamic_fleet(test_bulk_hauler());
+    let mut session = GameSession::new(configured).unwrap();
+    session.collect_automated_trader_requests().unwrap();
+    assert!(
+        session
+            .world
+            .resource::<FleetDynamics>()
+            .normalized_unserved_opportunity
+            > 0
+    );
+    let source_before = session.snapshot().markets[0].energy_stock;
+    let destination = session.market_entity(&id("core:s1")).unwrap();
+    session
+        .world
+        .get_mut::<Market>(destination)
+        .unwrap()
+        .set_energy_stock(Energy(1_000))
+        .unwrap();
+
+    session.evaluate_dynamic_fleet().unwrap();
+
+    let after = session.snapshot();
+    assert_eq!(
+        after.traders.iter().filter(|trader| !trader.player).count(),
+        0
+    );
+    assert_eq!(after.markets[0].energy_stock, source_before);
+    assert_eq!(after.dynamics_history.fleet_spawns, 0);
+}
+
+#[test]
+fn stale_captured_ordinary_opportunity_does_not_spawn() {
+    let mut configured = definition();
+    configured.systems[1].targets.insert(id("core:ore"), 1_000);
+    configured.fleet = single_spawn_dynamic_fleet(FleetArchetype {
+        id: id("core:general"),
+        id_prefix: "core:general".into(),
+        name_prefix: "General".into(),
+        initial_count: 0,
+        maximum_count: 1,
+        starting_tank: Energy(100),
+        energy_tank_capacity: Energy(500),
+        bulk_energy_capacity: Energy::ZERO,
+        cargo_capacity: 20,
+        speed: 10.0,
+        travel_burn_per_distance: Energy(1),
+        refuel_policy: RefuelPolicy::DepositAndWithdraw,
+    });
+    let mut session = GameSession::new(configured).unwrap();
+    session.collect_automated_trader_requests().unwrap();
+    assert!(
+        session
+            .world
+            .resource::<FleetDynamics>()
+            .normalized_unserved_opportunity
+            > 0
+    );
+    let source = session.market_entity(&id("core:s0")).unwrap();
+    session
+        .world
+        .get_mut::<Market>(source)
+        .unwrap()
+        .inventory
+        .insert(id("core:ore"), 0);
+    let source_energy = session.snapshot().markets[0].energy_stock;
+
+    session.evaluate_dynamic_fleet().unwrap();
+
+    let after = session.snapshot();
+    assert_eq!(
+        after.traders.iter().filter(|trader| !trader.player).count(),
+        0
+    );
+    assert_eq!(after.markets[0].energy_stock, source_energy);
+    assert_eq!(after.dynamics_history.fleet_spawns, 0);
 }
 
 #[test]

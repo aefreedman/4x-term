@@ -802,6 +802,19 @@ struct PreparedEnergyCandidate {
 }
 
 #[derive(Clone, Debug)]
+struct EvaluatedEnergyTerms {
+    source_entity: Entity,
+    deadhead_route: ContractRoute,
+    loaded_route: ContractRoute,
+    recovery_route: ContractRoute,
+    gross_payload: Energy,
+    carrier_fee_bps: u32,
+    carrier_profit: Energy,
+    net_delivery: Energy,
+    sizing: GrossSizingInput,
+}
+
+#[derive(Clone, Debug)]
 struct EvaluatedEnergyMaximum {
     candidate: PreparedEnergyCandidate,
     sizing: GrossSizingInput,
@@ -1059,9 +1072,14 @@ impl GameSession {
         Ok(ticks)
     }
 
-    fn offered_energy_payload(&self, source_entity: Entity) -> Result<Energy, CoreError> {
-        let market = self.world.get::<Market>(source_entity).unwrap();
-        let exportable = self.market_exportable_energy(source_entity)?;
+    fn offered_energy_payload(
+        &self,
+        source_entity: Entity,
+        projected_market: Option<&Market>,
+    ) -> Result<Energy, CoreError> {
+        let market =
+            projected_market.unwrap_or_else(|| self.world.get::<Market>(source_entity).unwrap());
+        let exportable = self.market_exportable_energy_for_state(source_entity, market)?;
         let ticks = self.projection_ticks_for_market(
             market,
             market.energy_logistics.curtailment_projection_window,
@@ -1220,25 +1238,13 @@ impl GameSession {
         })
     }
 
-    fn evaluate_energy_maximum(
+    fn evaluate_energy_terms(
         &mut self,
-        carrier_id: &ContentId,
+        carrier: &Trader,
         source: &ContentId,
         destination: &ContentId,
-    ) -> Result<Result<EvaluatedEnergyMaximum, EnergyIntentRejection>, CoreError> {
-        let carrier_entity = self.trader_entity_by_id(carrier_id)?;
-        let carrier = self.world.get::<Trader>(carrier_entity).unwrap().clone();
-        if carrier.travel.is_some()
-            || carrier.reservation.is_some()
-            || self
-                .ensure_carrier_contract_free(carrier_id, &carrier)
-                .is_err()
-        {
-            return Ok(Err(EnergyIntentRejection {
-                blocker: EnergyContractBlocker::NoViableCandidate,
-                current_maximum: None,
-            }));
-        }
+        projected_source_market: Option<&Market>,
+    ) -> Result<Result<EvaluatedEnergyTerms, EnergyIntentRejection>, CoreError> {
         if source == destination {
             return Ok(Err(EnergyIntentRejection {
                 blocker: EnergyContractBlocker::NoViableCandidate,
@@ -1248,7 +1254,7 @@ impl GameSession {
 
         let source_entity = self.market_entity(source)?;
         let destination_entity = self.market_entity(destination)?;
-        let source_offer = self.offered_energy_payload(source_entity)?;
+        let source_offer = self.offered_energy_payload(source_entity, projected_source_market)?;
         let deadhead_route = self.snapshot_contract_route(
             &carrier.system,
             source,
@@ -1317,19 +1323,79 @@ impl GameSession {
             }));
         };
         let terms = fee_terms(current_maximum, loaded_route.burn, carrier_fee_bps)?;
+        Ok(Ok(EvaluatedEnergyTerms {
+            source_entity,
+            deadhead_route,
+            loaded_route,
+            recovery_route,
+            gross_payload: current_maximum,
+            carrier_fee_bps,
+            carrier_profit: terms.carrier_profit,
+            net_delivery: terms.net_delivery,
+            sizing,
+        }))
+    }
+
+    fn evaluate_energy_maximum(
+        &mut self,
+        carrier_id: &ContentId,
+        source: &ContentId,
+        destination: &ContentId,
+    ) -> Result<Result<EvaluatedEnergyMaximum, EnergyIntentRejection>, CoreError> {
+        let carrier_entity = self.trader_entity_by_id(carrier_id)?;
+        let carrier = self.world.get::<Trader>(carrier_entity).unwrap().clone();
+        if carrier.travel.is_some()
+            || carrier.reservation.is_some()
+            || self
+                .ensure_carrier_contract_free(carrier_id, &carrier)
+                .is_err()
+        {
+            return Ok(Err(EnergyIntentRejection {
+                blocker: EnergyContractBlocker::NoViableCandidate,
+                current_maximum: None,
+            }));
+        }
+        let terms = match self.evaluate_energy_terms(&carrier, source, destination, None)? {
+            Ok(terms) => terms,
+            Err(rejection) => return Ok(Err(rejection)),
+        };
         Ok(Ok(EvaluatedEnergyMaximum {
             candidate: PreparedEnergyCandidate {
                 carrier_entity,
-                source_entity,
-                deadhead_route,
-                loaded_route,
-                recovery_route,
-                gross_payload: current_maximum,
-                carrier_fee_bps,
+                source_entity: terms.source_entity,
+                deadhead_route: terms.deadhead_route,
+                loaded_route: terms.loaded_route,
+                recovery_route: terms.recovery_route,
+                gross_payload: terms.gross_payload,
+                carrier_fee_bps: terms.carrier_fee_bps,
                 carrier_profit: terms.carrier_profit,
                 net_delivery: terms.net_delivery,
             },
-            sizing,
+            sizing: terms.sizing,
+        }))
+    }
+
+    fn energy_opportunity(
+        carrier: &ContentId,
+        source: &ContentId,
+        destination: &ContentId,
+        terms: &EvaluatedEnergyTerms,
+    ) -> Result<Option<NpcEnergyContractOpportunity>, CoreError> {
+        let Some(score) = opportunity_score(
+            terms.carrier_profit,
+            terms.deadhead_route.burn,
+            terms.deadhead_route.ticks,
+            terms.loaded_route.ticks,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(NpcEnergyContractOpportunity {
+            score,
+            carrier: carrier.clone(),
+            source: source.clone(),
+            destination: destination.clone(),
+            gross_payload: terms.gross_payload,
         }))
     }
 
@@ -1355,22 +1421,60 @@ impl GameSession {
                 else {
                     continue;
                 };
-                let Some(score) = opportunity_score(
-                    maximum.candidate.carrier_profit,
-                    maximum.candidate.deadhead_route.burn,
-                    maximum.candidate.deadhead_route.ticks,
-                    maximum.candidate.loaded_route.ticks,
-                )?
-                else {
-                    continue;
-                };
-                opportunities.push(NpcEnergyContractOpportunity {
-                    score,
-                    carrier: carrier.clone(),
-                    source: source.clone(),
-                    destination: destination.clone(),
+                let terms = EvaluatedEnergyTerms {
+                    source_entity: maximum.candidate.source_entity,
+                    deadhead_route: maximum.candidate.deadhead_route,
+                    loaded_route: maximum.candidate.loaded_route,
+                    recovery_route: maximum.candidate.recovery_route,
                     gross_payload: maximum.candidate.gross_payload,
-                });
+                    carrier_fee_bps: maximum.candidate.carrier_fee_bps,
+                    carrier_profit: maximum.candidate.carrier_profit,
+                    net_delivery: maximum.candidate.net_delivery,
+                    sizing: maximum.sizing,
+                };
+                if let Some(opportunity) =
+                    Self::energy_opportunity(carrier, source, destination, &terms)?
+                {
+                    opportunities.push(opportunity);
+                }
+            }
+        }
+        Ok(opportunities)
+    }
+
+    pub(super) fn hypothetical_energy_contract_opportunities(
+        &mut self,
+        archetype: &ContentId,
+        carrier: &Trader,
+        projected_source_market: &Market,
+    ) -> Result<Vec<NpcEnergyContractOpportunity>, CoreError> {
+        let source = carrier.system.clone();
+        let mut destinations = self
+            .world
+            .query_filtered::<&StableId, bevy_ecs::prelude::With<super::SystemMarker>>()
+            .iter(&self.world)
+            .map(|stable| stable.0.clone())
+            .collect::<Vec<_>>();
+        destinations.sort();
+
+        let mut opportunities = Vec::new();
+        for destination in destinations {
+            if destination == source {
+                continue;
+            }
+            let Ok(terms) = self.evaluate_energy_terms(
+                carrier,
+                &source,
+                &destination,
+                Some(projected_source_market),
+            )?
+            else {
+                continue;
+            };
+            if let Some(opportunity) =
+                Self::energy_opportunity(archetype, &source, &destination, &terms)?
+            {
+                opportunities.push(opportunity);
             }
         }
         Ok(opportunities)

@@ -951,11 +951,11 @@ Files: primarily `crates/game-core/src/energy_logistics/mod.rs`, with serial lim
 
 ### Phase 4: NPC archetypes and dynamic-fleet demand
 
-- [ ] Compare Energy and ordinary opportunities with canonical profit-per-tick utility before D12 contention.
-- [ ] Compile/spawn differentiated NPC archetypes and use archetype stable ID tie-breaks.
-- [ ] Feed genuinely unserved Energy opportunity into dynamic spawn persistence.
-- [ ] Exclude reimbursement from profit and block retirement during every active contract state.
-- [ ] Add deterministic tests showing bulk hauling demand selects a bulk-capable archetype and ordinary demand can still select a general freighter.
+- [x] Compare Energy and ordinary opportunities with canonical profit-per-tick utility before D12 contention.
+- [x] Compile/spawn differentiated NPC archetypes and use archetype stable ID tie-breaks.
+- [x] Feed genuinely unserved Energy opportunity into dynamic spawn persistence.
+- [x] Exclude reimbursement from profit and block retirement during every active contract state.
+- [x] Add deterministic tests showing bulk hauling demand selects a bulk-capable archetype and ordinary demand can still select a general freighter.
 
 Files: `crates/game-core/src/lib.rs`, `crates/game-content/src/lib.rs`, `content/traders.ron`.
 

@@ -250,4 +250,13 @@ Required metrics: gross/net delivery, loaded/deadhead/recovery burn, carrier fee
 - Profitability tracks cumulative reimbursement and reimbursed-travel subsets without duplicating mutable contract payment state. Local loaded burn and recovery are neutral across tick boundaries, remote deadhead remains cost, earned fee contributes once, and active contracts/locked lots cannot trigger or complete retirement. Pre-load arithmetic overflow propagates without terminalizing or partially mutating the contract.
 - Read-only architecture/spec review findings for retirement gating, frozen recovery-arrival order, phase-1 marking, and preload overflow classification were corrected and rerun. Archetype-aware spawn selection/unserved demand remains explicitly owned by Wave 4; named presentation ledgers remain Wave 5.
 
-Pending archetype/dynamic-fleet/frontend waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.
+#### Wave 4 archetype-aware dynamic fleet
+
+- Main rerun: all 106 game-core tests pass; game-core Clippy with warnings denied, format, and diff checks pass. Full workspace validation is recorded with the integration commit.
+- Dynamic demand builds non-ECS hypothetical carriers for every eligible archetype/opportunity source, reusing canonical ordinary and Energy scoring. The source's starting-tank withdrawal is projected before Energy offer/sizing, so the same protected stock cannot fund both tank and payload.
+- Existing carriers remove only the exact capability-compatible opportunity each selected; an idle bulk-incompatible general freighter no longer masks unserved Energy hauling demand. Archetype variants are deduplicated per underlying route before normalized persistence scoring.
+- Phase 10 captures one stable score/kind/source/destination/good/archetype winner. Phase 13 revalidates that exact candidate after intent resolution, with no stale fallback, then checks total/per-archetype caps, source funding, ID/counter arithmetic, and physical ledgers before atomic spawn.
+- Deterministic fixtures prove bulk-only demand spawns a bulk hauler at its source, higher-scoring ordinary demand selects a general freighter despite archetype ID order, post-tank nonviability suppresses demand, and stale Energy/ordinary candidates do not spawn or mutate state.
+- Read-only architecture findings for tank double-use, fungible idle capacity, and stale phase-13 candidates were corrected and rerun. Frontend and named diagnostic work remains Wave 5.
+
+Pending frontend/diagnostic/documentation waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.
