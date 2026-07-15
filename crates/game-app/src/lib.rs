@@ -1,9 +1,9 @@
 //! Async owner and immutable view boundary for the headless simulation.
 
 use game_core::{
-    BrownoutStage, CoreError, ENERGY_ID, GameCommand, GameEvent, GameSession, MarketAuthority,
-    ReservationStatus, SeasonalTrend, investment_cost, route_travel_energy, ticks_for_distance,
-    travel_energy,
+    BrownoutStage, CoreError, ENERGY_ID, GameCommand, GameEvent, GameSession,
+    LocalTradeLimitReason, MarketAuthority, ReservationStatus, SeasonalTrend, investment_cost,
+    route_travel_energy, ticks_for_distance, travel_energy,
 };
 pub use game_core::{
     ContentId, Energy, GovernorInvestmentPolicy, GovernorMarketPolicy, InvestmentKind,
@@ -227,6 +227,18 @@ pub struct RouteView {
     pub required_energy: Energy,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TradeQuantityLimitView {
+    pub maximum: u32,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalTradeLimitsView {
+    pub buy: TradeQuantityLimitView,
+    pub sell: TradeQuantityLimitView,
+}
+
 #[derive(Clone, Debug)]
 pub struct MarketRow {
     pub good_id: ContentId,
@@ -237,6 +249,7 @@ pub struct MarketRow {
     pub sell_quote: Energy,
     pub unit_cost: Energy,
     pub funded_demand: u64,
+    pub local_trade_limits: Option<LocalTradeLimitsView>,
 }
 
 #[derive(Clone, Debug)]
@@ -748,7 +761,7 @@ fn build_view(
         .unwrap_or(&snapshot.markets[0]);
     let inspection_market = build_market_rows(session, selected_market);
     let local_market = player_market
-        .map(|market| build_market_rows(session, market))
+        .map(|market| build_local_market_rows(session, market))
         .unwrap_or_default();
     let trade_markets = snapshot
         .markets
@@ -1136,9 +1149,47 @@ fn build_market_rows(
                 name,
                 buy_quote,
                 sell_quote,
+                local_trade_limits: None,
             }
         })
         .collect()
+}
+
+fn build_local_market_rows(
+    session: &mut GameSession,
+    market: &game_core::MarketSnapshot,
+) -> Vec<MarketRow> {
+    let mut rows = build_market_rows(session, market);
+    for row in &mut rows {
+        if let Ok(limits) = session.player_local_trade_limits(&row.good_id) {
+            row.local_trade_limits = Some(LocalTradeLimitsView {
+                buy: TradeQuantityLimitView {
+                    maximum: limits.buy.maximum,
+                    reason: local_trade_limit_reason(limits.buy.reason).into(),
+                },
+                sell: TradeQuantityLimitView {
+                    maximum: limits.sell.maximum,
+                    reason: local_trade_limit_reason(limits.sell.reason).into(),
+                },
+            });
+        }
+    }
+    rows
+}
+
+fn local_trade_limit_reason(reason: LocalTradeLimitReason) -> &'static str {
+    match reason {
+        LocalTradeLimitReason::TradingUnavailable => "local trading is unavailable",
+        LocalTradeLimitReason::MarketQuote => "market quote",
+        LocalTradeLimitReason::MarketStock => "market stock",
+        LocalTradeLimitReason::CargoCapacity => "cargo capacity",
+        LocalTradeLimitReason::TankEnergy => "tank Energy",
+        LocalTradeLimitReason::MarketEnergyStorage => "market Energy storage",
+        LocalTradeLimitReason::UnitsHeld => "units held",
+        LocalTradeLimitReason::MarketFunding => "market funding",
+        LocalTradeLimitReason::TankCapacity => "tank capacity",
+        LocalTradeLimitReason::QuantityType => "transaction quantity limit",
+    }
 }
 
 fn energy_health(market: &game_core::MarketSnapshot) -> EnergyHealth {
@@ -1758,6 +1809,9 @@ mod tests {
             .find(|row| row.good_id == id("core:ore"))
             .unwrap();
         assert_eq!((local.inventory, local.target), (10, 10));
+        let local_limits = local.local_trade_limits.as_ref().unwrap();
+        assert_eq!(local_limits.sell.maximum, 0);
+        assert_eq!(local_limits.sell.reason, "units held");
 
         let remote = initial
             .trade_markets
@@ -1772,6 +1826,7 @@ mod tests {
         assert!(remote.read_only);
         assert!(!remote.local);
         assert_eq!((remote_ore.inventory, remote_ore.target), (2, 25));
+        assert!(remote_ore.local_trade_limits.is_none());
         assert_ne!(remote_ore.sell_quote, local.sell_quote);
         assert_eq!(remote.availability, TradeDestinationAvailability::Available);
         assert_eq!(remote.route.as_ref().unwrap().required_energy, Energy(1));

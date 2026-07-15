@@ -4,7 +4,7 @@ Generated 2026-07-14 from Ratatui `TestBackend` buffers and real pseudo-terminal
 
 ## Text-buffer captures
 
-Compact (`80x30`) and regular (`160x45`) captures are included for Systems, Trade, Governance, Intelligence, and Encyclopedia. Additional Systems captures cover `159x44` and `200x60`.
+Compact (`80x30`) and regular (`160x45`) captures are included for Systems, Trade, Governance, Intelligence, and Encyclopedia. Focused one-transaction Buy Order captures cover both supported Trade layouts. Additional Systems captures cover `159x44` and `200x60`.
 
 The captures demonstrate:
 
@@ -12,6 +12,7 @@ The captures demonstrate:
 - stable `>` selection plus `LOC`, `GOV`, and warning labels;
 - local Trade versus selected-good remote market comparisons;
 - explicit destination selection, route proposal, or disabled reason;
+- focused one-transaction order limits, total cost, tank/cargo consequences, and maximum-quantity shortcut;
 - Governance row selection, allocation totals, and read-only labeling;
 - Intelligence event range and player/fleet summaries;
 - factual Encyclopedia sections, article selection, and scroll status;

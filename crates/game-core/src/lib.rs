@@ -677,6 +677,33 @@ pub enum TradeNetworkAccess {
     ReservationContracts,
 }
 
+/// Canonical constraint that currently caps an immediate local trade.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalTradeLimitReason {
+    TradingUnavailable,
+    MarketQuote,
+    MarketStock,
+    CargoCapacity,
+    TankEnergy,
+    MarketEnergyStorage,
+    UnitsHeld,
+    MarketFunding,
+    TankCapacity,
+    QuantityType,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalTradeQuantityLimit {
+    pub maximum: u32,
+    pub reason: LocalTradeLimitReason,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalTradeLimits {
+    pub buy: LocalTradeQuantityLimit,
+    pub sell: LocalTradeQuantityLimit,
+}
+
 #[derive(Clone, Debug)]
 pub struct TraderDefinition {
     pub id: ContentId,
@@ -2159,6 +2186,8 @@ pub enum CoreError {
     InvalidPhysicalDefinition,
     #[error("refuel policy forbids this transfer")]
     RefuelForbidden,
+    #[error("requested quantity {requested} exceeds current maximum {maximum}")]
+    ExactQuantityUnavailable { requested: u32, maximum: u32 },
     #[error("no funded quantity available")]
     Unfunded,
     #[error("reservation not found")]
@@ -2796,8 +2825,16 @@ impl GameSession {
                 self.local_buy(e, &good, quantity)
             }
             GameCommand::Sell { good, quantity } => {
-                let e = self.player_entity()?;
-                self.local_sell(e, &good, quantity, false).map(|_| ())
+                let maximum = self.player_local_trade_limits(&good)?.sell.maximum;
+                if quantity > maximum {
+                    Err(CoreError::ExactQuantityUnavailable {
+                        requested: quantity,
+                        maximum,
+                    })
+                } else {
+                    let e = self.player_entity()?;
+                    self.local_sell(e, &good, quantity, false).map(|_| ())
+                }
             }
             GameCommand::BeginTravel { destination } => {
                 let e = self.player_entity()?;
@@ -2973,6 +3010,126 @@ impl GameSession {
             self.bid_quote(market, policy, good)?,
             self.ask_quote(market, policy, good)?,
         ))
+    }
+
+    pub fn player_local_trade_limits(
+        &mut self,
+        good: &ContentId,
+    ) -> Result<LocalTradeLimits, CoreError> {
+        let trader_entity = self.player_entity()?;
+        let trader = self.world.get::<Trader>(trader_entity).unwrap();
+        if trader.travel.is_some() {
+            let unavailable = LocalTradeQuantityLimit {
+                maximum: 0,
+                reason: LocalTradeLimitReason::TradingUnavailable,
+            };
+            return Ok(LocalTradeLimits {
+                buy: unavailable,
+                sell: unavailable,
+            });
+        }
+        let system = trader.system.clone();
+        let tank = trader.energy_tank;
+        let tank_capacity = trader.energy_tank_capacity;
+        let cargo_used = Self::cargo_used(trader)?;
+        let cargo_capacity = u64::from(trader.cargo_capacity);
+        let held = trader.cargo.get(good).copied().unwrap_or(0);
+        let market_entity = self.market_entity(&system)?;
+        let market = self.world.get::<Market>(market_entity).unwrap();
+        let policy = self.world.get::<MarketPolicy>(market_entity).unwrap();
+        let ask = self.ask_quote(market, policy, good)?;
+        let bid = self.bid_quote(market, policy, good)?;
+
+        let buy = if ask.0 <= 0 {
+            LocalTradeQuantityLimit {
+                maximum: 0,
+                reason: LocalTradeLimitReason::MarketQuote,
+            }
+        } else {
+            let mut limit = LocalTradeQuantityLimit {
+                maximum: u32::MAX,
+                reason: LocalTradeLimitReason::QuantityType,
+            };
+            let mut apply = |candidate: u64, reason| {
+                let candidate = u32::try_from(candidate).unwrap_or(u32::MAX);
+                if candidate < limit.maximum {
+                    limit = LocalTradeQuantityLimit {
+                        maximum: candidate,
+                        reason,
+                    };
+                }
+            };
+            apply(
+                market.inventory.get(good).copied().unwrap_or(0),
+                LocalTradeLimitReason::MarketStock,
+            );
+            apply(
+                cargo_capacity.saturating_sub(cargo_used),
+                LocalTradeLimitReason::CargoCapacity,
+            );
+            apply(
+                u64::try_from(tank.0 / ask.0).unwrap_or(0),
+                LocalTradeLimitReason::TankEnergy,
+            );
+            let net_market_energy = if good.as_str() == ENERGY_ID {
+                ask.0.saturating_sub(1)
+            } else {
+                ask.0
+            };
+            if net_market_energy > 0 {
+                let headroom = market
+                    .energy_storage_cap
+                    .0
+                    .saturating_sub(market.energy_stock()?.0);
+                apply(
+                    u64::try_from(headroom / net_market_energy).unwrap_or(0),
+                    LocalTradeLimitReason::MarketEnergyStorage,
+                );
+            }
+            limit
+        };
+
+        let sell = if bid.0 <= 0 {
+            LocalTradeQuantityLimit {
+                maximum: 0,
+                reason: LocalTradeLimitReason::MarketQuote,
+            }
+        } else {
+            let life_support = self
+                .world
+                .resource::<EconomyConfig>()
+                .life_support_burn_per_capita;
+            let funded = market.funded_quantity_for_purchases(
+                policy,
+                life_support,
+                u32::MAX,
+                bid,
+                Energy::ZERO,
+            )?;
+            let mut limit = LocalTradeQuantityLimit {
+                maximum: u32::MAX,
+                reason: LocalTradeLimitReason::QuantityType,
+            };
+            let mut apply = |candidate: u64, reason| {
+                let candidate = u32::try_from(candidate).unwrap_or(u32::MAX);
+                if candidate < limit.maximum {
+                    limit = LocalTradeQuantityLimit {
+                        maximum: candidate,
+                        reason,
+                    };
+                }
+            };
+            apply(held, LocalTradeLimitReason::UnitsHeld);
+            apply(u64::from(funded), LocalTradeLimitReason::MarketFunding);
+            let tank_headroom = tank_capacity.checked_sub(tank)?;
+            apply(
+                u64::try_from(tank_headroom.0 / bid.0).unwrap_or(0),
+                LocalTradeLimitReason::TankCapacity,
+            );
+            limit
+        };
+
+        Ok(LocalTradeLimits { buy, sell })
     }
 
     pub fn market_demand(
@@ -7381,6 +7538,77 @@ mod tests {
             WideEnergy(WideAmount(5))
         );
         assert_eq!(arrival.markets[1].reserved_energy, Energy::ZERO);
+    }
+
+    #[test]
+    fn local_trade_limits_match_buy_capacity_and_target_met_sell_funding() {
+        let ore = id("core:ore");
+        let mut session = GameSession::new(definition()).unwrap();
+        let initial = session.player_local_trade_limits(&ore).unwrap();
+        assert_eq!(initial.buy.maximum, 20);
+        assert_eq!(initial.buy.reason, LocalTradeLimitReason::CargoCapacity);
+        assert_eq!(initial.sell.maximum, 0);
+        assert_eq!(initial.sell.reason, LocalTradeLimitReason::UnitsHeld);
+
+        session
+            .submit(GameCommand::Buy {
+                good: ore.clone(),
+                quantity: 5,
+            })
+            .unwrap();
+        let market = session
+            .snapshot()
+            .markets
+            .into_iter()
+            .find(|market| market.system_id == id("core:s0"))
+            .unwrap();
+        assert!(market.inventory[&ore] >= market.targets[&ore].into());
+        assert_eq!(
+            market.demand.get(&ore).copied().unwrap_or_default().funded,
+            0,
+            "advertised target demand is intentionally met"
+        );
+
+        let after_buy = session.player_local_trade_limits(&ore).unwrap();
+        assert_eq!(after_buy.sell.maximum, 5);
+        assert_eq!(after_buy.sell.reason, LocalTradeLimitReason::UnitsHeld);
+        let before_rejected = session.snapshot();
+        assert_eq!(
+            session.submit(GameCommand::Sell {
+                good: ore.clone(),
+                quantity: 6,
+            }),
+            Err(CoreError::ExactQuantityUnavailable {
+                requested: 6,
+                maximum: 5,
+            })
+        );
+        assert_eq!(
+            session.snapshot().traders[0].cargo,
+            before_rejected.traders[0].cargo
+        );
+        assert_eq!(
+            session.snapshot().traders[0].energy_tank,
+            before_rejected.traders[0].energy_tank
+        );
+        session
+            .submit(GameCommand::Sell {
+                good: ore,
+                quantity: after_buy.sell.maximum,
+            })
+            .unwrap();
+        assert_eq!(
+            session
+                .snapshot()
+                .traders
+                .into_iter()
+                .find(|trader| trader.player)
+                .unwrap()
+                .cargo
+                .values()
+                .sum::<u64>(),
+            0
+        );
     }
 
     #[test]

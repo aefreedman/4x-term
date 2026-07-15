@@ -6,7 +6,7 @@ pub mod state;
 pub use input::{InputAction, route_key};
 pub use state::{
     Activity, InputLayer, LayoutClass, SortDirection, SystemDetailKind, SystemOrderItem,
-    SystemSortKey, TradeRegion, UiState, classify_layout, order_systems,
+    SystemSortKey, TradeOrderSide, TradeRegion, UiState, classify_layout, order_systems,
 };
 
 use anyhow::Result;
@@ -182,7 +182,13 @@ async fn handle_key_for_layout(
             match ui.input_layer {
                 InputLayer::Quantity => {
                     ui.quantity_input = None;
-                    ui.message = "Quantity unchanged".into();
+                    ui.message = "Preset quantity unchanged".into();
+                }
+                InputLayer::Order => {
+                    ui.quantity_input = None;
+                    ui.trade_order_side = None;
+                    ui.trade_order_good = None;
+                    ui.message = "Trade order cancelled".into();
                 }
                 InputLayer::Help | InputLayer::Detail | InputLayer::Root => {}
             }
@@ -190,7 +196,7 @@ async fn handle_key_for_layout(
         }
         InputAction::QuantityDigit(digit) => {
             if let Some(input) = &mut ui.quantity_input
-                && input.len() < 9
+                && input.len() < 10
             {
                 input.push(digit);
             }
@@ -211,7 +217,73 @@ async fn handle_key_for_layout(
             ui.trade_quantity = quantity;
             ui.quantity_input = None;
             ui.input_layer = InputLayer::Root;
-            ui.message = format!("Quantity set to {quantity}");
+            ui.message = format!("Preset quantity set to {quantity}");
+        }
+        InputAction::UseOrderMaximum => {
+            if let (Some(side), Some(row)) = (ui.trade_order_side, trade_order_row(view, ui)) {
+                let limit = trade_order_limit(view, row, side);
+                if limit.maximum > 0 {
+                    ui.quantity_input = Some(limit.maximum.to_string());
+                } else {
+                    ui.message = limit.reason;
+                }
+            }
+        }
+        InputAction::ConfirmOrder => {
+            let input = ui.quantity_input.as_deref().unwrap_or_default();
+            let Ok(requested) = input.parse::<u32>() else {
+                ui.message = if input.is_empty() {
+                    "Enter a quantity greater than zero".into()
+                } else {
+                    "Quantity is outside the supported range".into()
+                };
+                return Ok(false);
+            };
+            let Some(side) = ui.trade_order_side else {
+                ui.input_layer = InputLayer::Root;
+                return Ok(false);
+            };
+            let Some(row) = trade_order_row(view, ui) else {
+                ui.message = "The selected order good is no longer available".into();
+                return Ok(false);
+            };
+            let limit = trade_order_limit(view, row, side);
+            if requested == 0 {
+                ui.message = "Enter a quantity greater than zero".into();
+            } else if requested > limit.maximum {
+                ui.message = format!(
+                    "Requested {requested}; maximum is {} ({})",
+                    limit.maximum, limit.reason
+                );
+            } else {
+                let request = match side {
+                    TradeOrderSide::Buy => AppRequest::Buy {
+                        good: row.good_id.clone(),
+                        quantity: requested,
+                    },
+                    TradeOrderSide::Sell => AppRequest::Sell {
+                        good: row.good_id.clone(),
+                        quantity: requested,
+                    },
+                };
+                match app.request(request).await {
+                    Ok(()) => {
+                        ui.message = format!(
+                            "{} {} ×{requested}",
+                            match side {
+                                TradeOrderSide::Buy => "Bought",
+                                TradeOrderSide::Sell => "Sold",
+                            },
+                            row.name
+                        );
+                        ui.quantity_input = None;
+                        ui.trade_order_side = None;
+                        ui.trade_order_good = None;
+                        ui.input_layer = InputLayer::Root;
+                    }
+                    Err(error) => ui.message = error.to_string(),
+                }
+            }
         }
         InputAction::Switch(Activity::Systems) => ui.activity = Activity::Systems,
         InputAction::Switch(Activity::Trade) => {
@@ -351,6 +423,25 @@ async fn handle_key_for_layout(
             } else {
                 ui.quantity_input = Some(String::new());
                 ui.input_layer = InputLayer::Quantity;
+            }
+        }
+        InputAction::OpenBuyOrder | InputAction::OpenSellOrder => {
+            if view.local_trade.market.get(ui.market_index).is_none() {
+                ui.message = "No local market goods are available".into();
+            } else {
+                ui.trade_order_side = Some(if action == InputAction::OpenBuyOrder {
+                    TradeOrderSide::Buy
+                } else {
+                    TradeOrderSide::Sell
+                });
+                ui.trade_order_good = view
+                    .local_trade
+                    .market
+                    .get(ui.market_index)
+                    .map(|row| row.good_id.clone());
+                ui.quantity_input = Some(String::new());
+                ui.input_layer = InputLayer::Order;
+                ui.message.clear();
             }
         }
         InputAction::Buy => {
@@ -877,7 +968,107 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
                     Span::raw(" cancel"),
                 ]),
             ])
-            .block(Block::bordered().title("Trade Quantity Preview")),
+            .block(Block::bordered().title("Reusable Trade Quantity")),
+            popup,
+        );
+    } else if ui.input_layer == InputLayer::Order {
+        let popup = centered_rect(72, 12, area);
+        let order_input = ui.quantity_input.as_deref().unwrap_or_default();
+        let parsed_request = order_input.parse::<u32>().ok();
+        let requested = parsed_request.unwrap_or(0);
+        let side = ui.trade_order_side.unwrap_or(TradeOrderSide::Buy);
+        let lines = trade_order_row(view, ui).map_or_else(
+            || {
+                vec![Line::from(
+                    "The selected order good is no longer available.",
+                )]
+            },
+            |row| {
+                let limit = trade_order_limit(view, row, side);
+                let projected = requested.min(limit.maximum);
+                let (unit_price, total, projected_total, tank_after, cargo_after) = match side {
+                    TradeOrderSide::Buy => (
+                        row.sell_quote,
+                        total_label(row.sell_quote, requested),
+                        total_label(row.sell_quote, projected),
+                        view.player.tank_energy.0.saturating_sub(
+                            quote_total(row.sell_quote, projected).map_or(0, |value| value.0),
+                        ),
+                        view.player.cargo_used.saturating_add(u64::from(projected)),
+                    ),
+                    TradeOrderSide::Sell => (
+                        row.buy_quote,
+                        total_label(row.buy_quote, requested),
+                        total_label(row.buy_quote, projected),
+                        view.player.tank_energy.0.saturating_add(
+                            quote_total(row.buy_quote, projected).map_or(0, |value| value.0),
+                        ),
+                        view.player.cargo_used.saturating_sub(u64::from(projected)),
+                    ),
+                };
+                let status = if parsed_request.is_none() && !order_input.is_empty() {
+                    "Quantity is outside the supported range.".into()
+                } else if requested == 0 {
+                    "Enter a quantity, or press M to use the maximum.".into()
+                } else if requested <= limit.maximum {
+                    "Ready to confirm this one-transaction order.".into()
+                } else {
+                    format!(
+                        "Requested {requested} exceeds the maximum by {}.",
+                        requested.saturating_sub(limit.maximum)
+                    )
+                };
+                vec![
+                    Line::from(format!(
+                        "{} · {} price {} E/unit",
+                        row.name,
+                        match side {
+                            TradeOrderSide::Buy => "Buy",
+                            TradeOrderSide::Sell => "Sell",
+                        },
+                        unit_price.0
+                    )),
+                    Line::from(format!(
+                        "Requested: {}_ · Reusable preset: {}",
+                        ui.quantity_input.as_deref().unwrap_or_default(),
+                        ui.trade_quantity
+                    )),
+                    Line::from(format!("Maximum now: {} ({})", limit.maximum, limit.reason)),
+                    Line::from(format!("Order total: {total}")),
+                    Line::from(format!(
+                        "{}: {projected_total} · Tank {}→{} E · Cargo {}→{}/{}",
+                        if requested <= limit.maximum {
+                            "After order"
+                        } else {
+                            "At maximum"
+                        },
+                        view.player.tank_energy.0,
+                        tank_after,
+                        view.player.cargo_used,
+                        cargo_after,
+                        view.player.cargo_capacity
+                    )),
+                    Line::from(status),
+                    Line::from(vec![
+                        Span::raw("("),
+                        shortcut_span("M"),
+                        Span::raw(") use maximum · "),
+                        shortcut_span("Enter"),
+                        Span::raw(" confirm · "),
+                        shortcut_span("Esc"),
+                        Span::raw(" cancel"),
+                    ]),
+                ]
+            },
+        );
+        frame.render_widget(Clear, popup);
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: true })
+                .block(Block::bordered().title(match side {
+                    TradeOrderSide::Buy => "One-Transaction Buy Order",
+                    TradeOrderSide::Sell => "One-Transaction Sell Order",
+                })),
             popup,
         );
     } else if ui.input_layer == InputLayer::Help {
@@ -1012,17 +1203,20 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
                 let buy_reason = buy_unavailable_reason(view, row, ui.trade_quantity);
                 let sell_reason = sell_unavailable_reason(view, row, ui.trade_quantity);
                 spans.push(Span::raw("("));
-                spans.push(shortcut_span("B"));
+                spans.push(shortcut_span("b"));
                 spans.push(Span::raw(buy_reason.map_or_else(
-                    || ")uy · ".into(),
-                    |reason| format!(")uy disabled: {} · ", action_reason(&reason)),
+                    || ") quick buy · ".into(),
+                    |reason| format!(") buy disabled: {} · ", action_reason(&reason)),
                 )));
-                spans.push(Span::raw("("));
-                spans.push(shortcut_span("S"));
+                spans.push(shortcut_span("Shift-B"));
+                spans.push(Span::raw(" buy order · ("));
+                spans.push(shortcut_span("s"));
                 spans.push(Span::raw(sell_reason.map_or_else(
-                    || ")ell · ".into(),
-                    |reason| format!(")ell disabled: {} · ", action_reason(&reason)),
+                    || ") quick sell · ".into(),
+                    |reason| format!(") sell disabled: {} · ", action_reason(&reason)),
                 )));
+                spans.push(shortcut_span("Shift-S"));
+                spans.push(Span::raw(" sell order · "));
             } else {
                 spans.push(Span::raw("("));
                 spans.push(shortcut_span("B"));
@@ -1118,24 +1312,32 @@ fn shortcut_span(label: &'static str) -> Span<'static> {
     )
 }
 
-fn mnemonic_line(
-    before: impl Into<String>,
-    key: &'static str,
-    after: impl Into<String>,
-) -> Line<'static> {
-    Line::from(vec![
-        Span::raw(before.into()),
-        Span::raw("("),
-        shortcut_span(key),
-        Span::raw(format!("){}", after.into())),
-    ])
-}
-
 fn action_reason(reason: &str) -> &str {
     reason
         .strip_prefix("Buy unavailable: ")
         .or_else(|| reason.strip_prefix("Sell unavailable: "))
         .unwrap_or(reason)
+}
+
+fn quick_action_status(reason: Option<&str>) -> String {
+    let Some(reason) = reason else {
+        return "ready".into();
+    };
+    let detail = [
+        "market stock",
+        "tank Energy",
+        "cargo capacity",
+        "units held",
+        "market quote",
+        "market funding",
+        "tank capacity",
+        "market Energy storage",
+        "transaction quantity limit",
+    ]
+    .into_iter()
+    .find(|label| reason.contains(label))
+    .unwrap_or("trading unavailable");
+    format!("blocked: {detail}")
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -2169,16 +2371,20 @@ fn render_trade_action(
                     )),
                     Line::from(vec![
                         Span::raw("("),
-                        shortcut_span("B"),
+                        shortcut_span("b"),
                         Span::raw(format!(
-                            ")uy {} · (",
-                            availability_label(buy_reason.as_deref())
+                            ")uy {} · ",
+                            quick_action_status(buy_reason.as_deref())
+                        )),
+                        shortcut_span("B"),
+                        Span::raw(" order · ("),
+                        shortcut_span("s"),
+                        Span::raw(format!(
+                            ")ell {} · ",
+                            quick_action_status(sell_reason.as_deref())
                         )),
                         shortcut_span("S"),
-                        Span::raw(format!(
-                            ")ell {}",
-                            availability_label(sell_reason.as_deref())
-                        )),
+                        Span::raw(" order"),
                     ]),
                 ]
             } else {
@@ -2211,16 +2417,26 @@ fn render_trade_action(
                             view.player.tank_energy.0.saturating_add(total.0)
                         }),
                     )),
-                    mnemonic_line(
-                        "",
-                        "B",
-                        format!("uy {}", availability_label(buy_reason.as_deref())),
-                    ),
-                    mnemonic_line(
-                        "",
-                        "S",
-                        format!("ell {}", availability_label(sell_reason.as_deref())),
-                    ),
+                    Line::from(vec![
+                        Span::raw("("),
+                        shortcut_span("b"),
+                        Span::raw(format!(
+                            ")uy {} · ",
+                            quick_action_status(buy_reason.as_deref())
+                        )),
+                        shortcut_span("Shift-B"),
+                        Span::raw(" one-transaction order"),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("("),
+                        shortcut_span("s"),
+                        Span::raw(format!(
+                            ")ell {} · ",
+                            quick_action_status(sell_reason.as_deref())
+                        )),
+                        shortcut_span("Shift-S"),
+                        Span::raw(" one-transaction order"),
+                    ]),
                 ]
             }
         },
@@ -3010,6 +3226,14 @@ fn total_label(quote: game_app::Energy, quantity: u32) -> String {
     quote_total(quote, quantity).map_or_else(|| "overflow".into(), |total| format!("{} E", total.0))
 }
 
+fn trade_order_row<'a>(view: &'a ApplicationView, ui: &UiState) -> Option<&'a game_app::MarketRow> {
+    let good = ui.trade_order_good.as_ref()?;
+    view.local_trade
+        .market
+        .iter()
+        .find(|row| &row.good_id == good)
+}
+
 fn held_quantity(view: &ApplicationView, row: &game_app::MarketRow) -> u64 {
     view.player
         .cargo
@@ -3018,46 +3242,49 @@ fn held_quantity(view: &ApplicationView, row: &game_app::MarketRow) -> u64 {
         .map_or(0, |cargo| cargo.quantity)
 }
 
+struct TradeOrderLimit {
+    maximum: u32,
+    reason: String,
+}
+
+fn trade_order_limit(
+    view: &ApplicationView,
+    row: &game_app::MarketRow,
+    side: TradeOrderSide,
+) -> TradeOrderLimit {
+    if !view.local_trade.available {
+        return TradeOrderLimit {
+            maximum: 0,
+            reason: view
+                .local_trade
+                .unavailable_reason
+                .clone()
+                .unwrap_or_else(|| "local trading is unavailable".into()),
+        };
+    }
+    let Some(limits) = &row.local_trade_limits else {
+        return TradeOrderLimit {
+            maximum: 0,
+            reason: "trade limit unavailable".into(),
+        };
+    };
+    let limit = match side {
+        TradeOrderSide::Buy => &limits.buy,
+        TradeOrderSide::Sell => &limits.sell,
+    };
+    TradeOrderLimit {
+        maximum: limit.maximum,
+        reason: limit.reason.clone(),
+    }
+}
+
 fn buy_unavailable_reason(
     view: &ApplicationView,
     row: &game_app::MarketRow,
     quantity: u32,
 ) -> Option<String> {
-    if !view.local_trade.available {
-        return Some(
-            view.local_trade
-                .unavailable_reason
-                .clone()
-                .unwrap_or_else(|| "Trading is unavailable".into()),
-        );
-    }
-    if row.inventory < u64::from(quantity) {
-        return Some(format!(
-            "Buy unavailable: market has {} but Qty {quantity} was requested",
-            row.inventory
-        ));
-    }
-    if row.sell_quote.0 <= 0 {
-        return Some("Buy unavailable: market has no sell quote".into());
-    }
-    let Some(total) = quote_total(row.sell_quote, quantity) else {
-        return Some("Buy unavailable: quote total overflow".into());
-    };
-    if total > view.player.tank_energy {
-        return Some(format!(
-            "Buy unavailable: requires {} E but tank holds {} E",
-            total.0, view.player.tank_energy.0
-        ));
-    }
-    if view.player.cargo_used.saturating_add(u64::from(quantity))
-        > u64::from(view.player.cargo_capacity)
-    {
-        return Some(format!(
-            "Buy unavailable: cargo would exceed {}/{}",
-            view.player.cargo_used, view.player.cargo_capacity
-        ));
-    }
-    None
+    local_trade_unavailable_reason(view, row, TradeOrderSide::Buy, quantity)
+        .map(|reason| format!("Buy unavailable: {reason}"))
 }
 
 fn sell_unavailable_reason(
@@ -3065,33 +3292,27 @@ fn sell_unavailable_reason(
     row: &game_app::MarketRow,
     quantity: u32,
 ) -> Option<String> {
+    local_trade_unavailable_reason(view, row, TradeOrderSide::Sell, quantity)
+        .map(|reason| format!("Sell unavailable: {reason}"))
+}
+
+fn local_trade_unavailable_reason(
+    view: &ApplicationView,
+    row: &game_app::MarketRow,
+    side: TradeOrderSide,
+    quantity: u32,
+) -> Option<String> {
     if !view.local_trade.available {
         return Some(
             view.local_trade
                 .unavailable_reason
                 .clone()
-                .unwrap_or_else(|| "Trading is unavailable".into()),
+                .unwrap_or_else(|| "local trading is unavailable".into()),
         );
     }
-    let held = held_quantity(view, row);
-    if held < u64::from(quantity) {
-        return Some(format!(
-            "Sell unavailable: held {held}, Qty {quantity} requested"
-        ));
-    }
-    if row.buy_quote.0 <= 0 {
-        return Some("Sell unavailable: market is not buying this good".into());
-    }
-    quote_total(row.buy_quote, quantity)
-        .is_none()
-        .then_some("Sell unavailable: quote total overflow".into())
-}
-
-fn availability_label(reason: Option<&str>) -> String {
-    reason.map_or_else(
-        || "available".into(),
-        |reason| format!("unavailable: {reason}"),
-    )
+    let limit = trade_order_limit(view, row, side);
+    (quantity > limit.maximum)
+        .then(|| format!("maximum is {} because of {}", limit.maximum, limit.reason))
 }
 
 fn system_name(view: &ApplicationView, id: &game_app::ContentId) -> String {
@@ -3172,11 +3393,11 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
             shortcut_span("↑/↓"),
             Span::raw(" row · ("),
             shortcut_span("N"),
-            Span::raw(") quantity · ("),
-            shortcut_span("B"),
-            Span::raw(")uy · ("),
-            shortcut_span("S"),
-            Span::raw(")ell · ("),
+            Span::raw(") reusable quantity · "),
+            shortcut_span("b/s"),
+            Span::raw(" quick trade · "),
+            shortcut_span("Shift-B/Shift-S"),
+            Span::raw(" one-transaction order · ("),
             shortcut_span("T"),
             Span::raw(")ravel/"),
             shortcut_span("Enter"),
@@ -3257,10 +3478,11 @@ mod tests {
     use game_app::{
         AggregateDynamicsView, CargoItemView, ConnectionView, EncyclopediaArticleView,
         EncyclopediaSectionView, EncyclopediaView, EnergyHealth, GovernorInvestmentPolicy,
-        GovernorMarketPolicy, GovernorView, InvestmentView, LocalTradeView, MarketEnergyView,
-        MarketRow, PlayerStatusView, PopulationView, PresentationEvent, RouteLegView, RouteView,
-        SeasonalGenerationView, SystemIdentityView, SystemInspectionView, SystemListItem, TickRate,
-        TradeDestinationAvailability, TradeMarketComparisonView,
+        GovernorMarketPolicy, GovernorView, InvestmentView, LocalTradeLimitsView, LocalTradeView,
+        MarketEnergyView, MarketRow, PlayerStatusView, PopulationView, PresentationEvent,
+        RouteLegView, RouteView, SeasonalGenerationView, SystemIdentityView, SystemInspectionView,
+        SystemListItem, TickRate, TradeDestinationAvailability, TradeMarketComparisonView,
+        TradeQuantityLimitView,
     };
     use game_core::{
         BrownoutStage, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetDynamics, FleetMode,
@@ -3448,6 +3670,16 @@ mod tests {
             sell_quote: Energy(11),
             unit_cost: Energy(8),
             funded_demand: 3,
+            local_trade_limits: Some(LocalTradeLimitsView {
+                buy: TradeQuantityLimitView {
+                    maximum: 8,
+                    reason: "cargo capacity".into(),
+                },
+                sell: TradeQuantityLimitView {
+                    maximum: 2,
+                    reason: "units held".into(),
+                },
+            }),
         }];
         let governor = GovernorView {
             governed: true,
@@ -3580,6 +3812,7 @@ mod tests {
                         sell_quote: Energy(15),
                         unit_cost: Energy(8),
                         funded_demand: 5,
+                        local_trade_limits: None,
                     }],
                 },
             ],
@@ -4620,6 +4853,166 @@ mod tests {
             },
         );
         assert!(rendered.contains("destination comparison is empty"));
+    }
+
+    #[test]
+    fn one_transaction_order_focuses_limits_cost_and_capacity() {
+        let mut view = test_view();
+        view.local_trade.market[0].inventory = 100;
+        view.local_trade.market[0].sell_quote = Energy(10);
+        view.player.tank_energy = Energy(1_000);
+        view.player.tank_capacity = Energy(2_000);
+        view.player.cargo_used = 340;
+        view.player.cargo_capacity = 400;
+        view.systems[0].energy_capacity = Energy(10_000);
+        view.local_trade.market[0]
+            .local_trade_limits
+            .as_mut()
+            .unwrap()
+            .buy = TradeQuantityLimitView {
+            maximum: 60,
+            reason: "cargo capacity".into(),
+        };
+        let ui = UiState {
+            activity: Activity::Trade,
+            input_layer: InputLayer::Order,
+            trade_order_side: Some(TradeOrderSide::Buy),
+            trade_order_good: Some(id("core:ore")),
+            quantity_input: Some("72".into()),
+            trade_quantity: 5,
+            ..UiState::default()
+        };
+
+        for (width, height) in [(80, 30), (160, 45)] {
+            let rendered = rendered_at(width, height, &view, &ui);
+            for fact in [
+                "One-Transaction Buy Order",
+                "Requested: 72_ · Reusable preset: 5",
+                "Maximum now: 60 (cargo capacity)",
+                "Order total: 720 E",
+                "At maximum: 600 E · Tank 1000→400 E · Cargo 340→400/400",
+                "Requested 72 exceeds the maximum by 12",
+                "(M) use maximum",
+            ] {
+                assert!(
+                    rendered.contains(fact),
+                    "missing order fact at {width}x{height}: {fact}"
+                );
+            }
+        }
+
+        let sell_limit =
+            trade_order_limit(&view, &view.local_trade.market[0], TradeOrderSide::Sell);
+        assert_eq!(sell_limit.maximum, 2);
+        assert_eq!(sell_limit.reason, "units held");
+    }
+
+    #[tokio::test]
+    async fn one_transaction_order_uses_maximum_without_changing_reusable_quantity() {
+        let app = game_app::spawn(test_session());
+        let mut view = app.views.borrow().clone();
+        let ore_index = view
+            .local_trade
+            .market
+            .iter()
+            .position(|row| row.name == "Ore")
+            .unwrap();
+        let expected_maximum = view.local_trade.market[ore_index]
+            .local_trade_limits
+            .as_ref()
+            .unwrap()
+            .buy
+            .maximum;
+        let mut ui = UiState {
+            activity: Activity::Trade,
+            market_index: ore_index,
+            trade_quantity: 3,
+            ..UiState::default()
+        };
+
+        handle_key(KeyCode::Char('S'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Char('7'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Char('m'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.quantity_input.as_deref(), Some("7"));
+        assert!(ui.message.contains("units held"));
+        handle_key(KeyCode::Esc, &mut ui, &view, &app)
+            .await
+            .unwrap();
+
+        handle_key(KeyCode::Char('B'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        view.local_trade.market.reverse();
+        handle_key(KeyCode::Char('9'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Char('9'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Enter, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.input_layer, InputLayer::Order);
+        assert_eq!(app.views.borrow().player.cargo_used, 0);
+        assert!(ui.message.contains("maximum"));
+
+        handle_key(KeyCode::Char('m'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        let maximum = ui.quantity_input.clone().unwrap().parse::<u32>().unwrap();
+        assert_eq!(maximum, expected_maximum);
+        handle_key(KeyCode::Enter, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.input_layer, InputLayer::Root);
+        assert_eq!(ui.trade_order_side, None);
+        assert_eq!(
+            ui.trade_quantity, 3,
+            "one-off orders must not change preset"
+        );
+        assert_eq!(app.views.borrow().player.cargo_used, u64::from(maximum));
+
+        let view_after_buy = app.views.borrow().clone();
+        ui.market_index = view_after_buy
+            .local_trade
+            .market
+            .iter()
+            .position(|row| row.name == "Ore")
+            .unwrap();
+        handle_key(KeyCode::Char('S'), &mut ui, &view_after_buy, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Char('m'), &mut ui, &view_after_buy, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Enter, &mut ui, &view_after_buy, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.input_layer, InputLayer::Root);
+        assert_eq!(ui.trade_quantity, 3);
+        assert_eq!(app.views.borrow().player.cargo_used, 0);
+
+        let view_after_sell = app.views.borrow().clone();
+        handle_key(KeyCode::Char('B'), &mut ui, &view_after_sell, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Char('7'), &mut ui, &view_after_sell, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Esc, &mut ui, &view_after_sell, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.input_layer, InputLayer::Root);
+        assert_eq!(ui.trade_order_good, None);
+        assert_eq!(ui.trade_quantity, 3);
+        assert_eq!(app.views.borrow().player.cargo_used, 0);
+        app.shutdown().await.unwrap();
     }
 
     #[test]

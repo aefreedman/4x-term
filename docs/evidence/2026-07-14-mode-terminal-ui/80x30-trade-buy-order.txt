@@ -7,18 +7,18 @@ PAUSED · Tick 0 · Rate 4/s · Location Aster Reach · Tank 1000/2000 E
 │                                                                              │
 │                                                                              │
 │                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌Selected Good / Action Preview────────────────────────────────────────────────┐
-│Ore · Qty 5 · Held 2 · Stock 100                                              │
-│Buy total 50 E · Tank 1000→950 E · Cargo 340→345/400                          │
-│Sell total 45 E · Tank 1000→1045 E · Cargo 340→335/400                        │
-│(b)uy ready · B order · (s)ell blocked: units held · S order                  │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌Destinations — Ore — read-only · 1-1/1────────────────────────────────────────┐
-│  System              Stock/Tgt   Mkt Buy/Sell      Ticks  Available          │
-│  Brasshaven                 3/20         13 E/15 E      4 4 E                │
-│                                                                              │
-│                                                                              │
+└───┌One-Transaction Buy Order─────────────────────────────────────────────┐───┘
+┌Sel│Ore · Buy price 10 E/unit                                             │───┐
+│Ore│Requested: 72_ · Reusable preset: 5                                   │   │
+│Buy│Maximum now: 60 (cargo capacity)                                      │   │
+│Sel│Order total: 720 E                                                    │   │
+│(b)│At maximum: 600 E · Tank 1000→400 E · Cargo 340→400/400               │   │
+└───│Requested 72 exceeds the maximum by 12.                               │───┘
+┌Des│(M) use maximum · Enter confirm · Esc cancel                          │───┐
+│  S│                                                                      │   │
+│  B│                                                                      │   │
+│   │                                                                      │   │
+│   └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌Route — Brasshaven (read-only) / Network Offline──────────────────────────────┐

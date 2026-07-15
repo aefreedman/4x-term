@@ -13,6 +13,8 @@ pub enum InputAction {
     QuantityDigit(char),
     QuantityBackspace,
     ConfirmQuantity,
+    ConfirmOrder,
+    UseOrderMaximum,
     Switch(Activity),
     ToggleRun,
     Step,
@@ -23,6 +25,8 @@ pub enum InputAction {
     PageUp,
     PageDown,
     OpenQuantity,
+    OpenBuyOrder,
+    OpenSellOrder,
     OpenDetail,
     OpenMarketDetail,
     NextSection,
@@ -51,11 +55,17 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
     }
 
     match ui.input_layer {
-        InputLayer::Quantity => {
+        InputLayer::Quantity | InputLayer::Order => {
             return match code {
                 KeyCode::Char(digit) if digit.is_ascii_digit() => InputAction::QuantityDigit(digit),
                 KeyCode::Backspace => InputAction::QuantityBackspace,
-                KeyCode::Enter => InputAction::ConfirmQuantity,
+                KeyCode::Enter if ui.input_layer == InputLayer::Quantity => {
+                    InputAction::ConfirmQuantity
+                }
+                KeyCode::Enter => InputAction::ConfirmOrder,
+                KeyCode::Char('m') if ui.input_layer == InputLayer::Order => {
+                    InputAction::UseOrderMaximum
+                }
                 KeyCode::Esc => InputAction::CloseLayer,
                 _ => InputAction::None,
             };
@@ -103,6 +113,8 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
             KeyCode::Char('n') => InputAction::OpenQuantity,
             KeyCode::Char('b') => InputAction::Buy,
             KeyCode::Char('s') => InputAction::Sell,
+            KeyCode::Char('B') => InputAction::OpenBuyOrder,
+            KeyCode::Char('S') => InputAction::OpenSellOrder,
             KeyCode::Char('t') | KeyCode::Enter => InputAction::BeginTravel,
             KeyCode::Tab => InputAction::NextSection,
             KeyCode::BackTab => InputAction::PreviousSection,
@@ -151,5 +163,38 @@ mod tests {
         assert_eq!(route_key(KeyCode::F(2), &ui, true), InputAction::None);
         assert_eq!(route_key(KeyCode::Char('b'), &ui, true), InputAction::None);
         assert_eq!(route_key(KeyCode::Esc, &ui, true), InputAction::CloseLayer);
+
+        let order = UiState {
+            activity: Activity::Trade,
+            input_layer: InputLayer::Order,
+            ..UiState::default()
+        };
+        assert_eq!(
+            route_key(KeyCode::Char('m'), &order, true),
+            InputAction::UseOrderMaximum
+        );
+        assert_eq!(
+            route_key(KeyCode::Enter, &order, true),
+            InputAction::ConfirmOrder
+        );
+        assert_eq!(route_key(KeyCode::F(1), &order, true), InputAction::None);
+    }
+
+    #[test]
+    fn trade_distinguishes_quick_actions_from_one_transaction_orders() {
+        let ui = UiState {
+            activity: Activity::Trade,
+            ..UiState::default()
+        };
+        assert_eq!(route_key(KeyCode::Char('b'), &ui, true), InputAction::Buy);
+        assert_eq!(route_key(KeyCode::Char('s'), &ui, true), InputAction::Sell);
+        assert_eq!(
+            route_key(KeyCode::Char('B'), &ui, true),
+            InputAction::OpenBuyOrder
+        );
+        assert_eq!(
+            route_key(KeyCode::Char('S'), &ui, true),
+            InputAction::OpenSellOrder
+        );
     }
 }

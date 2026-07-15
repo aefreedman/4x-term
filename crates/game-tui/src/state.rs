@@ -171,6 +171,7 @@ pub enum InputLayer {
     #[default]
     Root,
     Quantity,
+    Order,
     Help,
     Detail,
 }
@@ -188,6 +189,13 @@ pub enum TradeRegion {
     #[default]
     Goods,
     Destinations,
+}
+
+/// The side of a focused, one-transaction trade order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TradeOrderSide {
+    Buy,
+    Sell,
 }
 
 /// All state local to the terminal adapter.
@@ -217,6 +225,8 @@ pub struct UiState {
     pub event_scroll: u16,
     pub trade_quantity: u32,
     pub quantity_input: Option<String>,
+    pub trade_order_side: Option<TradeOrderSide>,
+    pub trade_order_good: Option<ContentId>,
     pub message: String,
 }
 
@@ -247,6 +257,8 @@ impl Default for UiState {
             event_scroll: 0,
             trade_quantity: 1,
             quantity_input: None,
+            trade_order_side: None,
+            trade_order_good: None,
             message: String::new(),
         }
     }

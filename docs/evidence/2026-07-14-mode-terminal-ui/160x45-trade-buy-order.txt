@@ -14,18 +14,18 @@ PAUSED · Tick 0 · Rate 4/s · Location Aster Reach · Tank 1000/2000 E
 │                                                                                      ││                                                                      │
 │                                                                                      ││                                                                      │
 │                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
+│                                           ┌One-Transaction Buy Order─────────────────────────────────────────────┐                                           │
+│                                           │Ore · Buy price 10 E/unit                                             │                                           │
+│                                           │Requested: 72_ · Reusable preset: 5                                   │                                           │
+│                                           │Maximum now: 60 (cargo capacity)                                      │                                           │
+│                                           │Order total: 720 E                                                    │                                           │
+│                                           │At maximum: 600 E · Tank 1000→400 E · Cargo 340→400/400               │                                           │
+│                                           │Requested 72 exceeds the maximum by 12.                               │                                           │
+│                                           │(M) use maximum · Enter confirm · Esc cancel                          │                                           │
+│                                           │                                                                      │                                           │
+│                                           │                                                                      │                                           │
+│                                           │                                                                      │                                           │
+│                                           └──────────────────────────────────────────────────────────────────────┘                                           │
 │                                                                                      ││                                                                      │
 │                                                                                      ││                                                                      │
 │                                                                                      │└──────────────────────────────────────────────────────────────────────┘
