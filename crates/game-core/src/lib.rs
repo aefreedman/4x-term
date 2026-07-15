@@ -3155,6 +3155,7 @@ impl GameSession {
         self.classify_brownouts()?;
         self.execute_sources_and_recipes()?;
         self.maintain_preload_energy_contracts()?;
+        self.settle_energy_contracts()?;
         self.settle_idle_laden()?;
         self.rebalance_idle_npc_tanks()?;
         self.execute_autonomous_investments()?;

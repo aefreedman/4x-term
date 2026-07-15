@@ -26,6 +26,13 @@ fn physical_energy(snapshot: &CoreSnapshot) -> i128 {
         .sum::<i128>();
     markets + tanks + bulk
 }
+fn assert_physical_delta_reconciles(before: &CoreSnapshot, after: &CoreSnapshot) {
+    let physical_delta = physical_energy(after) - physical_energy(before);
+    let flow_delta = i128::from(after.energy_flow.net_external_delta().0)
+        - i128::from(before.energy_flow.net_external_delta().0);
+    assert_eq!(physical_delta, flow_delta);
+}
+
 fn definition() -> GameDefinition {
     let energy = id(ENERGY_ID);
     let ore = id("core:ore");
@@ -1278,6 +1285,514 @@ fn source_distress_revokes_preload_claim_before_loading() {
             ..
         })
     )));
+}
+
+#[test]
+fn full_energy_delivery_settles_net_and_allocation_exactly_once() {
+    let mut session = GameSession::new(local_energy_contract_definition()).unwrap();
+    let initial = session.snapshot();
+    session
+        .submit(GameCommand::AcceptEnergyContract {
+            source: id("core:s0"),
+            destination: id("core:s1"),
+            gross_payload: Energy(300),
+        })
+        .unwrap();
+    session.step().unwrap();
+    session.drain_events();
+    session.step().unwrap();
+
+    assert!(
+        session
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .is_empty()
+    );
+    assert_eq!(
+        session
+            .world
+            .resource::<EnergyContracts>()
+            .diagnostics
+            .completed,
+        1
+    );
+    let snapshot = session.snapshot();
+    assert_eq!(snapshot.traders[0].energy_tank, Energy(1_001));
+    assert_eq!(snapshot.traders[0].bulk_energy, BulkEnergyHold::default());
+    assert_eq!(snapshot.markets[1].energy_stock, Energy(407));
+    assert_physical_delta_reconciles(&initial, &snapshot);
+    let events = session.drain_events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                GameEvent::EnergyLogistics(EnergyContractEvent::Settled {
+                    amount: Energy(289),
+                    ..
+                })
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                GameEvent::EnergyLogistics(EnergyContractEvent::Terminal {
+                    outcome: EnergyContractTerminalOutcome::Completed,
+                    ..
+                })
+            ))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn partial_delivery_retries_then_recovers_same_contract() {
+    let mut definition = local_energy_contract_definition();
+    definition.systems[1]
+        .energy_logistics
+        .settlement_timeout_ticks = 2;
+    let mut session = GameSession::new(definition).unwrap();
+    session
+        .submit(GameCommand::AcceptEnergyContract {
+            source: id("core:s0"),
+            destination: id("core:s1"),
+            gross_payload: Energy(300),
+        })
+        .unwrap();
+    session.step().unwrap();
+    let contract_id = *session
+        .world
+        .resource::<EnergyContracts>()
+        .active
+        .keys()
+        .next()
+        .unwrap();
+    let destination = session.market_entity(&id("core:s1")).unwrap();
+    session
+        .world
+        .get_mut::<Market>(destination)
+        .unwrap()
+        .set_energy_stock(Energy(4_900))
+        .unwrap();
+    let recovery_baseline = session.snapshot();
+
+    session.step().unwrap();
+    {
+        let contracts = session.world.resource::<EnergyContracts>();
+        let contract = &contracts.active[&contract_id];
+        assert_eq!(contract.cumulative_settled, Energy(91));
+        assert!(matches!(
+            contract.state,
+            EnergyContractState::Arrived {
+                arrived_tick: 1,
+                settlement_deadline: 3,
+            }
+        ));
+    }
+    let first = session.snapshot().traders[0].clone();
+    assert_eq!(first.energy_tank, Energy(1_000));
+    assert_eq!(first.bulk_energy.locked.unwrap().amount, Energy(199));
+
+    session.step().unwrap();
+    {
+        let contract = session
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .get(&contract_id)
+            .unwrap();
+        assert_eq!(contract.cumulative_settled, Energy(92));
+    }
+    assert_eq!(
+        session.snapshot().traders[0]
+            .bulk_energy
+            .locked
+            .unwrap()
+            .amount,
+        Energy(198)
+    );
+
+    session.step().unwrap();
+    {
+        let contract = session
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .get(&contract_id)
+            .unwrap();
+        assert!(matches!(
+            contract.state,
+            EnergyContractState::Recovering {
+                recovery_departure_tick: 3,
+            }
+        ));
+    }
+    let recovering = session.snapshot().traders[0].clone();
+    assert_eq!(recovering.energy_tank, Energy(1_000));
+    assert_eq!(recovering.bulk_energy.locked.unwrap().amount, Energy(188));
+    assert_eq!(
+        recovering.travel.as_ref().unwrap().destination,
+        id("core:s0")
+    );
+
+    session.step().unwrap();
+    assert!(
+        session
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .is_empty()
+    );
+    assert_eq!(
+        session
+            .world
+            .resource::<EnergyContracts>()
+            .diagnostics
+            .recovered_after_failure,
+        1
+    );
+    let recovered = session.snapshot();
+    assert!(recovered.traders[0].bulk_energy.locked.is_none());
+    assert_physical_delta_reconciles(&recovery_baseline, &recovered);
+}
+
+#[test]
+fn zero_settlement_timeout_returns_or_curtails_every_locked_unit() {
+    let mut definition = local_energy_contract_definition();
+    definition.economy.life_support_burn_per_capita = Energy::ZERO;
+    definition.systems[1].sources.clear();
+    definition.systems[1]
+        .energy_logistics
+        .settlement_timeout_ticks = 1;
+    let mut session = GameSession::new(definition).unwrap();
+    session
+        .submit(GameCommand::AcceptEnergyContract {
+            source: id("core:s0"),
+            destination: id("core:s1"),
+            gross_payload: Energy(300),
+        })
+        .unwrap();
+    session.step().unwrap();
+    let contract_id = *session
+        .world
+        .resource::<EnergyContracts>()
+        .active
+        .keys()
+        .next()
+        .unwrap();
+    let destination = session.market_entity(&id("core:s1")).unwrap();
+    session
+        .world
+        .get_mut::<Market>(destination)
+        .unwrap()
+        .set_energy_stock(Energy(5_000))
+        .unwrap();
+    let timeout_baseline = session.snapshot();
+
+    session.step().unwrap();
+    let arrived = session
+        .world
+        .resource::<EnergyContracts>()
+        .active
+        .get(&contract_id)
+        .unwrap();
+    assert_eq!(arrived.cumulative_settled, Energy::ZERO);
+    assert!(matches!(arrived.state, EnergyContractState::Arrived { .. }));
+
+    session.step().unwrap();
+    let recovering = session.snapshot().traders[0].clone();
+    assert_eq!(recovering.energy_tank, Energy(1_000));
+    assert_eq!(recovering.bulk_energy.locked.unwrap().amount, Energy(280));
+    let timeout_complete = session.snapshot();
+    assert_physical_delta_reconciles(&timeout_baseline, &timeout_complete);
+    let source = session.market_entity(&id("core:s0")).unwrap();
+    session
+        .world
+        .get_mut::<Market>(source)
+        .unwrap()
+        .set_energy_stock(Energy(5_000))
+        .unwrap();
+    let recovery_baseline = session.snapshot();
+
+    session.step().unwrap();
+    let contracts = session.world.resource::<EnergyContracts>();
+    assert!(contracts.active.is_empty());
+    assert_eq!(contracts.diagnostics.recovered_after_failure, 1);
+    assert_eq!(contracts.diagnostics.recovery_curtailed, Energy(280));
+    let recovered = session.snapshot();
+    assert!(recovered.traders[0].bulk_energy.locked.is_none());
+    assert_physical_delta_reconciles(&recovery_baseline, &recovered);
+    assert!(session.drain_events().iter().any(|event| matches!(
+        event,
+        GameEvent::EnergyLogistics(EnergyContractEvent::RecoveryCurtailed {
+            contract_id: id,
+            amount: Energy(280),
+            ..
+        }) if *id == contract_id
+    )));
+}
+
+#[test]
+fn proportional_fee_converts_incrementally_without_duplicate_terminal_effects() {
+    let mut definition = local_energy_contract_definition();
+    definition.systems[1].energy_logistics.carrier_fee_bps = CarrierFeeSchedule {
+        normal: 1_000,
+        throttled: 1_100,
+        emergency: 1_200,
+        starvation: 1_300,
+    };
+    definition.systems[1].energy_logistics.max_allocation_bps = 2_000;
+    let mut session = GameSession::new(definition).unwrap();
+    session
+        .submit(GameCommand::AcceptEnergyContract {
+            source: id("core:s0"),
+            destination: id("core:s1"),
+            gross_payload: Energy(300),
+        })
+        .unwrap();
+    session.step().unwrap();
+    session.drain_events();
+    let contract_id = *session
+        .world
+        .resource::<EnergyContracts>()
+        .active
+        .keys()
+        .next()
+        .unwrap();
+    let destination = session.market_entity(&id("core:s1")).unwrap();
+    session
+        .world
+        .get_mut::<Market>(destination)
+        .unwrap()
+        .set_energy_stock(Energy(4_900))
+        .unwrap();
+
+    session.step().unwrap();
+    let partial = session
+        .world
+        .resource::<EnergyContracts>()
+        .active
+        .get(&contract_id)
+        .unwrap();
+    assert_eq!(partial.carrier_profit, Energy(30));
+    assert_eq!(partial.net_delivery, Energy(260));
+    assert_eq!(partial.cumulative_settled, Energy(91));
+    let trader = session.snapshot().traders[0].clone();
+    assert_eq!(trader.energy_tank, Energy(1_010));
+    assert_eq!(trader.bulk_energy.locked.unwrap().amount, Energy(189));
+
+    session
+        .world
+        .get_mut::<Market>(destination)
+        .unwrap()
+        .set_energy_stock(Energy(4_800))
+        .unwrap();
+    session.step().unwrap();
+    let completed = session.snapshot().traders[0].clone();
+    assert_eq!(completed.energy_tank, Energy(1_030));
+    assert_eq!(completed.bulk_energy, BulkEnergyHold::default());
+    assert_eq!(completed.ledger.sales_revenue, Energy(40));
+    assert_eq!(
+        session
+            .world
+            .resource::<EnergyContracts>()
+            .diagnostics
+            .completed,
+        1
+    );
+    let terminal_events = session
+        .drain_events()
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event,
+                GameEvent::EnergyLogistics(EnergyContractEvent::Terminal {
+                    contract_id: id,
+                    outcome: EnergyContractTerminalOutcome::Completed,
+                }) if *id == contract_id
+            )
+        })
+        .count();
+    assert_eq!(terminal_events, 1);
+
+    session.step().unwrap();
+    assert_eq!(
+        session
+            .world
+            .resource::<EnergyContracts>()
+            .diagnostics
+            .completed,
+        1
+    );
+    assert!(!session.drain_events().iter().any(|event| matches!(
+        event,
+        GameEvent::EnergyLogistics(EnergyContractEvent::Terminal {
+            contract_id: id,
+            ..
+        }) if *id == contract_id
+    )));
+}
+
+#[test]
+fn settlement_allocation_fills_tank_then_uses_owned_bulk() {
+    let mut definition = local_energy_contract_definition();
+    definition.traders[0].energy_tank_capacity = Energy(1_000);
+    let mut session = GameSession::new(definition).unwrap();
+    session
+        .submit(GameCommand::AcceptEnergyContract {
+            source: id("core:s0"),
+            destination: id("core:s1"),
+            gross_payload: Energy(300),
+        })
+        .unwrap();
+    session.step().unwrap();
+    session.step().unwrap();
+
+    let trader = session.snapshot().traders[0].clone();
+    assert_eq!(trader.energy_tank, Energy(1_000));
+    assert_eq!(trader.bulk_energy.owned, Energy(1));
+    assert!(trader.bulk_energy.locked.is_none());
+}
+
+#[test]
+fn settlement_timeout_and_recovery_failures_are_atomic() {
+    let mut session = GameSession::new(local_energy_contract_definition()).unwrap();
+    session
+        .submit(GameCommand::AcceptEnergyContract {
+            source: id("core:s0"),
+            destination: id("core:s1"),
+            gross_payload: Energy(300),
+        })
+        .unwrap();
+    session.step().unwrap();
+    let contract_id = *session
+        .world
+        .resource::<EnergyContracts>()
+        .active
+        .keys()
+        .next()
+        .unwrap();
+    let carrier = {
+        let mut traders = session.world.query::<(Entity, &StableId, &Trader)>();
+        traders
+            .iter(&session.world)
+            .find_map(|(entity, stable_id, _)| (stable_id.0 == id("core:player")).then_some(entity))
+            .unwrap()
+    };
+    let destination = session.market_entity(&id("core:s1")).unwrap();
+    {
+        let mut trader = session.world.get_mut::<Trader>(carrier).unwrap();
+        trader.system = id("core:s1");
+        trader.travel = None;
+    }
+    session
+        .world
+        .get_mut::<Market>(destination)
+        .unwrap()
+        .set_energy_stock(Energy(5_000))
+        .unwrap();
+    session.settle_energy_contracts().unwrap();
+    assert!(matches!(
+        session
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .get(&contract_id)
+            .unwrap()
+            .state,
+        EnergyContractState::Arrived { .. }
+    ));
+
+    {
+        let mut market = session.world.get_mut::<Market>(destination).unwrap();
+        market.set_energy_stock(Energy(100)).unwrap();
+        market.energy_flow.energy_cargo_to_market = Energy(i64::MAX);
+    }
+    let before_snapshot = session.snapshot();
+    let before_contracts = session.world.resource::<EnergyContracts>().clone();
+    let before_events = session.world.resource::<EventBuffer>().0.clone();
+    assert_eq!(
+        session.settle_energy_contracts().unwrap_err(),
+        CoreError::Overflow
+    );
+    assert_eq!(session.snapshot(), before_snapshot);
+    assert_eq!(
+        *session.world.resource::<EnergyContracts>(),
+        before_contracts
+    );
+    assert_eq!(session.world.resource::<EventBuffer>().0, before_events);
+
+    {
+        let mut market = session.world.get_mut::<Market>(destination).unwrap();
+        market.set_energy_stock(Energy(5_000)).unwrap();
+        market.energy_flow.energy_cargo_to_market = Energy::ZERO;
+    }
+    session
+        .world
+        .resource_mut::<EnergyContracts>()
+        .active
+        .get_mut(&contract_id)
+        .unwrap()
+        .state = EnergyContractState::Arrived {
+        arrived_tick: 1,
+        settlement_deadline: 1,
+    };
+    session
+        .world
+        .get_mut::<Trader>(carrier)
+        .unwrap()
+        .ledger
+        .sales_revenue = Energy(i64::MAX);
+    let before_snapshot = session.snapshot();
+    let before_contracts = session.world.resource::<EnergyContracts>().clone();
+    let before_events = session.world.resource::<EventBuffer>().0.clone();
+    assert_eq!(
+        session.settle_energy_contracts().unwrap_err(),
+        CoreError::Overflow
+    );
+    assert_eq!(session.snapshot(), before_snapshot);
+    assert_eq!(
+        *session.world.resource::<EnergyContracts>(),
+        before_contracts
+    );
+    assert_eq!(session.world.resource::<EventBuffer>().0, before_events);
+
+    session
+        .world
+        .get_mut::<Trader>(carrier)
+        .unwrap()
+        .ledger
+        .sales_revenue = Energy::ZERO;
+    session.settle_energy_contracts().unwrap();
+    {
+        let mut trader = session.world.get_mut::<Trader>(carrier).unwrap();
+        trader.system = id("core:s0");
+        trader.travel = None;
+    }
+    session
+        .world
+        .resource_mut::<EnergyContracts>()
+        .diagnostics
+        .recovered_after_failure = u64::MAX;
+    let before_snapshot = session.snapshot();
+    let before_contracts = session.world.resource::<EnergyContracts>().clone();
+    let before_events = session.world.resource::<EventBuffer>().0.clone();
+    assert_eq!(
+        session.settle_energy_contracts().unwrap_err(),
+        CoreError::Overflow
+    );
+    assert_eq!(session.snapshot(), before_snapshot);
+    assert_eq!(
+        *session.world.resource::<EnergyContracts>(),
+        before_contracts
+    );
+    assert_eq!(session.world.resource::<EventBuffer>().0, before_events);
 }
 
 #[test]

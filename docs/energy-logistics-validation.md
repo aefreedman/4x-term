@@ -234,4 +234,11 @@ Required metrics: gross/net delivery, loaded/deadhead/recovery burn, carrier fee
 - Failure-first local acceptance now proves phase-11 intent resolution, exact source/tank/lot state, and atomic loaded departure. Remote acceptance proves canonical claim/deadhead state and sunk deadhead fuel; player cancellation releases exactly once while travel continues. Distress revocation runs before loading and leaves no claim/lot.
 - Source offers and candidate sizing use the frozen seasonal/carry projection, stored route snapshots, inbound suppression, bulk/tank/recovery constraints, and captured fee. Phase-6 claim allocation is ascending `ContractId`; incompatible manual carrier actions are blocked.
 
-Pending settlement/recovery/NPC/frontend waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.
+#### Wave 3B settlement and recovery
+
+- Main rerun: all 93 game-core tests pass; game-core Clippy with warnings denied, format, and diff checks pass. Full workspace validation is recorded with the integration commit.
+- Full delivery, positive partial retry, exact deadline timeout, zero-settlement timeout, same-contract recovery, source overflow curtailment, and terminal exactly-once behavior are executable. Whole-world physical deltas reconcile across full, partial, timeout, returned, and curtailed paths, including tests whose direct stock setup establishes an explicit post-mutation baseline.
+- Runtime tests prove reimbursement converts once, a nonzero fee converts proportionally across multiple settlements, allocation fills tank before owned bulk, and a terminal contract cannot pay or emit again. Settlement, timeout, and recovery overflow injections preserve snapshots, contracts, and events without partial mutation.
+- Read-only accounting review found final captured-key ordering, stored recovery-arrival ordering, named presentation ledgers, and profitability-window integration remain owned by Waves 3C/5; those items are not claimed here.
+
+Pending NPC/order/profitability/frontend waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.

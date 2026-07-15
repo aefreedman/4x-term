@@ -941,7 +941,7 @@ Execute this as serial Waves 3A–3C, not one broad delegation. Before each wave
 
 - [ ] Add player/NPC intent collection and D12 resolution.
 - [x] Implement remote source claims/deadhead, source revocation, atomic load/depart, and cancellation semantics from D6.
-- [ ] Implement arrival settlement, retries, exact timeout boundary, proportional fee conversion, recovery reserve, and terminal recovery on the same contract.
+- [x] Implement arrival settlement, retries, exact timeout boundary, proportional fee conversion, recovery reserve, and terminal recovery on the same contract.
 - [ ] Add the D13 schedule phases in `GameSession::step`.
 - [x] Block manual travel/transfer/liquidation and dynamic retirement around active contracts/locked lots.
 - [ ] Integrate earned fee/deadhead cost with trader profitability.
