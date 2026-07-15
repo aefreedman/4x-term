@@ -228,4 +228,10 @@ Required metrics: gross/net delivery, loaded/deadhead/recovery burn, carrier fee
 - Player and automated tank withdrawals use D1 exportable stock including canonical pre-load claims. Exact owned-bulk transfers are docked, checked, independent of refuel policy, and never consume locked Energy. `RecordExternalDelivery` remains the external inflow boundary.
 - The ignored 1,000-tick acceptance still contains obsolete Energy-cargo activity assertions and is intentionally deferred until Wave 3 supplies replacement contract metrics.
 
-Pending lifecycle/frontend waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.
+#### Wave 3A acceptance and pre-load lifecycle
+
+- Main rerun: all 87 game-core tests and the workspace suite pass; workspace Clippy, format, and diff checks pass.
+- Failure-first local acceptance now proves phase-11 intent resolution, exact source/tank/lot state, and atomic loaded departure. Remote acceptance proves canonical claim/deadhead state and sunk deadhead fuel; player cancellation releases exactly once while travel continues. Distress revocation runs before loading and leaves no claim/lot.
+- Source offers and candidate sizing use the frozen seasonal/carry projection, stored route snapshots, inbound suppression, bulk/tank/recovery constraints, and captured fee. Phase-6 claim allocation is ascending `ContractId`; incompatible manual carrier actions are blocked.
+
+Pending settlement/recovery/NPC/frontend waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.

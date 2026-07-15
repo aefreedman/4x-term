@@ -7,8 +7,12 @@
 // wired into the root session.
 #![cfg_attr(not(test), allow(dead_code))]
 
-use super::{BrownoutStage, ContentId, CoreError, Energy};
-use bevy_ecs::prelude::Resource;
+use super::{
+    BrownoutStage, ContentId, CoreError, ENERGY_ID, EconomyConfig, Energy, EventBuffer, GameEvent,
+    GameSession, Market, MarketPolicy, StableId, SystemGraph, ThroughputScheduleKey, Trader,
+    TravelPlan, composed_throughput, route_travel_energy, scaled_source_output, ticks_for_distance,
+};
+use bevy_ecs::prelude::{Entity, Resource};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -782,6 +786,1044 @@ pub(crate) fn timeout_plan(
         recovery_burn: constants.recovery_burn,
         locked_after_departure,
     })
+}
+
+#[derive(Clone, Debug)]
+struct PreparedEnergyCandidate {
+    carrier_entity: Entity,
+    source_entity: Entity,
+    deadhead_route: ContractRoute,
+    loaded_route: ContractRoute,
+    recovery_route: ContractRoute,
+    gross_payload: Energy,
+    carrier_fee_bps: u32,
+    carrier_profit: Energy,
+    net_delivery: Energy,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EnergyIntentRejection {
+    blocker: EnergyContractBlocker,
+    current_maximum: Option<Energy>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EnergyIntentOrderKey {
+    destination_stage: BrownoutStage,
+    destination_runway: u64,
+}
+
+impl GameSession {
+    pub(super) fn enqueue_player_energy_contract(
+        &mut self,
+        source: ContentId,
+        destination: ContentId,
+        gross_payload: Energy,
+    ) -> Result<(), CoreError> {
+        if gross_payload.0 <= 0 {
+            return Err(CoreError::ZeroQuantity);
+        }
+        if source == destination {
+            return Err(CoreError::AlreadyThere);
+        }
+        self.market_entity(&source)?;
+        self.market_entity(&destination)?;
+        let carrier_entity = self.player_entity()?;
+        let carrier = self
+            .world
+            .get::<StableId>(carrier_entity)
+            .unwrap()
+            .0
+            .clone();
+        self.world
+            .resource_mut::<PendingEnergyContractIntents>()
+            .0
+            .push(EnergyContractIntent {
+                carrier,
+                source,
+                destination,
+                gross_payload,
+                command_driven: true,
+            });
+        Ok(())
+    }
+
+    pub(super) fn cancel_player_energy_contract(
+        &mut self,
+        contract_id: ContractId,
+    ) -> Result<(), CoreError> {
+        let player_entity = self.player_entity()?;
+        let player = self.world.get::<StableId>(player_entity).unwrap().0.clone();
+        let contract = self
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .get(&contract_id)
+            .cloned()
+            .ok_or_else(|| CoreError::Unknown {
+                kind: "energy contract",
+                id: contract_id.get().to_string(),
+            })?;
+        if contract.carrier != player
+            || !matches!(
+                contract.state,
+                EnergyContractState::DeadheadingToSource { .. }
+            )
+        {
+            return Err(CoreError::ActiveEnergyContract);
+        }
+        if self
+            .world
+            .get::<Trader>(player_entity)
+            .unwrap()
+            .bulk_energy
+            .locked
+            .is_some()
+        {
+            return Err(CoreError::LockedEnergy);
+        }
+
+        let mut contracts = self.world.resource::<EnergyContracts>().clone();
+        contracts.diagnostics.cancelled_before_load = contracts
+            .diagnostics
+            .cancelled_before_load
+            .checked_add(1)
+            .ok_or(CoreError::Overflow)?;
+        contracts.active.remove(&contract_id);
+        *self.world.resource_mut::<EnergyContracts>() = contracts;
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::EnergyLogistics(EnergyContractEvent::Terminal {
+                contract_id,
+                outcome: EnergyContractTerminalOutcome::CancelledBeforeLoad,
+            }));
+        Ok(())
+    }
+
+    fn trader_entity_by_id(&mut self, id: &ContentId) -> Result<Entity, CoreError> {
+        self.world
+            .query::<(Entity, &StableId, &Trader)>()
+            .iter(&self.world)
+            .find(|(_, stable, _)| &stable.0 == id)
+            .map(|(entity, _, _)| entity)
+            .ok_or_else(|| CoreError::Unknown {
+                kind: "trader",
+                id: id.to_string(),
+            })
+    }
+
+    pub(super) fn carrier_has_active_energy_contract(&self, carrier: &ContentId) -> bool {
+        self.world
+            .resource::<EnergyContracts>()
+            .active
+            .values()
+            .any(|contract| &contract.carrier == carrier)
+    }
+
+    pub(super) fn ensure_carrier_contract_free(
+        &self,
+        carrier: &ContentId,
+        trader: &Trader,
+    ) -> Result<(), CoreError> {
+        if self.carrier_has_active_energy_contract(carrier) {
+            return Err(CoreError::ActiveEnergyContract);
+        }
+        if trader.bulk_energy.locked.is_some() {
+            return Err(CoreError::LockedEnergy);
+        }
+        Ok(())
+    }
+
+    fn checked_energy_from_i128(value: i128) -> Result<Energy, CoreError> {
+        if value < 0 {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        Ok(Energy(
+            i64::try_from(value).map_err(|_| CoreError::Overflow)?,
+        ))
+    }
+
+    fn route_ticks(graph: &SystemGraph, route: &[ContentId], speed: f64) -> Result<u32, CoreError> {
+        if !speed.is_finite() || speed <= 0.0 || route.is_empty() {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        route.windows(2).try_fold(0_u32, |total, leg| {
+            let distance = graph
+                .neighbors(&leg[0])
+                .iter()
+                .find(|(id, _)| id == &leg[1])
+                .map(|(_, distance)| *distance)
+                .ok_or(CoreError::NoRoute)?;
+            total
+                .checked_add(ticks_for_distance(distance, speed))
+                .ok_or(CoreError::Overflow)
+        })
+    }
+
+    fn snapshot_contract_route(
+        &self,
+        start: &ContentId,
+        destination: &ContentId,
+        burn_per_distance: Energy,
+        speed: f64,
+    ) -> Result<ContractRoute, CoreError> {
+        let (systems, _) = self
+            .graph()
+            .shortest_path(start, destination)
+            .ok_or(CoreError::NoRoute)?;
+        Ok(ContractRoute {
+            burn: route_travel_energy(self.graph(), &systems, burn_per_distance)?,
+            ticks: Self::route_ticks(self.graph(), &systems, speed)?,
+            systems,
+        })
+    }
+
+    fn projection_ticks_for_market(
+        &self,
+        market: &Market,
+        count: u32,
+    ) -> Result<Vec<ProjectionTick>, CoreError> {
+        let life = self
+            .world
+            .resource::<EconomyConfig>()
+            .life_support_burn_per_capita
+            .checked_mul(market.population)?;
+        let mut carry = market.throughput_carry.clone();
+        let mut ticks =
+            Vec::with_capacity(usize::try_from(count).map_err(|_| CoreError::Overflow)?);
+        for offset in 1..=count {
+            let projected_tick = self
+                .tick()
+                .checked_add(u64::from(offset))
+                .ok_or(CoreError::Overflow)?;
+            let generated = market
+                .seasonal_generation
+                .effective_output_at(projected_tick)?;
+            let mut operating_burn = Energy::ZERO;
+            for source in &market.sources {
+                let base_output =
+                    scaled_source_output(source.quantity_per_tick, market.source_output_percent)?;
+                let output = composed_throughput(
+                    u64::from(base_output),
+                    market.operating_profile.throughput_percent,
+                    market.operating_profile.labor_percent,
+                    carry
+                        .entry(ThroughputScheduleKey::Source(source.good.clone()))
+                        .or_insert(0),
+                )?;
+                operating_burn =
+                    operating_burn.checked_add(source.extraction_energy.checked_mul(output)?)?;
+            }
+            for (recipe, operating_energy) in &market.recipe_operating_energy {
+                let executions = composed_throughput(
+                    1,
+                    market.operating_profile.throughput_percent,
+                    market.operating_profile.labor_percent,
+                    carry
+                        .entry(ThroughputScheduleKey::Recipe(recipe.clone()))
+                        .or_insert(0),
+                )?;
+                operating_burn =
+                    operating_burn.checked_add(operating_energy.checked_mul(executions)?)?;
+            }
+            ticks.push(ProjectionTick {
+                generated,
+                life_support: life,
+                operating_burn,
+            });
+        }
+        Ok(ticks)
+    }
+
+    fn offered_energy_payload(&self, source_entity: Entity) -> Result<Energy, CoreError> {
+        let market = self.world.get::<Market>(source_entity).unwrap();
+        let exportable = self.market_exportable_energy(source_entity)?;
+        let ticks = self.projection_ticks_for_market(
+            market,
+            market.energy_logistics.curtailment_projection_window,
+        )?;
+        let projection = project_energy(market.energy_stock()?, market.energy_storage_cap, &ticks)?;
+        let pressure = projection
+            .curtailed
+            .checked_add(market.energy_logistics.authored_export_base)?;
+        Ok(Energy(exportable.0.min(pressure.0)))
+    }
+
+    fn remaining_travel_ticks(&self, trader: &Trader) -> Result<u32, CoreError> {
+        let Some(travel) = &trader.travel else {
+            return Ok(0);
+        };
+        if travel.next_leg == 0
+            || travel.next_leg >= travel.route.len()
+            || travel.route.last() != Some(&travel.destination)
+        {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        let mut remaining = travel.remaining_ticks;
+        for leg_index in travel.next_leg..travel.route.len() - 1 {
+            let leg = &travel.route[leg_index..=leg_index + 1];
+            remaining = remaining
+                .checked_add(Self::route_ticks(self.graph(), leg, trader.speed)?)
+                .ok_or(CoreError::Overflow)?;
+        }
+        Ok(remaining)
+    }
+
+    fn inbound_energy_at_horizon(
+        &mut self,
+        destination: &ContentId,
+        horizon: u32,
+    ) -> Result<(Energy, Energy), CoreError> {
+        let active = self
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .values()
+            .filter(|contract| &contract.destination == destination)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut committed = Energy::ZERO;
+        let mut arriving_by_horizon = Energy::ZERO;
+        for contract in active {
+            if matches!(contract.state, EnergyContractState::Recovering { .. }) {
+                continue;
+            }
+            let remaining = contract
+                .net_delivery
+                .checked_sub(contract.cumulative_settled)?;
+            committed = committed.checked_add(remaining)?;
+            let arrival_ticks = match contract.state {
+                EnergyContractState::DeadheadingToSource { .. } => {
+                    let carrier = self.trader_entity_by_id(&contract.carrier)?;
+                    self.remaining_travel_ticks(self.world.get::<Trader>(carrier).unwrap())?
+                        .checked_add(contract.loaded_route.ticks)
+                        .ok_or(CoreError::Overflow)?
+                }
+                EnergyContractState::InTransit { .. } => {
+                    let carrier = self.trader_entity_by_id(&contract.carrier)?;
+                    self.remaining_travel_ticks(self.world.get::<Trader>(carrier).unwrap())?
+                }
+                EnergyContractState::Arrived { .. } => 0,
+                EnergyContractState::Recovering { .. } => unreachable!(),
+            };
+            if arrival_ticks <= horizon {
+                arriving_by_horizon = arriving_by_horizon.checked_add(remaining)?;
+            }
+        }
+        Ok((committed, arriving_by_horizon))
+    }
+
+    fn projected_destination_context(
+        &mut self,
+        destination_entity: Entity,
+        horizon: u32,
+    ) -> Result<(Energy, Energy, Energy), CoreError> {
+        let destination_id = self
+            .world
+            .get::<StableId>(destination_entity)
+            .unwrap()
+            .0
+            .clone();
+        let market = self
+            .world
+            .get::<Market>(destination_entity)
+            .unwrap()
+            .clone();
+        let ticks = self.projection_ticks_for_market(&market, horizon)?;
+        let projected = project_energy(market.energy_stock()?, market.energy_storage_cap, &ticks)?;
+        let (committed, prior_at_arrival) =
+            self.inbound_energy_at_horizon(&destination_id, horizon)?;
+        let occupied_at_arrival = projected.final_stock.checked_add(prior_at_arrival)?;
+        let arrival_headroom = Self::checked_energy_from_i128(
+            i128::from(market.energy_storage_cap.0)
+                .checked_sub(i128::from(occupied_at_arrival.0))
+                .ok_or(CoreError::Overflow)?
+                .max(0),
+        )?;
+        Ok((committed, prior_at_arrival, arrival_headroom))
+    }
+
+    fn energy_intent_order_key(
+        &mut self,
+        intent: &EnergyContractIntent,
+    ) -> Result<EnergyIntentOrderKey, CoreError> {
+        let destination_entity = self.market_entity(&intent.destination)?;
+        let destination = self
+            .world
+            .get::<Market>(destination_entity)
+            .unwrap()
+            .clone();
+        let carrier_entity = self.trader_entity_by_id(&intent.carrier)?;
+        let carrier = self.world.get::<Trader>(carrier_entity).unwrap().clone();
+        let deadhead = self.snapshot_contract_route(
+            &carrier.system,
+            &intent.source,
+            carrier.travel_burn_per_distance,
+            carrier.speed,
+        )?;
+        let loaded = self.snapshot_contract_route(
+            &intent.source,
+            &intent.destination,
+            carrier.travel_burn_per_distance,
+            carrier.speed,
+        )?;
+        let horizon = deadhead
+            .ticks
+            .checked_add(loaded.ticks)
+            .ok_or(CoreError::Overflow)?;
+        let (_, prior, _) = self.projected_destination_context(destination_entity, horizon)?;
+        let ticks = self.projection_ticks_for_market(&destination, horizon)?;
+        let physical = project_energy(
+            destination.energy_stock()?,
+            destination.energy_storage_cap,
+            &ticks,
+        )?
+        .final_stock;
+        let occupancy = physical.checked_add(prior)?;
+        let life = self
+            .world
+            .resource::<EconomyConfig>()
+            .life_support_burn_per_capita
+            .checked_mul(destination.population)?;
+        let destination_runway = if life == Energy::ZERO {
+            u64::MAX
+        } else {
+            u64::try_from(occupancy.0 / life.0).map_err(|_| CoreError::Overflow)?
+        };
+        Ok(EnergyIntentOrderKey {
+            destination_stage: destination.brownout.stage,
+            destination_runway,
+        })
+    }
+
+    fn evaluate_energy_intent(
+        &mut self,
+        intent: &EnergyContractIntent,
+    ) -> Result<Result<PreparedEnergyCandidate, EnergyIntentRejection>, CoreError> {
+        let carrier_entity = self.trader_entity_by_id(&intent.carrier)?;
+        let carrier = self.world.get::<Trader>(carrier_entity).unwrap().clone();
+        if carrier.travel.is_some()
+            || carrier.reservation.is_some()
+            || self
+                .ensure_carrier_contract_free(&intent.carrier, &carrier)
+                .is_err()
+        {
+            return Ok(Err(EnergyIntentRejection {
+                blocker: EnergyContractBlocker::NoViableCandidate,
+                current_maximum: None,
+            }));
+        }
+        if intent.source == intent.destination {
+            return Ok(Err(EnergyIntentRejection {
+                blocker: EnergyContractBlocker::NoViableCandidate,
+                current_maximum: None,
+            }));
+        }
+
+        let source_entity = self.market_entity(&intent.source)?;
+        let destination_entity = self.market_entity(&intent.destination)?;
+        let source_offer = self.offered_energy_payload(source_entity)?;
+        let deadhead_route = self.snapshot_contract_route(
+            &carrier.system,
+            &intent.source,
+            carrier.travel_burn_per_distance,
+            carrier.speed,
+        )?;
+        let loaded_route = self.snapshot_contract_route(
+            &intent.source,
+            &intent.destination,
+            carrier.travel_burn_per_distance,
+            carrier.speed,
+        )?;
+        let recovery_route = self.snapshot_contract_route(
+            &intent.destination,
+            &intent.source,
+            carrier.travel_burn_per_distance,
+            carrier.speed,
+        )?;
+        let horizon = deadhead_route
+            .ticks
+            .checked_add(loaded_route.ticks)
+            .ok_or(CoreError::Overflow)?;
+        let (committed_inbound, _, arrival_headroom) =
+            self.projected_destination_context(destination_entity, horizon)?;
+        let destination = self.world.get::<Market>(destination_entity).unwrap();
+        let energy_id = ContentId::new(ENERGY_ID).expect("constant energy id");
+        let Some(target) = destination.targets.get(&energy_id).copied() else {
+            return Ok(Err(EnergyIntentRejection {
+                blocker: EnergyContractBlocker::NoViableCandidate,
+                current_maximum: None,
+            }));
+        };
+        let remaining_requested = Self::checked_energy_from_i128(
+            i128::from(target)
+                .checked_sub(i128::from(destination.energy_stock()?.0))
+                .and_then(|value| value.checked_sub(i128::from(committed_inbound.0)))
+                .ok_or(CoreError::Overflow)?
+                .max(0),
+        )?;
+        let candidate_net_cap = Energy(remaining_requested.0.min(arrival_headroom.0));
+        let bulk_headroom = carrier.bulk_energy.headroom(carrier.bulk_energy_capacity)?;
+        let carrier_fee_bps = destination
+            .energy_logistics
+            .carrier_fee_bps
+            .for_stage(destination.brownout.stage);
+        let sizing = GrossSizingInput {
+            offered_payload: source_offer,
+            bulk_headroom,
+            candidate_net_cap,
+            loaded_route_burn: loaded_route.burn,
+            recovery_burn: recovery_route.burn,
+            carrier_fee_bps,
+            max_allocation_bps: destination.energy_logistics.max_allocation_bps,
+            deadhead_burn: deadhead_route.burn,
+            tank_energy: carrier.energy_tank,
+            tank_capacity: carrier.energy_tank_capacity,
+        };
+        let Some(current_maximum) = largest_viable_gross(sizing)? else {
+            return Ok(Err(EnergyIntentRejection {
+                blocker: if source_offer == Energy::ZERO {
+                    EnergyContractBlocker::NoReachableSurplus
+                } else {
+                    EnergyContractBlocker::NoViableCandidate
+                },
+                current_maximum: None,
+            }));
+        };
+        if intent.gross_payload > current_maximum {
+            return Ok(Err(EnergyIntentRejection {
+                blocker: EnergyContractBlocker::StaleMaximum,
+                current_maximum: Some(current_maximum),
+            }));
+        }
+        let exact_sizing = GrossSizingInput {
+            offered_payload: intent.gross_payload,
+            ..sizing
+        };
+        if largest_viable_gross(exact_sizing)? != Some(intent.gross_payload) {
+            return Ok(Err(EnergyIntentRejection {
+                blocker: EnergyContractBlocker::NoViableCandidate,
+                current_maximum: Some(current_maximum),
+            }));
+        }
+        let terms = fee_terms(intent.gross_payload, loaded_route.burn, carrier_fee_bps)?;
+        Ok(Ok(PreparedEnergyCandidate {
+            carrier_entity,
+            source_entity,
+            deadhead_route,
+            loaded_route,
+            recovery_route,
+            gross_payload: intent.gross_payload,
+            carrier_fee_bps,
+            carrier_profit: terms.carrier_profit,
+            net_delivery: terms.net_delivery,
+        }))
+    }
+
+    fn travel_plan_for_route(
+        &self,
+        route: &ContractRoute,
+        destination: &ContentId,
+        speed: f64,
+    ) -> Result<TravelPlan, CoreError> {
+        if route.systems.len() < 2
+            || route.systems.last() != Some(destination)
+            || Self::route_ticks(self.graph(), &route.systems, speed)? != route.ticks
+        {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        let first_leg_ticks = Self::route_ticks(self.graph(), &route.systems[..2], speed)?;
+        Ok(TravelPlan {
+            destination: destination.clone(),
+            route: route.systems.clone(),
+            next_leg: 1,
+            remaining_ticks: first_leg_ticks,
+        })
+    }
+
+    fn accept_energy_candidate(
+        &mut self,
+        intent: &EnergyContractIntent,
+        candidate: PreparedEnergyCandidate,
+    ) -> Result<(), CoreError> {
+        let tick = self.tick();
+        let mut trader = self
+            .world
+            .get::<Trader>(candidate.carrier_entity)
+            .unwrap()
+            .clone();
+        self.ensure_carrier_contract_free(&intent.carrier, &trader)?;
+        if trader.travel.is_some() || trader.reservation.is_some() {
+            return Err(CoreError::ActiveEnergyContract);
+        }
+        let local_pickup = trader.system == intent.source;
+        let (departure_route, departure_destination) = if local_pickup {
+            (&candidate.loaded_route, &intent.destination)
+        } else {
+            (&candidate.deadhead_route, &intent.source)
+        };
+        let departure_burn = departure_route.burn;
+        let required_tank = if local_pickup {
+            candidate.loaded_route.burn
+        } else {
+            candidate
+                .deadhead_route
+                .burn
+                .checked_add(candidate.loaded_route.burn)?
+        };
+        if trader.energy_tank < required_tank {
+            return Err(CoreError::InsufficientEnergy);
+        }
+        if trader.bulk_energy.headroom(trader.bulk_energy_capacity)? < candidate.gross_payload {
+            return Err(CoreError::InsufficientCapacity);
+        }
+        let travel =
+            self.travel_plan_for_route(departure_route, departure_destination, trader.speed)?;
+        let departure_market_entity = self.market_entity(&trader.system)?;
+        let mut departure_market = self
+            .world
+            .get::<Market>(departure_market_entity)
+            .unwrap()
+            .clone();
+        if local_pickup {
+            if departure_market.energy_stock()? < candidate.gross_payload {
+                return Err(CoreError::InsufficientEnergy);
+            }
+            departure_market.set_energy_stock(
+                departure_market
+                    .energy_stock()?
+                    .checked_sub(candidate.gross_payload)?,
+            )?;
+            departure_market.energy_flow.market_to_energy_cargo = departure_market
+                .energy_flow
+                .market_to_energy_cargo
+                .checked_add(candidate.gross_payload)?;
+        } else if candidate.source_entity == departure_market_entity {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        departure_market.energy_flow.travel_burned = departure_market
+            .energy_flow
+            .travel_burned
+            .checked_add(departure_burn)?;
+        trader.energy_tank = trader.energy_tank.checked_sub(departure_burn)?;
+        trader.ledger.travel_cost = trader.ledger.travel_cost.checked_add(departure_burn)?;
+        trader.travel = Some(travel);
+
+        let mut contracts = self.world.resource::<EnergyContracts>().clone();
+        contracts.diagnostics.accepted = contracts
+            .diagnostics
+            .accepted
+            .checked_add(1)
+            .ok_or(CoreError::Overflow)?;
+        let contract_id = contracts.allocate_id()?;
+        if local_pickup {
+            trader.bulk_energy.locked = Some(LockedEnergyLot {
+                contract_id,
+                amount: candidate.gross_payload,
+            });
+        }
+        let state = if local_pickup {
+            EnergyContractState::InTransit { loaded_tick: tick }
+        } else {
+            EnergyContractState::DeadheadingToSource {
+                source_claim: candidate.gross_payload,
+                accepted_tick: tick,
+            }
+        };
+        contracts.active.insert(
+            contract_id,
+            EnergyContract {
+                id: contract_id,
+                carrier: intent.carrier.clone(),
+                source: intent.source.clone(),
+                destination: intent.destination.clone(),
+                deadhead_route: candidate.deadhead_route,
+                loaded_route: candidate.loaded_route,
+                recovery_route: candidate.recovery_route,
+                gross_payload: candidate.gross_payload,
+                carrier_fee_bps: candidate.carrier_fee_bps,
+                carrier_profit: candidate.carrier_profit,
+                net_delivery: candidate.net_delivery,
+                cumulative_settled: Energy::ZERO,
+                state,
+                latest_blocker: None,
+            },
+        );
+
+        let mut events = vec![GameEvent::EnergyLogistics(EnergyContractEvent::Accepted {
+            contract_id,
+        })];
+        if local_pickup {
+            events.push(GameEvent::EnergyLogistics(EnergyContractEvent::Loaded {
+                contract_id,
+            }));
+        }
+        events.push(GameEvent::EnergyLogistics(EnergyContractEvent::Departed {
+            contract_id,
+        }));
+        events.push(GameEvent::Departed {
+            trader: intent.carrier.clone(),
+            destination: departure_destination.clone(),
+            travel_burn: departure_burn,
+        });
+
+        *self
+            .world
+            .get_mut::<Market>(departure_market_entity)
+            .unwrap() = departure_market;
+        *self
+            .world
+            .get_mut::<Trader>(candidate.carrier_entity)
+            .unwrap() = trader;
+        *self.world.resource_mut::<EnergyContracts>() = contracts;
+        self.world.resource_mut::<EventBuffer>().0.extend(events);
+        Ok(())
+    }
+
+    fn record_energy_intent_rejection(
+        &mut self,
+        rejection: EnergyIntentRejection,
+    ) -> Result<(), CoreError> {
+        let mut contracts = self.world.resource::<EnergyContracts>().clone();
+        match rejection.blocker {
+            EnergyContractBlocker::NoReachableSurplus => {
+                contracts.diagnostics.no_reachable_surplus = contracts
+                    .diagnostics
+                    .no_reachable_surplus
+                    .checked_add(1)
+                    .ok_or(CoreError::Overflow)?;
+            }
+            EnergyContractBlocker::NoViableCandidate => {
+                contracts.diagnostics.no_viable_candidate = contracts
+                    .diagnostics
+                    .no_viable_candidate
+                    .checked_add(1)
+                    .ok_or(CoreError::Overflow)?;
+            }
+            EnergyContractBlocker::ViableButUnaccepted => {
+                contracts.diagnostics.viable_but_unaccepted = contracts
+                    .diagnostics
+                    .viable_but_unaccepted
+                    .checked_add(1)
+                    .ok_or(CoreError::Overflow)?;
+            }
+            _ => {}
+        }
+        *self.world.resource_mut::<EnergyContracts>() = contracts;
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::EnergyLogistics(EnergyContractEvent::Rejected {
+                blocker: rejection.blocker,
+                current_maximum: rejection.current_maximum,
+            }));
+        Ok(())
+    }
+
+    pub(super) fn resolve_pending_energy_contract_intents(&mut self) -> Result<(), CoreError> {
+        let intents =
+            std::mem::take(&mut self.world.resource_mut::<PendingEnergyContractIntents>().0);
+        let mut ordered = Vec::with_capacity(intents.len());
+        for intent in intents {
+            match self.energy_intent_order_key(&intent) {
+                Ok(key) => ordered.push((key, intent)),
+                Err(error) => {
+                    self.world
+                        .resource_mut::<PendingEnergyContractIntents>()
+                        .0
+                        .push(intent);
+                    return Err(error);
+                }
+            }
+        }
+        ordered.sort_by(|(left_key, left), (right_key, right)| {
+            right_key
+                .destination_stage
+                .cmp(&left_key.destination_stage)
+                .then_with(|| {
+                    left_key
+                        .destination_runway
+                        .cmp(&right_key.destination_runway)
+                })
+                .then_with(|| right.gross_payload.cmp(&left.gross_payload))
+                .then_with(|| left.destination.cmp(&right.destination))
+                .then_with(|| left.source.cmp(&right.source))
+                .then_with(|| left.carrier.cmp(&right.carrier))
+        });
+
+        while !ordered.is_empty() {
+            let (_, intent) = ordered.remove(0);
+            match self.evaluate_energy_intent(&intent) {
+                Ok(Ok(candidate)) => {
+                    if let Err(error) = self.accept_energy_candidate(&intent, candidate) {
+                        self.world
+                            .resource_mut::<PendingEnergyContractIntents>()
+                            .0
+                            .push(intent);
+                        return Err(error);
+                    }
+                }
+                Ok(Err(rejection)) => self.record_energy_intent_rejection(rejection)?,
+                Err(error) => {
+                    self.world
+                        .resource_mut::<PendingEnergyContractIntents>()
+                        .0
+                        .push(intent);
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn claim_capacity_for_source(&mut self, source: &ContentId) -> Result<Energy, CoreError> {
+        let entity = self.market_entity(source)?;
+        let market = self.world.get::<Market>(entity).unwrap();
+        let policy = self.world.get::<MarketPolicy>(entity).unwrap();
+        let life = self
+            .world
+            .resource::<EconomyConfig>()
+            .life_support_burn_per_capita;
+        exportable_energy(
+            market.energy_stock()?,
+            market.reserved_energy,
+            Energy::ZERO,
+            market.operating_reserve(policy, life)?,
+            market.protected_liquidation_budget,
+            market.energy_logistics.export_reserve,
+        )
+    }
+
+    fn terminalize_preload_contract(
+        &mut self,
+        contract_id: ContractId,
+        outcome: EnergyContractTerminalOutcome,
+    ) -> Result<(), CoreError> {
+        let contract = self
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .get(&contract_id)
+            .cloned()
+            .ok_or(CoreError::InvalidPhysicalDefinition)?;
+        if !matches!(
+            contract.state,
+            EnergyContractState::DeadheadingToSource { .. }
+        ) {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        let carrier = self.trader_entity_by_id(&contract.carrier)?;
+        if self
+            .world
+            .get::<Trader>(carrier)
+            .unwrap()
+            .bulk_energy
+            .locked
+            .is_some()
+        {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        let mut contracts = self.world.resource::<EnergyContracts>().clone();
+        match outcome {
+            EnergyContractTerminalOutcome::RevokedBeforeLoad => {
+                contracts.diagnostics.revoked_before_load = contracts
+                    .diagnostics
+                    .revoked_before_load
+                    .checked_add(1)
+                    .ok_or(CoreError::Overflow)?;
+            }
+            EnergyContractTerminalOutcome::RejectedBeforeLoad => {
+                contracts.diagnostics.rejected_before_load = contracts
+                    .diagnostics
+                    .rejected_before_load
+                    .checked_add(1)
+                    .ok_or(CoreError::Overflow)?;
+            }
+            _ => return Err(CoreError::InvalidPhysicalDefinition),
+        }
+        contracts.active.remove(&contract_id);
+        *self.world.resource_mut::<EnergyContracts>() = contracts;
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::EnergyLogistics(EnergyContractEvent::Terminal {
+                contract_id,
+                outcome,
+            }));
+        Ok(())
+    }
+
+    fn load_preload_contract(&mut self, contract_id: ContractId) -> Result<(), CoreError> {
+        let tick = self.tick();
+        let contract = self
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .get(&contract_id)
+            .cloned()
+            .ok_or(CoreError::InvalidPhysicalDefinition)?;
+        let source_claim = match contract.state {
+            EnergyContractState::DeadheadingToSource { source_claim, .. } => source_claim,
+            _ => return Err(CoreError::InvalidPhysicalDefinition),
+        };
+        if source_claim != contract.gross_payload
+            || contract.loaded_route.systems.first() != Some(&contract.source)
+            || contract.loaded_route.systems.last() != Some(&contract.destination)
+            || contract.recovery_route.systems.first() != Some(&contract.destination)
+            || contract.recovery_route.systems.last() != Some(&contract.source)
+        {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        let carrier_entity = self.trader_entity_by_id(&contract.carrier)?;
+        let mut trader = self.world.get::<Trader>(carrier_entity).unwrap().clone();
+        if trader.travel.is_some()
+            || trader.system != contract.source
+            || trader.bulk_energy.locked.is_some()
+            || trader.bulk_energy.headroom(trader.bulk_energy_capacity)? < contract.gross_payload
+            || trader.energy_tank < contract.loaded_route.burn
+            || route_travel_energy(
+                self.graph(),
+                &contract.loaded_route.systems,
+                trader.travel_burn_per_distance,
+            )? != contract.loaded_route.burn
+            || route_travel_energy(
+                self.graph(),
+                &contract.recovery_route.systems,
+                trader.travel_burn_per_distance,
+            )? != contract.recovery_route.burn
+            || Self::route_ticks(self.graph(), &contract.loaded_route.systems, trader.speed)?
+                != contract.loaded_route.ticks
+            || Self::route_ticks(self.graph(), &contract.recovery_route.systems, trader.speed)?
+                != contract.recovery_route.ticks
+        {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        let active_for_carrier = self
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .values()
+            .filter(|active| active.carrier == contract.carrier)
+            .count();
+        if active_for_carrier != 1 {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        let travel = self.travel_plan_for_route(
+            &contract.loaded_route,
+            &contract.destination,
+            trader.speed,
+        )?;
+        let source_entity = self.market_entity(&contract.source)?;
+        let mut source = self.world.get::<Market>(source_entity).unwrap().clone();
+        if source.energy_stock()? < contract.gross_payload {
+            return Err(CoreError::InsufficientEnergy);
+        }
+        source.set_energy_stock(source.energy_stock()?.checked_sub(contract.gross_payload)?)?;
+        source.energy_flow.market_to_energy_cargo = source
+            .energy_flow
+            .market_to_energy_cargo
+            .checked_add(contract.gross_payload)?;
+        source.energy_flow.travel_burned = source
+            .energy_flow
+            .travel_burned
+            .checked_add(contract.loaded_route.burn)?;
+        trader.energy_tank = trader.energy_tank.checked_sub(contract.loaded_route.burn)?;
+        trader.ledger.travel_cost = trader
+            .ledger
+            .travel_cost
+            .checked_add(contract.loaded_route.burn)?;
+        trader.bulk_energy.locked = Some(LockedEnergyLot {
+            contract_id,
+            amount: contract.gross_payload,
+        });
+        trader.travel = Some(travel);
+        let mut contracts = self.world.resource::<EnergyContracts>().clone();
+        contracts
+            .active
+            .get_mut(&contract_id)
+            .ok_or(CoreError::InvalidPhysicalDefinition)?
+            .state = EnergyContractState::InTransit { loaded_tick: tick };
+        let events = vec![
+            GameEvent::EnergyLogistics(EnergyContractEvent::Loaded { contract_id }),
+            GameEvent::EnergyLogistics(EnergyContractEvent::Departed { contract_id }),
+            GameEvent::Departed {
+                trader: contract.carrier,
+                destination: contract.destination,
+                travel_burn: contract.loaded_route.burn,
+            },
+        ];
+
+        *self.world.get_mut::<Market>(source_entity).unwrap() = source;
+        *self.world.get_mut::<Trader>(carrier_entity).unwrap() = trader;
+        *self.world.resource_mut::<EnergyContracts>() = contracts;
+        self.world.resource_mut::<EventBuffer>().0.extend(events);
+        Ok(())
+    }
+
+    pub(super) fn maintain_preload_energy_contracts(&mut self) -> Result<(), CoreError> {
+        let ordered = self
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .iter()
+            .filter_map(|(id, contract)| {
+                matches!(
+                    contract.state,
+                    EnergyContractState::DeadheadingToSource { .. }
+                )
+                .then_some((*id, contract.source.clone()))
+            })
+            .collect::<Vec<_>>();
+        let mut capacities = BTreeMap::<ContentId, Energy>::new();
+        for (_, source) in &ordered {
+            if !capacities.contains_key(source) {
+                capacities.insert(source.clone(), self.claim_capacity_for_source(source)?);
+            }
+        }
+
+        for (contract_id, source) in ordered {
+            let contract = self
+                .world
+                .resource::<EnergyContracts>()
+                .active
+                .get(&contract_id)
+                .cloned();
+            let Some(contract) = contract else {
+                continue;
+            };
+            let source_claim = match contract.state {
+                EnergyContractState::DeadheadingToSource { source_claim, .. } => source_claim,
+                _ => continue,
+            };
+            let remaining = capacities
+                .get_mut(&source)
+                .ok_or(CoreError::InvalidPhysicalDefinition)?;
+            if source_claim > *remaining {
+                self.terminalize_preload_contract(
+                    contract_id,
+                    EnergyContractTerminalOutcome::RevokedBeforeLoad,
+                )?;
+                continue;
+            }
+            *remaining = remaining.checked_sub(source_claim)?;
+
+            let reached_source = match self.trader_entity_by_id(&contract.carrier) {
+                Ok(carrier) => {
+                    let trader = self.world.get::<Trader>(carrier).unwrap();
+                    trader.travel.is_none() && trader.system == contract.source
+                }
+                Err(_) => false,
+            };
+            if reached_source && self.load_preload_contract(contract_id).is_err() {
+                self.terminalize_preload_contract(
+                    contract_id,
+                    EnergyContractTerminalOutcome::RejectedBeforeLoad,
+                )?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

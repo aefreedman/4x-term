@@ -109,6 +109,34 @@ fn definition() -> GameDefinition {
         economy: EconomyConfig::default(),
     }
 }
+fn local_energy_contract_definition() -> GameDefinition {
+    let mut definition = definition();
+    let energy = id(ENERGY_ID);
+    definition.systems[0]
+        .inventory
+        .insert(energy.clone(), 5_000);
+    definition.systems[0].energy_storage_cap = Energy(5_000);
+    definition.systems[0].energy_logistics.authored_export_base = Energy(500);
+    definition.systems[1].inventory.insert(energy.clone(), 100);
+    definition.systems[1].energy_storage_cap = Energy(5_000);
+    definition.systems[1].targets.insert(energy, 1_000);
+    definition.traders[0].energy_tank = Energy(1_000);
+    definition.traders[0].energy_tank_capacity = Energy(1_500);
+    definition.traders[0].bulk_energy_capacity = Energy(1_000);
+    definition
+}
+
+fn remote_energy_contract_definition() -> GameDefinition {
+    let mut definition = local_energy_contract_definition();
+    let energy = id(ENERGY_ID);
+    definition.systems[0].inventory.insert(energy.clone(), 100);
+    definition.systems[0].targets.insert(energy.clone(), 4_000);
+    definition.systems[1].inventory.insert(energy, 5_000);
+    definition.systems[1].energy_logistics.authored_export_base = Energy(3_200);
+    definition.traders[0].bulk_energy_capacity = Energy(4_000);
+    definition
+}
+
 fn dynamic_fleet(
     initial_count: usize,
     maximum_count: usize,
@@ -1096,6 +1124,162 @@ fn exact_owned_bulk_transfers_never_consume_locked_energy() {
     );
     assert_eq!(session.snapshot(), before);
 }
+
+#[test]
+fn local_energy_contract_acceptance_loads_and_departs_atomically() {
+    let mut session = GameSession::new(local_energy_contract_definition()).unwrap();
+    session
+        .submit(GameCommand::AcceptEnergyContract {
+            source: id("core:s0"),
+            destination: id("core:s1"),
+            gross_payload: Energy(300),
+        })
+        .unwrap();
+    assert_eq!(
+        session
+            .world
+            .resource::<PendingEnergyContractIntents>()
+            .0
+            .len(),
+        1
+    );
+
+    session.step().unwrap();
+    let contracts = session.world.resource::<EnergyContracts>();
+    assert_eq!(contracts.active.len(), 1);
+    let contract = contracts.active.values().next().unwrap();
+    assert!(matches!(
+        contract.state,
+        EnergyContractState::InTransit { loaded_tick: 0 }
+    ));
+    let contract_id = contract.id;
+    let snapshot = session.snapshot();
+    let player = &snapshot.traders[0];
+    assert_eq!(player.energy_tank, Energy(990));
+    assert_eq!(
+        player.bulk_energy.locked,
+        Some(LockedEnergyLot {
+            contract_id,
+            amount: Energy(300),
+        })
+    );
+    assert_eq!(player.travel.as_ref().unwrap().destination, id("core:s1"));
+    assert_eq!(snapshot.markets[0].energy_stock, Energy(4_699));
+}
+
+#[test]
+fn remote_acceptance_claims_and_player_cancellation_releases_once() {
+    let mut session = GameSession::new(remote_energy_contract_definition()).unwrap();
+    session
+        .submit(GameCommand::AcceptEnergyContract {
+            source: id("core:s1"),
+            destination: id("core:s0"),
+            gross_payload: Energy(3_000),
+        })
+        .unwrap();
+    session.step().unwrap();
+
+    let contract_id = {
+        let contracts = session.world.resource::<EnergyContracts>();
+        let contract = contracts.active.values().next().unwrap();
+        assert!(matches!(
+            contract.state,
+            EnergyContractState::DeadheadingToSource {
+                source_claim: Energy(3_000),
+                accepted_tick: 0,
+            }
+        ));
+        contract.id
+    };
+    let accepted = session.snapshot().traders[0].clone();
+    assert_eq!(accepted.energy_tank, Energy(990));
+    assert!(accepted.travel.is_some());
+    assert!(accepted.bulk_energy.locked.is_none());
+
+    session
+        .submit(GameCommand::CancelEnergyContract { contract_id })
+        .unwrap();
+    assert!(
+        session
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .is_empty()
+    );
+    let cancelled = session.snapshot().traders[0].clone();
+    assert_eq!(cancelled.energy_tank, Energy(990));
+    assert!(
+        cancelled.travel.is_some(),
+        "deadhead travel is non-cancellable"
+    );
+    assert!(cancelled.bulk_energy.locked.is_none());
+    assert_eq!(
+        session
+            .world
+            .resource::<EnergyContracts>()
+            .diagnostics
+            .cancelled_before_load,
+        1
+    );
+    assert!(session.drain_events().iter().any(|event| matches!(
+        event,
+        GameEvent::EnergyLogistics(EnergyContractEvent::Terminal {
+            contract_id: id,
+            outcome: EnergyContractTerminalOutcome::CancelledBeforeLoad,
+        }) if *id == contract_id
+    )));
+}
+
+#[test]
+fn source_distress_revokes_preload_claim_before_loading() {
+    let mut session = GameSession::new(remote_energy_contract_definition()).unwrap();
+    session
+        .submit(GameCommand::AcceptEnergyContract {
+            source: id("core:s1"),
+            destination: id("core:s0"),
+            gross_payload: Energy(3_000),
+        })
+        .unwrap();
+    session.step().unwrap();
+    session.drain_events();
+
+    let source = session.market_entity(&id("core:s1")).unwrap();
+    session
+        .world
+        .get_mut::<Market>(source)
+        .unwrap()
+        .set_energy_stock(Energy(100))
+        .unwrap();
+    session.step().unwrap();
+
+    assert!(
+        session
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .is_empty()
+    );
+    assert_eq!(
+        session
+            .world
+            .resource::<EnergyContracts>()
+            .diagnostics
+            .revoked_before_load,
+        1
+    );
+    let player = session.snapshot().traders[0].clone();
+    assert_eq!(player.system, id("core:s1"));
+    assert!(player.travel.is_none());
+    assert!(player.bulk_energy.locked.is_none());
+    assert!(session.drain_events().iter().any(|event| matches!(
+        event,
+        GameEvent::EnergyLogistics(EnergyContractEvent::Terminal {
+            outcome: EnergyContractTerminalOutcome::RevokedBeforeLoad,
+            ..
+        })
+    )));
+}
+
 #[test]
 fn offline_trade_network_access_rejects_commit_trade_atomically() {
     let mut denied = GameSession::new(definition()).unwrap();
