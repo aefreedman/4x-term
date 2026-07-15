@@ -10,9 +10,10 @@ mod energy_logistics;
 
 pub use energy_logistics::{
     BulkEnergyHold, CarrierFeeSchedule, ContractId, ContractRoute, EnergyContract,
-    EnergyContractBlocker, EnergyContractEvent, EnergyContractIntent, EnergyContractSnapshot,
-    EnergyContractState, EnergyContractTerminalOutcome, EnergyContracts,
-    EnergyLogisticsDiagnostics, EnergyLogisticsPolicy, LockedEnergyLot,
+    EnergyContractBlocker, EnergyContractEvent, EnergyContractIntent,
+    EnergyContractOpportunitySnapshot, EnergyContractSnapshot, EnergyContractState,
+    EnergyContractTerminalOutcome, EnergyContracts, EnergyLogisticsDiagnostics,
+    EnergyLogisticsPolicy, EnergyMarketLogisticsSnapshot, EnergyStarvationCause, LockedEnergyLot,
     PendingEnergyContractIntents,
 };
 
@@ -1498,11 +1499,34 @@ pub struct EnergyFlowLedger {
     pub curtailed: Energy,
     pub market_to_tank: Energy,
     pub tank_to_market: Energy,
-    pub market_to_energy_cargo: Energy,
-    pub energy_cargo_to_market: Energy,
+    pub contract_source_loaded: Energy,
+    pub contract_destination_delivered: Energy,
+    pub contract_allocation_converted: Energy,
+    pub owned_bulk_deposited: Energy,
+    pub contract_recovery_returned: Energy,
+    pub contract_recovery_curtailed: Energy,
 }
 
 impl EnergyFlowLedger {
+    pub fn validate_contract_channels(self) -> Result<(), CoreError> {
+        let delivered_to_markets = self
+            .contract_destination_delivered
+            .checked_add(self.owned_bulk_deposited)?
+            .checked_add(self.contract_recovery_returned)?;
+        if delivered_to_markets.0 < 0
+            || self.contract_source_loaded.0 < 0
+            || self.contract_destination_delivered.0 < 0
+            || self.contract_allocation_converted.0 < 0
+            || self.owned_bulk_deposited.0 < 0
+            || self.contract_recovery_returned.0 < 0
+            || self.contract_recovery_curtailed.0 < 0
+            || self.contract_recovery_curtailed > self.curtailed
+        {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        Ok(())
+    }
+
     pub fn net_external_delta(self) -> Result<Energy, CoreError> {
         self.external_inflow
             .checked_add(self.generated)?
@@ -1530,8 +1554,12 @@ pub struct GlobalEnergyFlowLedger {
     pub curtailed: WideEnergy,
     pub market_to_tank: WideEnergy,
     pub tank_to_market: WideEnergy,
-    pub market_to_energy_cargo: WideEnergy,
-    pub energy_cargo_to_market: WideEnergy,
+    pub contract_source_loaded: WideEnergy,
+    pub contract_destination_delivered: WideEnergy,
+    pub contract_allocation_converted: WideEnergy,
+    pub owned_bulk_deposited: WideEnergy,
+    pub contract_recovery_returned: WideEnergy,
+    pub contract_recovery_curtailed: WideEnergy,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
@@ -1577,8 +1605,12 @@ impl GlobalEnergyFlowLedger {
         add!(curtailed);
         add!(market_to_tank);
         add!(tank_to_market);
-        add!(market_to_energy_cargo);
-        add!(energy_cargo_to_market);
+        add!(contract_source_loaded);
+        add!(contract_destination_delivered);
+        add!(contract_allocation_converted);
+        add!(owned_bulk_deposited);
+        add!(contract_recovery_returned);
+        add!(contract_recovery_curtailed);
     }
 }
 
@@ -2372,6 +2404,8 @@ pub enum CoreError {
     EnergyNotTradable,
     #[error("locked contract energy cannot be moved or spent")]
     LockedEnergy,
+    #[error("an energy contract request is already pending")]
+    PendingEnergyContractIntent,
     #[error("an active energy contract blocks this action")]
     ActiveEnergyContract,
     #[error("invalid market policy")]
@@ -2464,6 +2498,11 @@ pub struct TraderSnapshot {
 pub struct CoreSnapshot {
     pub tick: u64,
     pub markets: Vec<MarketSnapshot>,
+    pub energy_markets: Vec<EnergyMarketLogisticsSnapshot>,
+    pub energy_opportunities: Vec<EnergyContractOpportunitySnapshot>,
+    pub energy_contracts: Vec<EnergyContractSnapshot>,
+    pub energy_logistics: EnergyLogisticsDiagnostics,
+    pub energy_starvation: BTreeMap<ContentId, EnergyStarvationCause>,
     pub investment_shapes: BTreeMap<InvestmentKind, InvestmentShape>,
     pub player_trade_network_access: TradeNetworkAccess,
     pub traders: Vec<TraderSnapshot>,
@@ -2770,6 +2809,7 @@ impl GameSession {
         world.insert_resource(DynamicFleetOpportunityState::default());
         world.insert_resource(EnergyContracts::default());
         world.insert_resource(PendingEnergyContractIntents::default());
+        world.insert_resource(energy_logistics::EnergyLogisticsTickCapture::default());
         for mut system in definition.systems {
             if system
                 .policy
@@ -3247,6 +3287,7 @@ impl GameSession {
         self.refresh_enroute_reservations()?;
         self.expire_reservations()?;
         self.generate_and_life_support()?;
+        self.capture_unsupplied_energy_destinations();
         self.classify_brownouts()?;
         self.execute_sources_and_recipes()?;
         self.maintain_preload_energy_contracts()?;
@@ -3254,8 +3295,10 @@ impl GameSession {
         self.settle_idle_laden()?;
         self.rebalance_idle_npc_tanks()?;
         self.execute_autonomous_investments()?;
+        self.capture_phase10_energy_logistics()?;
         self.collect_automated_trader_requests()?;
         self.resolve_pending_energy_contract_intents()?;
+        self.finalize_energy_starvation_attribution()?;
         self.resolve_pending_trade_requests()?;
         self.evaluate_dynamic_fleet()?;
         self.update_populations()?;
@@ -3512,7 +3555,7 @@ impl GameSession {
         Ok(rows)
     }
 
-    pub fn snapshot(&mut self) -> CoreSnapshot {
+    pub fn try_snapshot(&mut self) -> Result<CoreSnapshot, CoreError> {
         let life = self
             .world
             .resource::<EconomyConfig>()
@@ -3645,9 +3688,15 @@ impl GameSession {
             .next()
             .expect("validated player access component")
             .access;
-        CoreSnapshot {
+        let energy_logistics = self.energy_logistics_projection()?;
+        Ok(CoreSnapshot {
             tick: self.tick(),
             markets,
+            energy_markets: energy_logistics.markets,
+            energy_opportunities: energy_logistics.opportunities,
+            energy_contracts: energy_logistics.contracts,
+            energy_logistics: energy_logistics.diagnostics,
+            energy_starvation: energy_logistics.starvation,
             investment_shapes: self.world.resource::<EconomyConfig>().investments.clone(),
             player_trade_network_access,
             traders,
@@ -3655,7 +3704,12 @@ impl GameSession {
             energy_flow,
             dynamics_history: self.world.resource::<AggregateDynamicsHistory>().clone(),
             fleet: self.world.resource::<FleetDynamics>().clone(),
-        }
+        })
+    }
+
+    pub fn snapshot(&mut self) -> CoreSnapshot {
+        self.try_snapshot()
+            .expect("validated simulation state must produce an immutable snapshot")
     }
 
     fn good_cost_basis(&self, market: &Market, good: &ContentId) -> Result<Energy, CoreError> {
@@ -4348,6 +4402,10 @@ impl GameSession {
                 return Err(CoreError::InsufficientCapacity);
             }
             market.set_energy_stock(next_stock)?;
+            market.energy_flow.owned_bulk_deposited = market
+                .energy_flow
+                .owned_bulk_deposited
+                .checked_add(amount)?;
             trader.bulk_energy.owned = next_owned;
             let system = trader.system.clone();
             *self.world.get_mut::<Market>(market_entity).unwrap() = market;

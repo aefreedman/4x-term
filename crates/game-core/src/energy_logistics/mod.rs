@@ -13,7 +13,7 @@ use super::{
     TravelPlan, composed_throughput, route_travel_energy, scaled_source_output, ticks_for_distance,
 };
 use bevy_ecs::prelude::{Entity, Resource};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct FeeTerms {
@@ -298,6 +298,18 @@ pub struct EnergyContracts {
     pub diagnostics: EnergyLogisticsDiagnostics,
 }
 
+/// Tick-local evidence used to classify every phase-3 life-support shortfall
+/// after phase-10 opportunity collection and phase-11 Energy resolution.
+#[derive(Resource, Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct EnergyLogisticsTickCapture {
+    unsupplied: BTreeSet<ContentId>,
+    accepted_pending: BTreeSet<ContentId>,
+    arrived_blocked: BTreeSet<ContentId>,
+    reachable_surplus: BTreeSet<ContentId>,
+    viable_candidate: BTreeSet<ContentId>,
+    current: BTreeMap<ContentId, EnergyStarvationCause>,
+}
+
 impl EnergyContracts {
     pub fn allocate_id(&mut self) -> Result<ContractId, CoreError> {
         let next_id = self.next_id.checked_add(1).ok_or(CoreError::Overflow)?;
@@ -310,8 +322,62 @@ impl EnergyContracts {
 pub struct EnergyContractSnapshot {
     pub contract: EnergyContract,
     pub locked_amount: Energy,
+    pub carrier_allocation: Energy,
+    pub freight_rate_bps: u32,
+    pub expected_net_profit: Energy,
     pub converted_reimbursement: Energy,
     pub converted_fee: Energy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum EnergyStarvationCause {
+    ArrivedSettlementBlocked,
+    AcceptedDeliveryPending,
+    NoReachableSurplus,
+    NoViableCandidate,
+    ViableButUnaccepted,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnergyMarketLogisticsSnapshot {
+    pub system: ContentId,
+    pub stock: Energy,
+    pub storage_cap: Energy,
+    pub target: Energy,
+    pub offered: Energy,
+    pub requested: Energy,
+    pub inbound: Energy,
+    pub runway: u64,
+    pub stage: BrownoutStage,
+    pub blocker: Option<EnergyContractBlocker>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnergyContractOpportunitySnapshot {
+    pub source: ContentId,
+    pub destination: ContentId,
+    pub maximum_gross_payload: Energy,
+    pub deadhead_route: ContractRoute,
+    pub loaded_route: ContractRoute,
+    pub recovery_route: ContractRoute,
+    pub carrier_fee_bps: u32,
+    pub carrier_profit: Energy,
+    pub carrier_allocation: Energy,
+    pub net_delivery: Energy,
+    pub freight_rate_bps: u32,
+    pub expected_net_profit: Energy,
+    pub score: i128,
+    pub destination_runway_before: u64,
+    pub destination_runway_after: u64,
+    pub blocker: Option<EnergyContractBlocker>,
+}
+
+pub(super) struct EnergyLogisticsProjection {
+    pub markets: Vec<EnergyMarketLogisticsSnapshot>,
+    pub opportunities: Vec<EnergyContractOpportunitySnapshot>,
+    pub contracts: Vec<EnergyContractSnapshot>,
+    pub diagnostics: EnergyLogisticsDiagnostics,
+    pub starvation: BTreeMap<ContentId, EnergyStarvationCause>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -849,6 +915,25 @@ struct ValidatedLoadedContract {
     constants: SettlementConstants,
 }
 
+pub(crate) const fn starvation_cause(
+    arrived_blocked: bool,
+    accepted_pending: bool,
+    reachable_surplus: bool,
+    viable_candidate: bool,
+) -> EnergyStarvationCause {
+    if arrived_blocked {
+        EnergyStarvationCause::ArrivedSettlementBlocked
+    } else if accepted_pending {
+        EnergyStarvationCause::AcceptedDeliveryPending
+    } else if !reachable_surplus {
+        EnergyStarvationCause::NoReachableSurplus
+    } else if !viable_candidate {
+        EnergyStarvationCause::NoViableCandidate
+    } else {
+        EnergyStarvationCause::ViableButUnaccepted
+    }
+}
+
 impl GameSession {
     pub(super) fn enqueue_player_energy_contract(
         &mut self,
@@ -871,6 +956,15 @@ impl GameSession {
             .unwrap()
             .0
             .clone();
+        if self
+            .world
+            .resource::<PendingEnergyContractIntents>()
+            .0
+            .iter()
+            .any(|intent| intent.command_driven && intent.carrier == carrier)
+        {
+            return Err(CoreError::PendingEnergyContractIntent);
+        }
         self.world
             .resource_mut::<PendingEnergyContractIntents>()
             .0
@@ -1405,15 +1499,36 @@ impl GameSession {
     ) -> Result<Vec<NpcEnergyContractOpportunity>, CoreError> {
         let mut markets = self
             .world
-            .query_filtered::<&StableId, bevy_ecs::prelude::With<super::SystemMarker>>()
+            .query_filtered::<(Entity, &StableId), bevy_ecs::prelude::With<super::SystemMarker>>()
             .iter(&self.world)
-            .map(|stable| stable.0.clone())
+            .map(|(entity, stable)| (stable.0.clone(), entity))
             .collect::<Vec<_>>();
-        markets.sort();
+        markets.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut sources = Vec::new();
+        let mut destinations = Vec::new();
+        let energy_id = ContentId::new(ENERGY_ID).expect("constant energy id");
+        for (system, entity) in markets {
+            if self.offered_energy_payload(entity, None)? > Energy::ZERO {
+                sources.push(system.clone());
+            }
+            let market = self
+                .world
+                .get::<Market>(entity)
+                .ok_or(CoreError::InvalidPhysicalDefinition)?;
+            let target = i128::from(market.targets.get(&energy_id).copied().unwrap_or(0));
+            let inbound = self.inbound_energy_for_destination(&system)?;
+            let requested = target
+                .checked_sub(i128::from(market.energy_stock()?.0))
+                .and_then(|value| value.checked_sub(i128::from(inbound.0)))
+                .ok_or(CoreError::Overflow)?;
+            if requested > 0 {
+                destinations.push(system);
+            }
+        }
 
         let mut opportunities = Vec::new();
-        for source in &markets {
-            for destination in &markets {
+        for source in &sources {
+            for destination in &destinations {
                 if source == destination {
                     continue;
                 }
@@ -1449,6 +1564,13 @@ impl GameSession {
         projected_source_market: &Market,
     ) -> Result<Vec<NpcEnergyContractOpportunity>, CoreError> {
         let source = carrier.system.clone();
+        let source_entity = self.market_entity(&source)?;
+        if self.offered_energy_payload(source_entity, Some(projected_source_market))?
+            == Energy::ZERO
+        {
+            return Ok(Vec::new());
+        }
+        let energy_id = ContentId::new(ENERGY_ID).expect("constant energy id");
         let mut destinations = self
             .world
             .query_filtered::<&StableId, bevy_ecs::prelude::With<super::SystemMarker>>()
@@ -1460,6 +1582,26 @@ impl GameSession {
         let mut opportunities = Vec::new();
         for destination in destinations {
             if destination == source {
+                continue;
+            }
+            let destination_entity = self.market_entity(&destination)?;
+            let destination_market = self
+                .world
+                .get::<Market>(destination_entity)
+                .ok_or(CoreError::InvalidPhysicalDefinition)?;
+            let target = i128::from(
+                destination_market
+                    .targets
+                    .get(&energy_id)
+                    .copied()
+                    .unwrap_or(0),
+            );
+            let inbound = self.inbound_energy_for_destination(&destination)?;
+            let requested = target
+                .checked_sub(i128::from(destination_market.energy_stock()?.0))
+                .and_then(|value| value.checked_sub(i128::from(inbound.0)))
+                .ok_or(CoreError::Overflow)?;
+            if requested <= 0 {
                 continue;
             }
             let Ok(terms) = self.evaluate_energy_terms(
@@ -1478,6 +1620,490 @@ impl GameSession {
             }
         }
         Ok(opportunities)
+    }
+
+    fn runway(stock: Energy, life_support: Energy) -> Result<u64, CoreError> {
+        require_non_negative(&[stock, life_support])?;
+        if life_support == Energy::ZERO {
+            Ok(u64::MAX)
+        } else {
+            u64::try_from(stock.0 / life_support.0).map_err(|_| CoreError::Overflow)
+        }
+    }
+
+    fn inbound_energy_for_destination(&self, destination: &ContentId) -> Result<Energy, CoreError> {
+        self.world
+            .resource::<EnergyContracts>()
+            .active
+            .values()
+            .filter(|contract| {
+                contract.destination == *destination
+                    && !matches!(contract.state, EnergyContractState::Recovering { .. })
+            })
+            .try_fold(Energy::ZERO, |inbound, contract| {
+                inbound.checked_add(
+                    contract
+                        .net_delivery
+                        .checked_sub(contract.cumulative_settled)?,
+                )
+            })
+    }
+
+    fn starvation_blocker(cause: EnergyStarvationCause) -> EnergyContractBlocker {
+        match cause {
+            EnergyStarvationCause::ArrivedSettlementBlocked => {
+                EnergyContractBlocker::ArrivedSettlementBlocked
+            }
+            EnergyStarvationCause::AcceptedDeliveryPending => {
+                EnergyContractBlocker::AcceptedDeliveryPending
+            }
+            EnergyStarvationCause::NoReachableSurplus => EnergyContractBlocker::NoReachableSurplus,
+            EnergyStarvationCause::NoViableCandidate => EnergyContractBlocker::NoViableCandidate,
+            EnergyStarvationCause::ViableButUnaccepted => {
+                EnergyContractBlocker::ViableButUnaccepted
+            }
+        }
+    }
+
+    fn market_logistics_snapshots(
+        &mut self,
+    ) -> Result<Vec<EnergyMarketLogisticsSnapshot>, CoreError> {
+        let mut markets = self
+            .world
+            .query_filtered::<(Entity, &StableId), bevy_ecs::prelude::With<super::SystemMarker>>()
+            .iter(&self.world)
+            .map(|(entity, stable)| (stable.0.clone(), entity))
+            .collect::<Vec<_>>();
+        markets.sort_by(|left, right| left.0.cmp(&right.0));
+        let starvation = self
+            .world
+            .resource::<EnergyLogisticsTickCapture>()
+            .current
+            .clone();
+        let life_per_capita = self
+            .world
+            .resource::<EconomyConfig>()
+            .life_support_burn_per_capita;
+        let energy_id = ContentId::new(ENERGY_ID).expect("constant energy id");
+        let mut rows = Vec::with_capacity(markets.len());
+        for (system, entity) in markets {
+            let market = self
+                .world
+                .get::<Market>(entity)
+                .ok_or(CoreError::InvalidPhysicalDefinition)?
+                .clone();
+            let stock = market.energy_stock()?;
+            let target = Energy(i64::from(
+                market.targets.get(&energy_id).copied().unwrap_or(0),
+            ));
+            let inbound = self.inbound_energy_for_destination(&system)?;
+            let requested = Self::checked_energy_from_i128(
+                i128::from(target.0)
+                    .checked_sub(i128::from(stock.0))
+                    .and_then(|value| value.checked_sub(i128::from(inbound.0)))
+                    .ok_or(CoreError::Overflow)?
+                    .max(0),
+            )?;
+            let offered = self.offered_energy_payload(entity, None)?;
+            let life_support = life_per_capita.checked_mul(market.population)?;
+            rows.push(EnergyMarketLogisticsSnapshot {
+                system: system.clone(),
+                stock,
+                storage_cap: market.energy_storage_cap,
+                target,
+                offered,
+                requested,
+                inbound,
+                runway: Self::runway(stock, life_support)?,
+                stage: market.brownout.stage,
+                blocker: starvation
+                    .get(&system)
+                    .copied()
+                    .map(Self::starvation_blocker),
+            });
+        }
+        Ok(rows)
+    }
+
+    fn player_energy_opportunity_snapshots(
+        &mut self,
+        market_rows: &[EnergyMarketLogisticsSnapshot],
+    ) -> Result<Vec<EnergyContractOpportunitySnapshot>, CoreError> {
+        let player_entity = self.player_entity()?;
+        let player = self
+            .world
+            .get::<StableId>(player_entity)
+            .ok_or(CoreError::InvalidPhysicalDefinition)?
+            .0
+            .clone();
+        let sources = market_rows
+            .iter()
+            .filter(|market| market.offered > Energy::ZERO)
+            .map(|market| market.system.clone())
+            .collect::<Vec<_>>();
+        let destinations = market_rows
+            .iter()
+            .filter(|market| market.requested > Energy::ZERO)
+            .map(|market| market.system.clone())
+            .collect::<Vec<_>>();
+        let life_per_capita = self
+            .world
+            .resource::<EconomyConfig>()
+            .life_support_burn_per_capita;
+        let mut rows = Vec::new();
+        for source in &sources {
+            for destination in &destinations {
+                if source == destination {
+                    continue;
+                }
+                let Ok(Ok(maximum)) = self.evaluate_energy_maximum(&player, source, destination)
+                else {
+                    continue;
+                };
+                let candidate = maximum.candidate;
+                let terms = fee_terms(
+                    candidate.gross_payload,
+                    candidate.loaded_route.burn,
+                    candidate.carrier_fee_bps,
+                )?;
+                let Some(score) = opportunity_score(
+                    terms.carrier_profit,
+                    candidate.deadhead_route.burn,
+                    candidate.deadhead_route.ticks,
+                    candidate.loaded_route.ticks,
+                )?
+                else {
+                    continue;
+                };
+                let destination_entity = self.market_entity(destination)?;
+                let destination_market = self
+                    .world
+                    .get::<Market>(destination_entity)
+                    .ok_or(CoreError::InvalidPhysicalDefinition)?
+                    .clone();
+                let horizon = candidate
+                    .deadhead_route
+                    .ticks
+                    .checked_add(candidate.loaded_route.ticks)
+                    .ok_or(CoreError::Overflow)?;
+                let ticks = self.projection_ticks_for_market(&destination_market, horizon)?;
+                let projected = project_energy(
+                    destination_market.energy_stock()?,
+                    destination_market.energy_storage_cap,
+                    &ticks,
+                )?;
+                let (_, prior_at_arrival) = self.inbound_energy_at_horizon(destination, horizon)?;
+                let projected_after_delivery = projected
+                    .final_stock
+                    .checked_add(prior_at_arrival)?
+                    .checked_add(terms.net_delivery)?;
+                if projected_after_delivery > destination_market.energy_storage_cap {
+                    return Err(CoreError::InvalidPhysicalDefinition);
+                }
+                let life_support = life_per_capita.checked_mul(destination_market.population)?;
+                let expected_net_profit = terms
+                    .carrier_profit
+                    .checked_sub(candidate.deadhead_route.burn)?;
+                rows.push(EnergyContractOpportunitySnapshot {
+                    source: source.clone(),
+                    destination: destination.clone(),
+                    maximum_gross_payload: candidate.gross_payload,
+                    deadhead_route: candidate.deadhead_route,
+                    loaded_route: candidate.loaded_route,
+                    recovery_route: candidate.recovery_route,
+                    carrier_fee_bps: candidate.carrier_fee_bps,
+                    carrier_profit: terms.carrier_profit,
+                    carrier_allocation: terms.carrier_allocation,
+                    net_delivery: terms.net_delivery,
+                    freight_rate_bps: terms.effective_freight_bps,
+                    expected_net_profit,
+                    score,
+                    destination_runway_before: Self::runway(
+                        destination_market.energy_stock()?,
+                        life_support,
+                    )?,
+                    destination_runway_after: Self::runway(projected_after_delivery, life_support)?,
+                    blocker: None,
+                });
+            }
+        }
+        rows.sort_by(|left, right| {
+            left.source
+                .cmp(&right.source)
+                .then_with(|| left.destination.cmp(&right.destination))
+        });
+        Ok(rows)
+    }
+
+    fn active_contract_snapshots(&mut self) -> Result<Vec<EnergyContractSnapshot>, CoreError> {
+        let contracts = self.world.resource::<EnergyContracts>().active.clone();
+        let lots = self
+            .world
+            .query::<(&StableId, &Trader)>()
+            .iter(&self.world)
+            .map(|(stable, trader)| (stable.0.clone(), trader.bulk_energy.locked))
+            .collect::<BTreeMap<_, _>>();
+        let mut rows = Vec::with_capacity(contracts.len());
+        for (contract_id, contract) in contracts {
+            if contract.id != contract_id {
+                return Err(CoreError::InvalidPhysicalDefinition);
+            }
+            let constants = Self::settlement_constants(&contract);
+            let lot = lots
+                .get(&contract.carrier)
+                .copied()
+                .ok_or(CoreError::InvalidPhysicalDefinition)?;
+            let (locked_amount, converted_reimbursement, converted_fee) = match contract.state {
+                EnergyContractState::DeadheadingToSource { source_claim, .. } => {
+                    if source_claim != contract.gross_payload
+                        || contract.cumulative_settled != Energy::ZERO
+                        || lot.is_some()
+                    {
+                        return Err(CoreError::InvalidPhysicalDefinition);
+                    }
+                    (Energy::ZERO, Energy::ZERO, Energy::ZERO)
+                }
+                EnergyContractState::InTransit { .. } | EnergyContractState::Arrived { .. } => {
+                    let lot = lot.ok_or(CoreError::InvalidPhysicalDefinition)?;
+                    if lot.contract_id != contract_id {
+                        return Err(CoreError::InvalidPhysicalDefinition);
+                    }
+                    validate_settlement(
+                        constants,
+                        SettlementState {
+                            cumulative_settled: contract.cumulative_settled,
+                            locked_amount: lot.amount,
+                        },
+                    )?;
+                    let reimbursement = if contract.cumulative_settled == Energy::ZERO {
+                        Energy::ZERO
+                    } else {
+                        constants.loaded_route_burn
+                    };
+                    (
+                        lot.amount,
+                        reimbursement,
+                        earned_fee(constants, contract.cumulative_settled)?,
+                    )
+                }
+                EnergyContractState::Recovering { .. } => {
+                    let lot = lot.ok_or(CoreError::InvalidPhysicalDefinition)?;
+                    if lot.contract_id != contract_id {
+                        return Err(CoreError::InvalidPhysicalDefinition);
+                    }
+                    let reimbursement_before_timeout =
+                        if contract.cumulative_settled == Energy::ZERO {
+                            constants.loaded_route_burn
+                        } else {
+                            Energy::ZERO
+                        };
+                    let locked_before_timeout = lot
+                        .amount
+                        .checked_add(reimbursement_before_timeout)?
+                        .checked_add(constants.recovery_burn)?;
+                    if timeout_plan(
+                        constants,
+                        SettlementState {
+                            cumulative_settled: contract.cumulative_settled,
+                            locked_amount: locked_before_timeout,
+                        },
+                    )?
+                    .locked_after_departure
+                        != lot.amount
+                    {
+                        return Err(CoreError::InvalidPhysicalDefinition);
+                    }
+                    (
+                        lot.amount,
+                        constants
+                            .loaded_route_burn
+                            .checked_add(constants.recovery_burn)?,
+                        earned_fee(constants, contract.cumulative_settled)?,
+                    )
+                }
+            };
+            let terms = fee_terms(
+                contract.gross_payload,
+                contract.loaded_route.burn,
+                contract.carrier_fee_bps,
+            )?;
+            let expected_net_profit = contract
+                .carrier_profit
+                .checked_sub(contract.deadhead_route.burn)?;
+            rows.push(EnergyContractSnapshot {
+                contract,
+                locked_amount,
+                carrier_allocation: terms.carrier_allocation,
+                freight_rate_bps: terms.effective_freight_bps,
+                expected_net_profit,
+                converted_reimbursement,
+                converted_fee,
+            });
+        }
+        Ok(rows)
+    }
+
+    pub(super) fn energy_logistics_projection(
+        &mut self,
+    ) -> Result<EnergyLogisticsProjection, CoreError> {
+        let markets = self.market_logistics_snapshots()?;
+        let opportunities = self.player_energy_opportunity_snapshots(&markets)?;
+        Ok(EnergyLogisticsProjection {
+            markets,
+            opportunities,
+            contracts: self.active_contract_snapshots()?,
+            diagnostics: self.world.resource::<EnergyContracts>().diagnostics.clone(),
+            starvation: self
+                .world
+                .resource::<EnergyLogisticsTickCapture>()
+                .current
+                .clone(),
+        })
+    }
+
+    pub(super) fn capture_unsupplied_energy_destinations(&mut self) {
+        let unsupplied = self
+            .world
+            .query_filtered::<(&StableId, &Market), bevy_ecs::prelude::With<super::SystemMarker>>()
+            .iter(&self.world)
+            .filter(|(_, market)| market.last_life_support_unsupplied > Energy::ZERO)
+            .map(|(stable, _)| stable.0.clone())
+            .collect::<BTreeSet<_>>();
+        let accepted_pending = self
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .values()
+            .filter(|contract| {
+                unsupplied.contains(&contract.destination)
+                    && !matches!(contract.state, EnergyContractState::Recovering { .. })
+            })
+            .map(|contract| contract.destination.clone())
+            .collect();
+        *self.world.resource_mut::<EnergyLogisticsTickCapture>() = EnergyLogisticsTickCapture {
+            unsupplied,
+            accepted_pending,
+            ..EnergyLogisticsTickCapture::default()
+        };
+    }
+
+    pub(super) fn capture_phase10_energy_logistics(&mut self) -> Result<(), CoreError> {
+        let mut markets = self
+            .world
+            .query_filtered::<(Entity, &StableId), bevy_ecs::prelude::With<super::SystemMarker>>()
+            .iter(&self.world)
+            .map(|(entity, stable)| (stable.0.clone(), entity))
+            .collect::<Vec<_>>();
+        markets.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut reachable_surplus = BTreeSet::new();
+        for (source, source_entity) in &markets {
+            if self.offered_energy_payload(*source_entity, None)? == Energy::ZERO {
+                continue;
+            }
+            for (destination, _) in &markets {
+                if source != destination
+                    && self.graph().shortest_path(source, destination).is_some()
+                {
+                    reachable_surplus.insert(destination.clone());
+                }
+            }
+        }
+
+        let carrier_rows = self
+            .world
+            .query::<(
+                &StableId,
+                &Trader,
+                Option<&super::TraderLifecycle>,
+                Option<&super::PlayerControlled>,
+            )>()
+            .iter(&self.world)
+            .map(|(stable, trader, lifecycle, player)| {
+                (
+                    stable.0.clone(),
+                    trader.clone(),
+                    lifecycle.cloned(),
+                    player.is_some(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut carriers = carrier_rows
+            .into_iter()
+            .filter(|(id, trader, lifecycle, player)| {
+                trader.travel.is_none()
+                    && trader.reservation.is_none()
+                    && trader.bulk_energy.locked.is_none()
+                    && !self.carrier_has_active_energy_contract(id)
+                    && (*player
+                        || (trader.cargo.is_empty()
+                            && lifecycle
+                                .as_ref()
+                                .is_some_and(|state| state.retirement.is_none())))
+            })
+            .map(|(id, _, _, _)| id)
+            .collect::<Vec<_>>();
+        carriers.sort();
+        let mut viable_candidate = BTreeSet::new();
+        for carrier in carriers {
+            viable_candidate.extend(
+                self.npc_energy_contract_opportunities(&carrier)?
+                    .into_iter()
+                    .map(|opportunity| opportunity.destination),
+            );
+        }
+
+        let mut capture = self.world.resource_mut::<EnergyLogisticsTickCapture>();
+        capture.reachable_surplus = reachable_surplus;
+        capture.viable_candidate = viable_candidate;
+        Ok(())
+    }
+
+    pub(super) fn finalize_energy_starvation_attribution(&mut self) -> Result<(), CoreError> {
+        let active_pending = self
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .values()
+            .filter(|contract| !matches!(contract.state, EnergyContractState::Recovering { .. }))
+            .map(|contract| contract.destination.clone())
+            .collect::<BTreeSet<_>>();
+        let capture = self.world.resource::<EnergyLogisticsTickCapture>().clone();
+        let mut current = BTreeMap::new();
+        for destination in &capture.unsupplied {
+            let cause = starvation_cause(
+                capture.arrived_blocked.contains(destination),
+                capture.accepted_pending.contains(destination)
+                    || active_pending.contains(destination),
+                capture.reachable_surplus.contains(destination),
+                capture.viable_candidate.contains(destination),
+            );
+            current.insert(destination.clone(), cause);
+        }
+
+        let mut diagnostics = self.world.resource::<EnergyContracts>().diagnostics.clone();
+        for cause in current.values() {
+            let counter = match cause {
+                EnergyStarvationCause::ArrivedSettlementBlocked => {
+                    &mut diagnostics.arrived_settlement_blocked
+                }
+                EnergyStarvationCause::AcceptedDeliveryPending => {
+                    &mut diagnostics.accepted_delivery_pending
+                }
+                EnergyStarvationCause::NoReachableSurplus => &mut diagnostics.no_reachable_surplus,
+                EnergyStarvationCause::NoViableCandidate => &mut diagnostics.no_viable_candidate,
+                EnergyStarvationCause::ViableButUnaccepted => {
+                    &mut diagnostics.viable_but_unaccepted
+                }
+            };
+            *counter = counter.checked_add(1).ok_or(CoreError::Overflow)?;
+        }
+
+        // Apply only after every cumulative increment has been checked.
+        self.world.resource_mut::<EnergyContracts>().diagnostics = diagnostics;
+        self.world
+            .resource_mut::<EnergyLogisticsTickCapture>()
+            .current = current;
+        Ok(())
     }
 
     fn evaluate_energy_intent(
@@ -1595,9 +2221,9 @@ impl GameSession {
                     .energy_stock()?
                     .checked_sub(candidate.gross_payload)?,
             )?;
-            departure_market.energy_flow.market_to_energy_cargo = departure_market
+            departure_market.energy_flow.contract_source_loaded = departure_market
                 .energy_flow
-                .market_to_energy_cargo
+                .contract_source_loaded
                 .checked_add(candidate.gross_payload)?;
         } else if candidate.source_entity == departure_market_entity {
             return Err(CoreError::InvalidPhysicalDefinition);
@@ -1692,32 +2318,8 @@ impl GameSession {
         &mut self,
         rejection: EnergyIntentRejection,
     ) -> Result<(), CoreError> {
-        let mut contracts = self.world.resource::<EnergyContracts>().clone();
-        match rejection.blocker {
-            EnergyContractBlocker::NoReachableSurplus => {
-                contracts.diagnostics.no_reachable_surplus = contracts
-                    .diagnostics
-                    .no_reachable_surplus
-                    .checked_add(1)
-                    .ok_or(CoreError::Overflow)?;
-            }
-            EnergyContractBlocker::NoViableCandidate => {
-                contracts.diagnostics.no_viable_candidate = contracts
-                    .diagnostics
-                    .no_viable_candidate
-                    .checked_add(1)
-                    .ok_or(CoreError::Overflow)?;
-            }
-            EnergyContractBlocker::ViableButUnaccepted => {
-                contracts.diagnostics.viable_but_unaccepted = contracts
-                    .diagnostics
-                    .viable_but_unaccepted
-                    .checked_add(1)
-                    .ok_or(CoreError::Overflow)?;
-            }
-            _ => {}
-        }
-        *self.world.resource_mut::<EnergyContracts>() = contracts;
+        // D10 counters count destination starvation ticks, not generic stale or
+        // rejected intents. Rejection remains visible through its typed event.
         self.world
             .resource_mut::<EventBuffer>()
             .0
@@ -1927,9 +2529,9 @@ impl GameSession {
             return Err(CoreError::InsufficientEnergy);
         }
         source.set_energy_stock(source.energy_stock()?.checked_sub(contract.gross_payload)?)?;
-        source.energy_flow.market_to_energy_cargo = source
+        source.energy_flow.contract_source_loaded = source
             .energy_flow
-            .market_to_energy_cargo
+            .contract_source_loaded
             .checked_add(contract.gross_payload)?;
         source.energy_flow.travel_burned = source
             .energy_flow
@@ -2335,6 +2937,17 @@ impl GameSession {
             headroom,
         )?;
         if delta.settled_now == Energy::ZERO {
+            let mut contracts = self.world.resource::<EnergyContracts>().clone();
+            contracts
+                .active
+                .get_mut(&contract_id)
+                .ok_or(CoreError::InvalidPhysicalDefinition)?
+                .latest_blocker = Some(EnergyContractBlocker::ArrivedSettlementBlocked);
+            *self.world.resource_mut::<EnergyContracts>() = contracts;
+            self.world
+                .resource_mut::<EnergyLogisticsTickCapture>()
+                .arrived_blocked
+                .insert(destination);
             return Ok(());
         }
         if delta.completed != (delta.cumulative_after == validated.contract.net_delivery)
@@ -2346,13 +2959,32 @@ impl GameSession {
         let allocation = delta
             .reimbursement_conversion
             .checked_add(delta.fee_conversion)?;
+        let remaining_headroom = headroom.checked_sub(delta.settled_now)?;
+        let blocked_after = if delta.completed {
+            false
+        } else {
+            settlement_delta(
+                validated.constants,
+                SettlementState {
+                    cumulative_settled: delta.cumulative_after,
+                    locked_amount: delta.locked_after,
+                },
+                remaining_headroom,
+            )?
+            .settled_now
+                == Energy::ZERO
+        };
         let mut trader = validated.trader;
         Self::allocate_converted_energy(&mut trader, delta.locked_after, allocation)?;
         market.set_energy_stock(stock.checked_add(delta.settled_now)?)?;
-        market.energy_flow.energy_cargo_to_market = market
+        market.energy_flow.contract_destination_delivered = market
             .energy_flow
-            .energy_cargo_to_market
+            .contract_destination_delivered
             .checked_add(delta.settled_now)?;
+        market.energy_flow.contract_allocation_converted = market
+            .energy_flow
+            .contract_allocation_converted
+            .checked_add(allocation)?;
         trader.ledger.sales_revenue = trader.ledger.sales_revenue.checked_add(allocation)?;
         trader.ledger.contract_reimbursement = trader
             .ledger
@@ -2384,11 +3016,13 @@ impl GameSession {
                 outcome: EnergyContractTerminalOutcome::Completed,
             }));
         } else {
-            contracts
+            let active = contracts
                 .active
                 .get_mut(&contract_id)
-                .ok_or(CoreError::InvalidPhysicalDefinition)?
-                .cumulative_settled = delta.cumulative_after;
+                .ok_or(CoreError::InvalidPhysicalDefinition)?;
+            active.cumulative_settled = delta.cumulative_after;
+            active.latest_blocker =
+                blocked_after.then_some(EnergyContractBlocker::ArrivedSettlementBlocked);
         }
 
         *self.world.get_mut::<Market>(destination_entity).unwrap() = market;
@@ -2397,6 +3031,12 @@ impl GameSession {
             .get_mut::<Trader>(validated.carrier_entity)
             .unwrap() = trader;
         *self.world.resource_mut::<EnergyContracts>() = contracts;
+        if blocked_after {
+            self.world
+                .resource_mut::<EnergyLogisticsTickCapture>()
+                .arrived_blocked
+                .insert(destination);
+        }
         self.world.resource_mut::<EventBuffer>().0.extend(events);
         Ok(())
     }
@@ -2478,6 +3118,10 @@ impl GameSession {
             .energy_flow
             .travel_burned
             .checked_add(plan.recovery_burn)?;
+        market.energy_flow.contract_allocation_converted = market
+            .energy_flow
+            .contract_allocation_converted
+            .checked_add(allocation)?;
         let mut contracts = self.world.resource::<EnergyContracts>().clone();
         contracts
             .active
@@ -2550,11 +3194,15 @@ impl GameSession {
         let deposited = Energy(lot.amount.0.min(headroom.0));
         let curtailed = lot.amount.checked_sub(deposited)?;
         market.set_energy_stock(stock.checked_add(deposited)?)?;
-        market.energy_flow.energy_cargo_to_market = market
-            .energy_flow
-            .energy_cargo_to_market
-            .checked_add(deposited)?;
         market.energy_flow.curtailed = market.energy_flow.curtailed.checked_add(curtailed)?;
+        market.energy_flow.contract_recovery_returned = market
+            .energy_flow
+            .contract_recovery_returned
+            .checked_add(deposited)?;
+        market.energy_flow.contract_recovery_curtailed = market
+            .energy_flow
+            .contract_recovery_curtailed
+            .checked_add(curtailed)?;
 
         let next_recovered_after_failure = self
             .world

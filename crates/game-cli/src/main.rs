@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use game_content::{ContentWarning, LoadedContent};
 use game_core::{
-    BrownoutStage, ContentId, CoreSnapshot, ENERGY_ID, GameDefinition, GameEvent, GameSession,
-    PricingMode,
+    BrownoutStage, ContentId, ContractId, CoreSnapshot, ENERGY_ID, EnergyContractEvent,
+    EnergyContractState, EnergyContractTerminalOutcome, EnergyLogisticsDiagnostics,
+    EnergyStarvationCause, GameDefinition, GameEvent, GameSession, PricingMode,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::OpenOptions;
@@ -86,19 +87,15 @@ async fn main() -> Result<()> {
                 .iter()
                 .find(|trader| trader.player)
                 .context("player missing")?;
-            let bay_energy = player
-                .cargo
-                .iter()
-                .find(|(good, _)| good.as_str() == ENERGY_ID)
-                .map_or(0, |(_, quantity)| *quantity);
             println!(
-                "Headless run complete: tick={}, systems={}, traders={}, player_tank={}/{}, player_bay_energy={}, player_cargo={}",
+                "Headless run complete: tick={}, systems={}, traders={}, player_tank={}/{}, player_owned_bulk={}, player_locked_bulk={}, player_cargo={}",
                 snapshot.tick,
                 snapshot.markets.len(),
                 snapshot.traders.len(),
                 player.energy_tank.0,
                 player.energy_tank_capacity.0,
-                bay_energy,
+                player.bulk_energy.owned.0,
+                player.bulk_energy.locked.map_or(0, |lot| lot.amount.0),
                 player.cargo.values().sum::<u64>()
             );
             let reconciliation = reconcile_energy(&snapshot, initial_physical)?;
@@ -529,7 +526,7 @@ fn print_player_impact_report(report: &PlayerImpactReport) {
 
 #[derive(Default)]
 struct DiagnosticActivity {
-    trades: u64,
+    ordinary_trades: u64,
     partial_sales: u64,
     reservations: u64,
     departures: u64,
@@ -539,12 +536,37 @@ struct DiagnosticActivity {
     life_support_unsupplied: i128,
     fleet_spawns: u64,
     fleet_retirements: u64,
+    contracts_accepted: u64,
+    contracts_loaded: u64,
+    contract_settlement_events: u64,
+    contract_settled_energy: i128,
+    contracts_completed: u64,
+    contracts_recovered: u64,
+    recovery_curtailment_events: u64,
+    recovery_curtailed_energy: i128,
+    contract_rejections: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ArchetypeActivity {
+    spawns: u64,
+    retirements: u64,
+    ordinary_trades: u64,
+    contracts_accepted: u64,
+    contracts_loaded: u64,
+    contract_settlement_events: u64,
+    contract_settled_energy: i128,
+    contracts_completed: u64,
+    contracts_recovered: u64,
+    recovery_curtailed_energy: i128,
+    final_window_contract_settlements: u64,
+    final_window_contract_completions: u64,
 }
 
 const FINAL_ACTIVITY_WINDOW_TICKS: u64 = 1_000;
 const FINAL_POPULATION_STABILITY_WINDOW_TICKS: u64 = 100;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct SoakSummary {
     initial_populations: BTreeMap<ContentId, u64>,
     minimum_populations: BTreeMap<ContentId, u64>,
@@ -552,12 +574,45 @@ struct SoakSummary {
     final_stability_minimums: BTreeMap<ContentId, u64>,
     final_stability_maximums: BTreeMap<ContentId, u64>,
     minimum_aggregate_population: u64,
+    ordinary_trades: u64,
+    production_events: u64,
     final_window_trades: u64,
+    final_window_production: u64,
+    contracts_accepted: u64,
+    contracts_loaded: u64,
+    contract_settlement_events: u64,
+    contract_settled_energy: i128,
+    contracts_completed: u64,
+    contracts_recovered: u64,
+    recovery_curtailment_events: u64,
+    recovery_curtailed_energy: i128,
+    contract_rejections: u64,
+    final_window_contract_settlements: u64,
+    final_window_contract_completions: u64,
+    final_window_contract_settled_energy: i128,
     final_window_stage_transitions: u64,
     post_midpoint_stage_transitions: u64,
     population_changes: u64,
     maximum_stationary_laden_streak: u64,
+    maximum_active_claim_streak: u64,
+    maximum_locked_lot_streak: u64,
+    maximum_recovery_streak: u64,
+    maximum_stationary_contract_carrier_streak: u64,
     final_window_ticks: u64,
+    final_active_contracts: u64,
+    final_active_claims: u64,
+    final_claimed_energy: i128,
+    final_locked_lots: u64,
+    final_locked_energy: i128,
+    final_recovering_contracts: u64,
+    final_d10_rows: u64,
+    current_d10_unclassified: u64,
+    current_d10_extra: u64,
+    d10_unsupplied_rows: u64,
+    d10_attribution_consistent: bool,
+    energy_logistics: EnergyLogisticsDiagnostics,
+    archetype_counts: BTreeMap<ContentId, u64>,
+    archetype_activity: BTreeMap<ContentId, ArchetypeActivity>,
     final_stages: BTreeMap<ContentId, BrownoutStage>,
     market_ledgers: BTreeMap<ContentId, game_core::MarketLedger>,
     market_energy_flows: BTreeMap<ContentId, game_core::EnergyFlowLedger>,
@@ -575,12 +630,42 @@ struct SoakTracker {
     final_stability_minimums: BTreeMap<ContentId, u64>,
     final_stability_maximums: BTreeMap<ContentId, u64>,
     minimum_aggregate_population: u64,
+    ordinary_trades: u64,
+    production_events: u64,
     final_window_trades: u64,
+    final_window_production: u64,
+    contracts_accepted: u64,
+    contracts_loaded: u64,
+    contract_settlement_events: u64,
+    contract_settled_energy: i128,
+    contracts_completed: u64,
+    contracts_recovered: u64,
+    recovery_curtailment_events: u64,
+    recovery_curtailed_energy: i128,
+    contract_rejections: u64,
+    final_window_contract_settlements: u64,
+    final_window_contract_completions: u64,
+    final_window_contract_settled_energy: i128,
     final_window_stage_transitions: u64,
     post_midpoint_stage_transitions: u64,
     population_changes: u64,
+    trader_archetypes: BTreeMap<ContentId, ContentId>,
+    contract_archetypes: BTreeMap<ContractId, ContentId>,
+    archetype_activity: BTreeMap<ContentId, ArchetypeActivity>,
     stationary_laden_streaks: BTreeMap<ContentId, u64>,
+    active_claim_streaks: BTreeMap<ContractId, u64>,
+    locked_lot_streaks: BTreeMap<ContractId, u64>,
+    recovery_streaks: BTreeMap<ContractId, u64>,
+    stationary_contract_carrier_streaks: BTreeMap<ContentId, u64>,
     maximum_stationary_laden_streak: u64,
+    maximum_active_claim_streak: u64,
+    maximum_locked_lot_streak: u64,
+    maximum_recovery_streak: u64,
+    maximum_stationary_contract_carrier_streak: u64,
+    current_d10_unclassified: u64,
+    current_d10_extra: u64,
+    d10_unsupplied_rows: u64,
+    d10_attribution_consistent: bool,
 }
 
 impl SoakTracker {
@@ -590,6 +675,16 @@ impl SoakTracker {
             .iter()
             .map(|market| (market.system_id.clone(), market.population))
             .collect::<BTreeMap<_, _>>();
+        let trader_archetypes = initial
+            .traders
+            .iter()
+            .filter_map(|trader| {
+                trader
+                    .archetype
+                    .clone()
+                    .map(|archetype| (trader.id.clone(), archetype))
+            })
+            .collect();
         Self {
             ticks,
             final_window_start: ticks.saturating_sub(ticks.min(FINAL_ACTIVITY_WINDOW_TICKS)),
@@ -600,37 +695,214 @@ impl SoakTracker {
             initial_populations,
             final_stability_minimums: BTreeMap::new(),
             final_stability_maximums: BTreeMap::new(),
+            ordinary_trades: 0,
+            production_events: 0,
             final_window_trades: 0,
+            final_window_production: 0,
+            contracts_accepted: 0,
+            contracts_loaded: 0,
+            contract_settlement_events: 0,
+            contract_settled_energy: 0,
+            contracts_completed: 0,
+            contracts_recovered: 0,
+            recovery_curtailment_events: 0,
+            recovery_curtailed_energy: 0,
+            contract_rejections: 0,
+            final_window_contract_settlements: 0,
+            final_window_contract_completions: 0,
+            final_window_contract_settled_energy: 0,
             final_window_stage_transitions: 0,
             post_midpoint_stage_transitions: 0,
             population_changes: 0,
+            trader_archetypes,
+            contract_archetypes: BTreeMap::new(),
+            archetype_activity: BTreeMap::new(),
             stationary_laden_streaks: BTreeMap::new(),
+            active_claim_streaks: BTreeMap::new(),
+            locked_lot_streaks: BTreeMap::new(),
+            recovery_streaks: BTreeMap::new(),
+            stationary_contract_carrier_streaks: BTreeMap::new(),
             maximum_stationary_laden_streak: 0,
+            maximum_active_claim_streak: 0,
+            maximum_locked_lot_streak: 0,
+            maximum_recovery_streak: 0,
+            maximum_stationary_contract_carrier_streak: 0,
+            current_d10_unclassified: 0,
+            current_d10_extra: 0,
+            d10_unsupplied_rows: 0,
+            d10_attribution_consistent: true,
         }
     }
 
-    fn observe_event(&mut self, tick: u64, event: &GameEvent) {
+    fn contract_activity(&mut self, contract_id: ContractId) -> Option<&mut ArchetypeActivity> {
+        let archetype = self.contract_archetypes.get(&contract_id)?.clone();
+        Some(self.archetype_activity.entry(archetype).or_default())
+    }
+
+    fn observe_tick(&mut self, tick: u64, events: &[GameEvent], snapshot: &CoreSnapshot) {
+        for trader in snapshot.traders.iter().filter(|trader| !trader.player) {
+            if let Some(archetype) = &trader.archetype {
+                self.trader_archetypes
+                    .insert(trader.id.clone(), archetype.clone());
+            }
+        }
+        for contract in &snapshot.energy_contracts {
+            if let Some(archetype) = self
+                .trader_archetypes
+                .get(&contract.contract.carrier)
+                .cloned()
+            {
+                self.contract_archetypes
+                    .insert(contract.contract.id, archetype);
+            }
+        }
+
         let in_final_window = tick > self.final_window_start;
-        match event {
-            GameEvent::Bought { .. } | GameEvent::Sold { .. } if in_final_window => {
-                self.final_window_trades += 1;
-            }
-            GameEvent::BrownoutTransition { .. } => {
-                if in_final_window {
-                    self.final_window_stage_transitions += 1;
+        let mut unsupplied = BTreeSet::new();
+        for event in events {
+            match event {
+                GameEvent::Bought { trader, .. } | GameEvent::Sold { trader, .. } => {
+                    self.ordinary_trades += 1;
+                    if in_final_window {
+                        self.final_window_trades += 1;
+                    }
+                    if let Some(archetype) = self.trader_archetypes.get(trader).cloned() {
+                        self.archetype_activity
+                            .entry(archetype)
+                            .or_default()
+                            .ordinary_trades += 1;
+                    }
                 }
-                if tick > self.ticks / 2 {
-                    self.post_midpoint_stage_transitions += 1;
+                GameEvent::Produced { .. } => {
+                    self.production_events += 1;
+                    if in_final_window {
+                        self.final_window_production += 1;
+                    }
                 }
+                GameEvent::TraderSpawned { trader, .. } => {
+                    if let Some(archetype) = self.trader_archetypes.get(trader).cloned() {
+                        self.archetype_activity.entry(archetype).or_default().spawns += 1;
+                    }
+                }
+                GameEvent::TraderRetired { trader, .. } => {
+                    if let Some(archetype) = self.trader_archetypes.get(trader).cloned() {
+                        self.archetype_activity
+                            .entry(archetype)
+                            .or_default()
+                            .retirements += 1;
+                    }
+                }
+                GameEvent::BrownoutTransition { .. } => {
+                    if in_final_window {
+                        self.final_window_stage_transitions += 1;
+                    }
+                    if tick > self.ticks / 2 {
+                        self.post_midpoint_stage_transitions += 1;
+                    }
+                }
+                GameEvent::PopulationChanged { .. } => self.population_changes += 1,
+                GameEvent::LifeSupport {
+                    system,
+                    unsupplied: amount,
+                    ..
+                } if amount.0 > 0 => {
+                    unsupplied.insert(system.clone());
+                }
+                GameEvent::EnergyLogistics(logistics) => match logistics {
+                    EnergyContractEvent::Accepted { contract_id } => {
+                        self.contracts_accepted += 1;
+                        if let Some(activity) = self.contract_activity(*contract_id) {
+                            activity.contracts_accepted += 1;
+                        }
+                    }
+                    EnergyContractEvent::Loaded { contract_id } => {
+                        self.contracts_loaded += 1;
+                        if let Some(activity) = self.contract_activity(*contract_id) {
+                            activity.contracts_loaded += 1;
+                        }
+                    }
+                    EnergyContractEvent::Settled {
+                        contract_id,
+                        amount,
+                    } => {
+                        self.contract_settlement_events += 1;
+                        self.contract_settled_energy += i128::from(amount.0);
+                        if in_final_window {
+                            self.final_window_contract_settlements += 1;
+                            self.final_window_contract_settled_energy += i128::from(amount.0);
+                        }
+                        if let Some(activity) = self.contract_activity(*contract_id) {
+                            activity.contract_settlement_events += 1;
+                            activity.contract_settled_energy += i128::from(amount.0);
+                            if in_final_window {
+                                activity.final_window_contract_settlements += 1;
+                            }
+                        }
+                    }
+                    EnergyContractEvent::RecoveryCurtailed {
+                        contract_id,
+                        amount,
+                        ..
+                    } => {
+                        self.recovery_curtailment_events += 1;
+                        self.recovery_curtailed_energy += i128::from(amount.0);
+                        if let Some(activity) = self.contract_activity(*contract_id) {
+                            activity.recovery_curtailed_energy += i128::from(amount.0);
+                        }
+                    }
+                    EnergyContractEvent::Terminal {
+                        contract_id,
+                        outcome,
+                    } => {
+                        match outcome {
+                            EnergyContractTerminalOutcome::Completed => {
+                                self.contracts_completed += 1;
+                                if in_final_window {
+                                    self.final_window_contract_completions += 1;
+                                }
+                                if let Some(activity) = self.contract_activity(*contract_id) {
+                                    activity.contracts_completed += 1;
+                                    if in_final_window {
+                                        activity.final_window_contract_completions += 1;
+                                    }
+                                }
+                            }
+                            EnergyContractTerminalOutcome::RecoveredAfterFailure => {
+                                self.contracts_recovered += 1;
+                                if let Some(activity) = self.contract_activity(*contract_id) {
+                                    activity.contracts_recovered += 1;
+                                }
+                            }
+                            EnergyContractTerminalOutcome::CancelledBeforeLoad
+                            | EnergyContractTerminalOutcome::RevokedBeforeLoad
+                            | EnergyContractTerminalOutcome::RejectedBeforeLoad => {}
+                        }
+                        self.contract_archetypes.remove(contract_id);
+                    }
+                    EnergyContractEvent::Rejected { .. } => self.contract_rejections += 1,
+                    EnergyContractEvent::Departed { .. }
+                    | EnergyContractEvent::OwnedBulkTransferredToTank { .. }
+                    | EnergyContractEvent::OwnedBulkDepositedToMarket { .. } => {}
+                },
+                _ => {}
             }
-            GameEvent::PopulationChanged { .. } => {
-                self.population_changes += 1;
-            }
-            _ => {}
         }
-    }
 
-    fn observe_snapshot(&mut self, tick: u64, snapshot: &CoreSnapshot) {
+        let classified = snapshot
+            .energy_starvation
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        self.current_d10_unclassified =
+            u64::try_from(unsupplied.difference(&classified).count()).unwrap_or(u64::MAX);
+        self.current_d10_extra =
+            u64::try_from(classified.difference(&unsupplied).count()).unwrap_or(u64::MAX);
+        self.d10_unsupplied_rows = self
+            .d10_unsupplied_rows
+            .saturating_add(u64::try_from(unsupplied.len()).unwrap_or(u64::MAX));
+        self.d10_attribution_consistent &=
+            self.current_d10_unclassified == 0 && self.current_d10_extra == 0;
+
         let aggregate = snapshot
             .markets
             .iter()
@@ -653,26 +925,107 @@ impl SoakTracker {
                     .or_insert(market.population);
             }
         }
-        if tick <= self.final_window_start {
+        if !in_final_window {
             return;
         }
-        let stationary = snapshot
+
+        let stationary_laden = snapshot
             .traders
             .iter()
             .filter(|trader| !trader.player && trader.travel.is_none() && !trader.cargo.is_empty())
             .map(|trader| trader.id.clone())
             .collect::<BTreeSet<_>>();
-        self.stationary_laden_streaks
-            .retain(|trader, _| stationary.contains(trader));
-        for trader in stationary {
-            let streak = self.stationary_laden_streaks.entry(trader).or_default();
-            *streak += 1;
-            self.maximum_stationary_laden_streak =
-                self.maximum_stationary_laden_streak.max(*streak);
-        }
+        update_streaks(
+            &stationary_laden,
+            &mut self.stationary_laden_streaks,
+            &mut self.maximum_stationary_laden_streak,
+        );
+        let claims = snapshot
+            .energy_contracts
+            .iter()
+            .filter(|row| {
+                matches!(
+                    row.contract.state,
+                    EnergyContractState::DeadheadingToSource { .. }
+                )
+            })
+            .map(|row| row.contract.id)
+            .collect::<BTreeSet<_>>();
+        update_streaks(
+            &claims,
+            &mut self.active_claim_streaks,
+            &mut self.maximum_active_claim_streak,
+        );
+        let locked = snapshot
+            .traders
+            .iter()
+            .filter_map(|trader| trader.bulk_energy.locked.map(|lot| lot.contract_id))
+            .collect::<BTreeSet<_>>();
+        update_streaks(
+            &locked,
+            &mut self.locked_lot_streaks,
+            &mut self.maximum_locked_lot_streak,
+        );
+        let recovering = snapshot
+            .energy_contracts
+            .iter()
+            .filter(|row| matches!(row.contract.state, EnergyContractState::Recovering { .. }))
+            .map(|row| row.contract.id)
+            .collect::<BTreeSet<_>>();
+        update_streaks(
+            &recovering,
+            &mut self.recovery_streaks,
+            &mut self.maximum_recovery_streak,
+        );
+        let active_carriers = snapshot
+            .energy_contracts
+            .iter()
+            .map(|row| row.contract.carrier.clone())
+            .collect::<BTreeSet<_>>();
+        let stationary_contract_carriers = snapshot
+            .traders
+            .iter()
+            .filter(|trader| {
+                !trader.player && trader.travel.is_none() && active_carriers.contains(&trader.id)
+            })
+            .map(|trader| trader.id.clone())
+            .collect::<BTreeSet<_>>();
+        update_streaks(
+            &stationary_contract_carriers,
+            &mut self.stationary_contract_carrier_streaks,
+            &mut self.maximum_stationary_contract_carrier_streak,
+        );
     }
 
     fn finish(self, snapshot: &CoreSnapshot, reconciliation: ReconciliationReport) -> SoakSummary {
+        let final_claims = snapshot
+            .energy_contracts
+            .iter()
+            .filter_map(|row| match row.contract.state {
+                EnergyContractState::DeadheadingToSource { source_claim, .. } => Some(source_claim),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let final_locked = snapshot
+            .traders
+            .iter()
+            .filter_map(|trader| trader.bulk_energy.locked)
+            .collect::<Vec<_>>();
+        let mut archetype_counts = snapshot
+            .fleet
+            .archetypes
+            .keys()
+            .cloned()
+            .map(|archetype| (archetype, 0_u64))
+            .collect::<BTreeMap<_, _>>();
+        for archetype in snapshot
+            .traders
+            .iter()
+            .filter(|trader| !trader.player)
+            .filter_map(|trader| trader.archetype.clone())
+        {
+            *archetype_counts.entry(archetype).or_default() += 1;
+        }
         SoakSummary {
             initial_populations: self.initial_populations,
             minimum_populations: self.minimum_populations,
@@ -684,12 +1037,53 @@ impl SoakTracker {
             final_stability_minimums: self.final_stability_minimums,
             final_stability_maximums: self.final_stability_maximums,
             minimum_aggregate_population: self.minimum_aggregate_population,
+            ordinary_trades: self.ordinary_trades,
+            production_events: self.production_events,
             final_window_trades: self.final_window_trades,
+            final_window_production: self.final_window_production,
+            contracts_accepted: self.contracts_accepted,
+            contracts_loaded: self.contracts_loaded,
+            contract_settlement_events: self.contract_settlement_events,
+            contract_settled_energy: self.contract_settled_energy,
+            contracts_completed: self.contracts_completed,
+            contracts_recovered: self.contracts_recovered,
+            recovery_curtailment_events: self.recovery_curtailment_events,
+            recovery_curtailed_energy: self.recovery_curtailed_energy,
+            contract_rejections: self.contract_rejections,
+            final_window_contract_settlements: self.final_window_contract_settlements,
+            final_window_contract_completions: self.final_window_contract_completions,
+            final_window_contract_settled_energy: self.final_window_contract_settled_energy,
             final_window_stage_transitions: self.final_window_stage_transitions,
             post_midpoint_stage_transitions: self.post_midpoint_stage_transitions,
             population_changes: self.population_changes,
             maximum_stationary_laden_streak: self.maximum_stationary_laden_streak,
+            maximum_active_claim_streak: self.maximum_active_claim_streak,
+            maximum_locked_lot_streak: self.maximum_locked_lot_streak,
+            maximum_recovery_streak: self.maximum_recovery_streak,
+            maximum_stationary_contract_carrier_streak: self
+                .maximum_stationary_contract_carrier_streak,
             final_window_ticks: self.ticks.min(FINAL_ACTIVITY_WINDOW_TICKS),
+            final_active_contracts: snapshot.energy_contracts.len() as u64,
+            final_active_claims: final_claims.len() as u64,
+            final_claimed_energy: final_claims.iter().map(|amount| i128::from(amount.0)).sum(),
+            final_locked_lots: final_locked.len() as u64,
+            final_locked_energy: final_locked
+                .iter()
+                .map(|lot| i128::from(lot.amount.0))
+                .sum(),
+            final_recovering_contracts: snapshot
+                .energy_contracts
+                .iter()
+                .filter(|row| matches!(row.contract.state, EnergyContractState::Recovering { .. }))
+                .count() as u64,
+            final_d10_rows: snapshot.energy_starvation.len() as u64,
+            current_d10_unclassified: self.current_d10_unclassified,
+            current_d10_extra: self.current_d10_extra,
+            d10_unsupplied_rows: self.d10_unsupplied_rows,
+            d10_attribution_consistent: self.d10_attribution_consistent,
+            energy_logistics: snapshot.energy_logistics.clone(),
+            archetype_counts,
+            archetype_activity: self.archetype_activity,
             final_stages: snapshot
                 .markets
                 .iter()
@@ -709,6 +1103,19 @@ impl SoakTracker {
             dynamics_history: snapshot.dynamics_history.clone(),
             reconciliation,
         }
+    }
+}
+
+fn update_streaks<T: Clone + Ord>(
+    current: &BTreeSet<T>,
+    streaks: &mut BTreeMap<T, u64>,
+    maximum: &mut u64,
+) {
+    streaks.retain(|key, _| current.contains(key));
+    for key in current {
+        let streak = streaks.entry(key.clone()).or_default();
+        *streak += 1;
+        *maximum = (*maximum).max(*streak);
     }
 }
 
@@ -750,8 +1157,40 @@ fn validate_metastability(summary: &SoakSummary, label: &str) -> Result<()> {
         "{label} soak has a severe population ratchet: {initial_population} -> {final_population}"
     );
     anyhow::ensure!(
-        summary.final_window_trades > 0 && summary.final_window_stage_transitions > 0,
-        "{label} soak lost final-window trade/stage activity"
+        summary.reconciliation.expected == summary.reconciliation.actual,
+        "{label} soak failed exact physical Energy reconciliation"
+    );
+    anyhow::ensure!(
+        summary.ordinary_trades > 0
+            && summary.production_events > 0
+            && summary.final_window_trades > 0
+            && summary.final_window_production > 0
+            && summary.final_window_stage_transitions > 0,
+        "{label} soak lost ordinary production/trade or world-dynamics activity"
+    );
+    anyhow::ensure!(
+        summary.contracts_accepted > 0
+            && summary.contracts_completed > 0
+            && summary.final_window_contract_settlements > 0
+            && summary.final_window_contract_completions > 0,
+        "{label} soak lost overall or final-window Energy contract activity"
+    );
+    let cumulative_d10 = summary
+        .energy_logistics
+        .arrived_settlement_blocked
+        .saturating_add(summary.energy_logistics.accepted_delivery_pending)
+        .saturating_add(summary.energy_logistics.no_reachable_surplus)
+        .saturating_add(summary.energy_logistics.no_viable_candidate)
+        .saturating_add(summary.energy_logistics.viable_but_unaccepted);
+    anyhow::ensure!(
+        summary.d10_attribution_consistent
+            && summary.current_d10_unclassified == 0
+            && summary.current_d10_extra == 0
+            && cumulative_d10 == summary.d10_unsupplied_rows,
+        "{label} soak has inconsistent D10 attribution: cumulative={cumulative_d10} observed={} current_unclassified={} current_extra={}",
+        summary.d10_unsupplied_rows,
+        summary.current_d10_unclassified,
+        summary.current_d10_extra,
     );
     anyhow::ensure!(
         summary.post_midpoint_stage_transitions > 0,
@@ -780,6 +1219,19 @@ fn validate_metastability(summary: &SoakSummary, label: &str) -> Result<()> {
         summary.maximum_stationary_laden_streak < summary.final_window_ticks,
         "{label} soak has a stationary laden deadlock"
     );
+    anyhow::ensure!(
+        summary.maximum_active_claim_streak < summary.final_window_ticks
+            && summary.maximum_locked_lot_streak < summary.final_window_ticks
+            && summary.maximum_recovery_streak < summary.final_window_ticks,
+        "{label} soak has a permanent Energy claim/locked lot/recovery loop: final_claims={} final_locked_lots={} final_recovering={}",
+        summary.final_active_claims,
+        summary.final_locked_lots,
+        summary.final_recovering_contracts,
+    );
+    anyhow::ensure!(
+        summary.maximum_stationary_contract_carrier_streak < summary.final_window_ticks,
+        "{label} soak has a stationary contract-carrier deadlock"
+    );
     Ok(())
 }
 
@@ -796,6 +1248,14 @@ fn compare_deterministic_outcomes(
             && baseline.market_energy_flows == comparison.market_energy_flows
             && baseline.global_energy_flow == comparison.global_energy_flow
             && baseline.dynamics_history == comparison.dynamics_history
+            && baseline.energy_logistics == comparison.energy_logistics
+            && baseline.final_active_contracts == comparison.final_active_contracts
+            && baseline.final_active_claims == comparison.final_active_claims
+            && baseline.final_claimed_energy == comparison.final_claimed_energy
+            && baseline.final_locked_lots == comparison.final_locked_lots
+            && baseline.final_locked_energy == comparison.final_locked_energy
+            && baseline.archetype_counts == comparison.archetype_counts
+            && baseline.archetype_activity == comparison.archetype_activity
             && baseline.reconciliation == comparison.reconciliation,
         "{label} insertion-order outcome diverged"
     );
@@ -803,17 +1263,77 @@ fn compare_deterministic_outcomes(
 }
 
 fn format_soak_summary(summary: &SoakSummary) -> String {
+    let archetypes = summary
+        .archetype_counts
+        .iter()
+        .map(|(id, count)| {
+            let activity = summary.archetype_activity.get(id).cloned().unwrap_or_default();
+            format!(
+                "{}:active={},spawns={},retirements={},ordinary={},accepted={},loaded={},settlements={},settled={},completed={},recovered={},recovery_curtailed={},final_settlements={},final_completions={}",
+                id,
+                count,
+                activity.spawns,
+                activity.retirements,
+                activity.ordinary_trades,
+                activity.contracts_accepted,
+                activity.contracts_loaded,
+                activity.contract_settlement_events,
+                activity.contract_settled_energy,
+                activity.contracts_completed,
+                activity.contracts_recovered,
+                activity.recovery_curtailed_energy,
+                activity.final_window_contract_settlements,
+                activity.final_window_contract_completions,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let d10 = &summary.energy_logistics;
     format!(
-        "population={}->{} minimum_population={} population_changes={} stage_transitions={} post_midpoint_transitions={} final_window_trades={} final_window_stage_transitions={} max_stationary_laden_streak={}",
+        "population={}->{} minimum_population={} population_changes={} stage_transitions={} post_midpoint_transitions={} ordinary_trades={} production={} final_window_ordinary_trades={} final_window_production={} contracts_accepted={} contracts_loaded={} contract_settlements={} contract_settled={} contracts_completed={} contracts_recovered={} recovery_curtailment_events={} recovery_curtailed={} contract_rejections={} final_window_contract_settlements={} final_window_contract_settled={} final_window_contract_completions={} final_active_contracts={} final_claims={}/{} final_locked_lots={}/{} final_recovering={} d10_arrived_blocked={} d10_pending={} d10_no_surplus={} d10_no_viable={} d10_unaccepted={} d10_current_rows={} d10_current_unclassified={} d10_current_extra={} final_window_stage_transitions={} max_stationary_laden_streak={} max_claim_streak={} max_locked_streak={} max_recovery_streak={} max_stationary_contract_carrier_streak={} archetypes=[{}]",
         summary.initial_populations.values().sum::<u64>(),
         summary.final_populations.values().sum::<u64>(),
         summary.minimum_aggregate_population,
         summary.population_changes,
         summary.dynamics_history.stage_transitions,
         summary.post_midpoint_stage_transitions,
+        summary.ordinary_trades,
+        summary.production_events,
         summary.final_window_trades,
+        summary.final_window_production,
+        summary.contracts_accepted,
+        summary.contracts_loaded,
+        summary.contract_settlement_events,
+        summary.contract_settled_energy,
+        summary.contracts_completed,
+        summary.contracts_recovered,
+        summary.recovery_curtailment_events,
+        summary.recovery_curtailed_energy,
+        summary.contract_rejections,
+        summary.final_window_contract_settlements,
+        summary.final_window_contract_settled_energy,
+        summary.final_window_contract_completions,
+        summary.final_active_contracts,
+        summary.final_active_claims,
+        summary.final_claimed_energy,
+        summary.final_locked_lots,
+        summary.final_locked_energy,
+        summary.final_recovering_contracts,
+        d10.arrived_settlement_blocked,
+        d10.accepted_delivery_pending,
+        d10.no_reachable_surplus,
+        d10.no_viable_candidate,
+        d10.viable_but_unaccepted,
+        summary.final_d10_rows,
+        summary.current_d10_unclassified,
+        summary.current_d10_extra,
         summary.final_window_stage_transitions,
         summary.maximum_stationary_laden_streak,
+        summary.maximum_active_claim_streak,
+        summary.maximum_locked_lot_streak,
+        summary.maximum_recovery_streak,
+        summary.maximum_stationary_contract_carrier_streak,
+        archetypes,
     )
 }
 
@@ -825,10 +1345,9 @@ fn run_compact_soak(definition: GameDefinition, ticks: u64) -> Result<SoakSummar
     let mut tracker = SoakTracker::new(&initial, ticks);
     for tick in 1..=ticks {
         session.step()?;
-        for event in session.drain_events() {
-            tracker.observe_event(tick, &event);
-        }
-        tracker.observe_snapshot(tick, &session.snapshot());
+        let events = session.drain_events();
+        let snapshot = session.snapshot();
+        tracker.observe_tick(tick, &events, &snapshot);
     }
     let snapshot = session.snapshot();
     let reconciliation = reconcile_energy(&snapshot, initial_physical)
@@ -1025,13 +1544,13 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
     println!("Economy diagnostics: ticks={ticks}, interval={REPORT_INTERVAL}, pricing_mode={mode}");
     for tick in 1..=ticks {
         session.step()?;
-        for event in session.drain_events() {
-            soak_tracker.observe_event(tick, &event);
+        let events = session.drain_events();
+        for event in &events {
             match event {
-                GameEvent::Bought { .. } => activity.trades += 1,
+                GameEvent::Bought { .. } => activity.ordinary_trades += 1,
                 GameEvent::Sold { partial, .. } => {
-                    activity.trades += 1;
-                    activity.partial_sales += u64::from(partial);
+                    activity.ordinary_trades += 1;
+                    activity.partial_sales += u64::from(*partial);
                 }
                 GameEvent::ReservationCreated { .. } => activity.reservations += 1,
                 GameEvent::Departed { .. } => activity.departures += 1,
@@ -1045,8 +1564,34 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
                 }
                 GameEvent::TraderSpawned { .. } => activity.fleet_spawns += 1,
                 GameEvent::TraderRetired { .. } => activity.fleet_retirements += 1,
-                GameEvent::EnergyLogistics(_)
-                | GameEvent::ExternalDeliveryRecorded { .. }
+                GameEvent::EnergyLogistics(logistics) => match logistics {
+                    EnergyContractEvent::Accepted { .. } => activity.contracts_accepted += 1,
+                    EnergyContractEvent::Loaded { .. } => activity.contracts_loaded += 1,
+                    EnergyContractEvent::Settled { amount, .. } => {
+                        activity.contract_settlement_events += 1;
+                        activity.contract_settled_energy += i128::from(amount.0);
+                    }
+                    EnergyContractEvent::RecoveryCurtailed { amount, .. } => {
+                        activity.recovery_curtailment_events += 1;
+                        activity.recovery_curtailed_energy += i128::from(amount.0);
+                    }
+                    EnergyContractEvent::Terminal { outcome, .. } => match outcome {
+                        EnergyContractTerminalOutcome::Completed => {
+                            activity.contracts_completed += 1;
+                        }
+                        EnergyContractTerminalOutcome::RecoveredAfterFailure => {
+                            activity.contracts_recovered += 1;
+                        }
+                        EnergyContractTerminalOutcome::CancelledBeforeLoad
+                        | EnergyContractTerminalOutcome::RevokedBeforeLoad
+                        | EnergyContractTerminalOutcome::RejectedBeforeLoad => {}
+                    },
+                    EnergyContractEvent::Rejected { .. } => activity.contract_rejections += 1,
+                    EnergyContractEvent::Departed { .. }
+                    | EnergyContractEvent::OwnedBulkTransferredToTank { .. }
+                    | EnergyContractEvent::OwnedBulkDepositedToMarket { .. } => {}
+                },
+                GameEvent::ExternalDeliveryRecorded { .. }
                 | GameEvent::BrownoutTransition { .. }
                 | GameEvent::PopulationChanged { .. }
                 | GameEvent::PopulationTierChanged { .. }
@@ -1062,7 +1607,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
             }
         }
         let tick_snapshot = session.snapshot();
-        soak_tracker.observe_snapshot(tick, &tick_snapshot);
+        soak_tracker.observe_tick(tick, &events, &tick_snapshot);
         update_cycle_amplitudes(&mut cycle_amplitudes, &tick_snapshot);
         if tick % REPORT_INTERVAL == 0 || tick == ticks {
             let snapshot = tick_snapshot;
@@ -1077,8 +1622,8 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
                 }
             }
             println!(
-                "tick={tick} trades={} partial_sales={} reservations={} departures={} arrivals={} produced={} generated={} life_support_unsupplied={} npc_fleet_size={} npc_traveling={traveling} npc_idle={idle} npc_stationary_laden={blocked_laden} fleet_spawns={} fleet_retirements={} normalized_unserved_opportunity_per_system={} opportunity_persistence={}",
-                activity.trades,
+                "tick={tick} ordinary_trades={} partial_sales={} reservations={} departures={} arrivals={} produced={} generated={} life_support_unsupplied={} contracts_accepted={} contracts_loaded={} contract_settlement_events={} contract_settled_energy={} contracts_completed={} contracts_recovered={} recovery_curtailment_events={} recovery_curtailed_energy={} contract_rejections={} npc_fleet_size={} npc_traveling={traveling} npc_idle={idle} npc_stationary_laden={blocked_laden} fleet_spawns={} fleet_retirements={} normalized_unserved_opportunity_per_system={} opportunity_persistence={}",
+                activity.ordinary_trades,
                 activity.partial_sales,
                 activity.reservations,
                 activity.departures,
@@ -1086,6 +1631,15 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
                 activity.produced,
                 activity.generated,
                 activity.life_support_unsupplied,
+                activity.contracts_accepted,
+                activity.contracts_loaded,
+                activity.contract_settlement_events,
+                activity.contract_settled_energy,
+                activity.contracts_completed,
+                activity.contracts_recovered,
+                activity.recovery_curtailment_events,
+                activity.recovery_curtailed_energy,
+                activity.contract_rejections,
                 traveling + idle + blocked_laden,
                 activity.fleet_spawns,
                 activity.fleet_retirements,
@@ -1093,6 +1647,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
                 snapshot.fleet.opportunity_persistence,
             );
             println!("{}", format_network_dynamics(&snapshot));
+            println!("{}", format_energy_logistics(&snapshot));
             for market in &snapshot.markets {
                 let previous = previous_report_stocks
                     .get(&market.system_id)
@@ -1109,6 +1664,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
     let reconciliation = reconcile_energy(&snapshot, initial_physical)
         .context("economy diagnostic energy reconciliation failed")?;
     println!("{}", format_reconciliation(&reconciliation));
+    println!("{}", format_energy_logistics(&snapshot));
     println!("markets:");
     for market in &snapshot.markets {
         let flow = market.energy_flow;
@@ -1242,23 +1798,31 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
     for trader in snapshot.traders.iter().filter(|trader| !trader.player) {
         let state = if trader.travel.is_some() {
             "traveling"
-        } else if trader.cargo.is_empty() {
+        } else if trader.cargo.is_empty()
+            && trader.bulk_energy.owned.0 == 0
+            && trader.bulk_energy.locked.is_none()
+        {
             "idle"
         } else {
             "stationary-laden"
         };
-        let bay_energy = trader
-            .cargo
-            .iter()
-            .find(|(good, _)| good.as_str() == ENERGY_ID)
-            .map_or(0, |(_, quantity)| *quantity);
+        let locked_bulk = trader.bulk_energy.locked.map_or(0, |lot| lot.amount.0);
+        let ordinary_sales = i128::from(trader.ledger.sales_revenue.0)
+            - i128::from(trader.ledger.contract_reimbursement.0);
+        let ordinary_travel = i128::from(trader.ledger.travel_cost.0)
+            - i128::from(trader.ledger.reimbursed_travel_cost.0);
+        let ordinary_profit =
+            ordinary_sales - i128::from(trader.ledger.purchase_cost.0) - ordinary_travel;
         println!(
-            "  {} state={state} system={} tank={}/{} bay_energy={} cargo_units={}/{} reservation={:?} retirement={:?} failed_liquidation_ticks={} profitability_window=[{}] transactions={} net_trade_energy={}",
+            "  {} state={state} system={} archetype={} tank={}/{} owned_bulk={} locked_bulk={} bulk_capacity={} cargo_units={}/{} reservation={:?} retirement={:?} failed_liquidation_ticks={} profitability_window=[{}] transactions={} ordinary_trade_profit={} contract_reimbursement={} reimbursed_travel={}",
             trader.name,
             trader.system,
+            trader.archetype.as_ref().map_or("none", ContentId::as_str),
             trader.energy_tank.0,
             trader.energy_tank_capacity.0,
-            bay_energy,
+            trader.bulk_energy.owned.0,
+            locked_bulk,
+            trader.bulk_energy_capacity.0,
             trader.cargo.values().sum::<u64>(),
             trader.cargo_capacity,
             trader.reservation,
@@ -1266,12 +1830,14 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
             trader.failed_liquidation_ticks,
             format_profitability_window(&trader.profitability_window),
             trader.ledger.completed_transactions,
-            i128::from(trader.ledger.sales_revenue.0)
-                - i128::from(trader.ledger.purchase_cost.0)
-                - i128::from(trader.ledger.travel_cost.0),
+            ordinary_profit,
+            trader.ledger.contract_reimbursement.0,
+            trader.ledger.reimbursed_travel_cost.0,
         );
     }
-    Ok(soak_tracker.finish(&snapshot, reconciliation))
+    let summary = soak_tracker.finish(&snapshot, reconciliation);
+    println!("soak_summary {}", format_soak_summary(&summary));
+    Ok(summary)
 }
 
 fn market_health(market: &game_core::MarketSnapshot) -> &'static str {
@@ -1295,14 +1861,14 @@ fn checked_total(values: impl IntoIterator<Item = i128>, label: &str) -> Result<
 fn physical_energy_from_parts(
     markets: impl IntoIterator<Item = i128>,
     tanks: impl IntoIterator<Item = i128>,
-    cargo: impl IntoIterator<Item = i128>,
+    bulk: impl IntoIterator<Item = i128>,
 ) -> Result<i128> {
     let markets = checked_total(markets, "market energy total")?;
     let tanks = checked_total(tanks, "tank energy total")?;
-    let cargo = checked_total(cargo, "energy cargo total")?;
+    let bulk = checked_total(bulk, "bulk energy total")?;
     markets
         .checked_add(tanks)
-        .and_then(|value| value.checked_add(cargo))
+        .and_then(|value| value.checked_add(bulk))
         .context("physical energy total overflow")
 }
 
@@ -1333,7 +1899,7 @@ fn physical_energy(snapshot: &CoreSnapshot) -> Result<i128> {
     )
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct ReconciliationReport {
     initial: i128,
     external_inflow: i128,
@@ -1344,15 +1910,125 @@ struct ReconciliationReport {
     actual: i128,
     market_to_tank: i128,
     tank_to_market: i128,
-    market_to_energy_cargo: i128,
-    energy_cargo_to_market: i128,
+    source_loaded: i128,
+    destination_delivered: i128,
+    allocation_converted: i128,
+    owned_bulk_deposited: i128,
+    recovery_returned: i128,
+    recovery_curtailed: i128,
 }
 
 fn reconcile_energy(
     snapshot: &CoreSnapshot,
     initial_physical: i128,
 ) -> Result<ReconciliationReport> {
+    for market in &snapshot.markets {
+        market
+            .energy_flow
+            .validate_contract_channels()
+            .with_context(|| {
+                format!(
+                    "named Energy logistics channels do not reconcile for {}",
+                    market.system_id
+                )
+            })?;
+    }
     let flow = snapshot.energy_flow;
+    let named_aggregates =
+        [
+            (
+                "source_loaded",
+                checked_total(
+                    snapshot
+                        .markets
+                        .iter()
+                        .map(|market| i128::from(market.energy_flow.contract_source_loaded.0)),
+                    "source-loaded Energy",
+                )?,
+                i128::from(flow.contract_source_loaded.0),
+            ),
+            (
+                "destination_delivered",
+                checked_total(
+                    snapshot.markets.iter().map(|market| {
+                        i128::from(market.energy_flow.contract_destination_delivered.0)
+                    }),
+                    "destination-delivered Energy",
+                )?,
+                i128::from(flow.contract_destination_delivered.0),
+            ),
+            (
+                "allocation_converted",
+                checked_total(
+                    snapshot.markets.iter().map(|market| {
+                        i128::from(market.energy_flow.contract_allocation_converted.0)
+                    }),
+                    "allocation-converted Energy",
+                )?,
+                i128::from(flow.contract_allocation_converted.0),
+            ),
+            (
+                "owned_bulk_deposited",
+                checked_total(
+                    snapshot
+                        .markets
+                        .iter()
+                        .map(|market| i128::from(market.energy_flow.owned_bulk_deposited.0)),
+                    "owned-bulk-deposited Energy",
+                )?,
+                i128::from(flow.owned_bulk_deposited.0),
+            ),
+            (
+                "recovery_returned",
+                checked_total(
+                    snapshot
+                        .markets
+                        .iter()
+                        .map(|market| i128::from(market.energy_flow.contract_recovery_returned.0)),
+                    "recovery-returned Energy",
+                )?,
+                i128::from(flow.contract_recovery_returned.0),
+            ),
+            (
+                "recovery_curtailed",
+                checked_total(
+                    snapshot
+                        .markets
+                        .iter()
+                        .map(|market| i128::from(market.energy_flow.contract_recovery_curtailed.0)),
+                    "recovery-curtailed Energy",
+                )?,
+                i128::from(flow.contract_recovery_curtailed.0),
+            ),
+        ];
+    for (channel, market_total, global_total) in named_aggregates {
+        anyhow::ensure!(
+            market_total == global_total,
+            "named Energy logistics channels do not reconcile for {channel}: markets={market_total}, global={global_total}"
+        );
+    }
+    let active_locked = checked_total(
+        snapshot
+            .energy_contracts
+            .iter()
+            .map(|contract| i128::from(contract.locked_amount.0)),
+        "active locked contract Energy",
+    )?;
+    let accounted_loaded = checked_total(
+        [
+            i128::from(flow.contract_destination_delivered.0),
+            i128::from(flow.contract_allocation_converted.0),
+            i128::from(flow.contract_recovery_returned.0),
+            i128::from(flow.contract_recovery_curtailed.0),
+            active_locked,
+        ],
+        "contract source-load decomposition",
+    )?;
+    anyhow::ensure!(
+        i128::from(flow.contract_source_loaded.0) == accounted_loaded,
+        "named Energy logistics channels do not reconcile: source_loaded={}, accounted={accounted_loaded}",
+        i128::from(flow.contract_source_loaded.0)
+    );
     let external_inflow = i128::from(flow.external_inflow.0);
     let generated = i128::from(flow.generated.0);
     let burned = checked_total(
@@ -1390,14 +2066,111 @@ fn reconcile_energy(
         actual,
         market_to_tank: i128::from(flow.market_to_tank.0),
         tank_to_market: i128::from(flow.tank_to_market.0),
-        market_to_energy_cargo: i128::from(flow.market_to_energy_cargo.0),
-        energy_cargo_to_market: i128::from(flow.energy_cargo_to_market.0),
+        source_loaded: i128::from(flow.contract_source_loaded.0),
+        destination_delivered: i128::from(flow.contract_destination_delivered.0),
+        allocation_converted: i128::from(flow.contract_allocation_converted.0),
+        owned_bulk_deposited: i128::from(flow.owned_bulk_deposited.0),
+        recovery_returned: i128::from(flow.contract_recovery_returned.0),
+        recovery_curtailed: i128::from(flow.contract_recovery_curtailed.0),
     })
+}
+
+fn format_energy_logistics(snapshot: &CoreSnapshot) -> String {
+    let mut deadheading = 0_u64;
+    let mut in_transit = 0_u64;
+    let mut arrived = 0_u64;
+    let mut recovering = 0_u64;
+    let mut source_claims = 0_u64;
+    let mut claimed_energy = 0_i128;
+    for row in &snapshot.energy_contracts {
+        match row.contract.state {
+            EnergyContractState::DeadheadingToSource { source_claim, .. } => {
+                deadheading += 1;
+                source_claims += 1;
+                claimed_energy += i128::from(source_claim.0);
+            }
+            EnergyContractState::InTransit { .. } => in_transit += 1,
+            EnergyContractState::Arrived { .. } => arrived += 1,
+            EnergyContractState::Recovering { .. } => recovering += 1,
+        }
+    }
+    let locked_lots = snapshot
+        .traders
+        .iter()
+        .filter_map(|trader| trader.bulk_energy.locked)
+        .collect::<Vec<_>>();
+    let locked_energy = locked_lots
+        .iter()
+        .map(|lot| i128::from(lot.amount.0))
+        .sum::<i128>();
+    let mut current_d10 = [0_u64; 5];
+    for cause in snapshot.energy_starvation.values() {
+        let index = match cause {
+            EnergyStarvationCause::ArrivedSettlementBlocked => 0,
+            EnergyStarvationCause::AcceptedDeliveryPending => 1,
+            EnergyStarvationCause::NoReachableSurplus => 2,
+            EnergyStarvationCause::NoViableCandidate => 3,
+            EnergyStarvationCause::ViableButUnaccepted => 4,
+        };
+        current_d10[index] += 1;
+    }
+    let mut archetypes = snapshot
+        .fleet
+        .archetypes
+        .keys()
+        .cloned()
+        .map(|archetype| (archetype, 0_u64))
+        .collect::<BTreeMap<_, _>>();
+    for archetype in snapshot
+        .traders
+        .iter()
+        .filter(|trader| !trader.player)
+        .filter_map(|trader| trader.archetype.clone())
+    {
+        *archetypes.entry(archetype).or_default() += 1;
+    }
+    let archetypes = archetypes
+        .iter()
+        .map(|(id, count)| format!("{id}:{count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let diagnostics = &snapshot.energy_logistics;
+    format!(
+        "energy_logistics active_contracts={} states[deadheading={} in_transit={} arrived={} recovering={}] source_claims={} claimed_energy={} locked_lots={} locked_energy={} accepted={} completed={} cancelled={} revoked={} rejected={} recovered={} recovery_curtailed={} d10_arrived_blocked={} d10_pending={} d10_no_surplus={} d10_no_viable={} d10_unaccepted={} d10_current_rows={} d10_current[arrived_blocked={} pending={} no_surplus={} no_viable={} unaccepted={}] archetypes=[{}]",
+        snapshot.energy_contracts.len(),
+        deadheading,
+        in_transit,
+        arrived,
+        recovering,
+        source_claims,
+        claimed_energy,
+        locked_lots.len(),
+        locked_energy,
+        diagnostics.accepted,
+        diagnostics.completed,
+        diagnostics.cancelled_before_load,
+        diagnostics.revoked_before_load,
+        diagnostics.rejected_before_load,
+        diagnostics.recovered_after_failure,
+        diagnostics.recovery_curtailed.0,
+        diagnostics.arrived_settlement_blocked,
+        diagnostics.accepted_delivery_pending,
+        diagnostics.no_reachable_surplus,
+        diagnostics.no_viable_candidate,
+        diagnostics.viable_but_unaccepted,
+        snapshot.energy_starvation.len(),
+        current_d10[0],
+        current_d10[1],
+        current_d10[2],
+        current_d10[3],
+        current_d10[4],
+        archetypes,
+    )
 }
 
 fn format_reconciliation(report: &ReconciliationReport) -> String {
     format!(
-        "energy_reconciliation initial={} external_inflow={} generated={} burned={} curtailed={} expected={} actual={} difference=0 status=ok physical_transfers market_to_tank={} tank_to_market={} market_to_energy_cargo={} energy_cargo_to_market={}",
+        "energy_reconciliation initial={} external_inflow={} generated={} burned={} curtailed={} expected={} actual={} difference=0 status=ok physical_transfers market_to_tank={} tank_to_market={} contract_channels source_loaded={} destination_delivered={} allocation_converted={} owned_bulk_deposited={} recovery_returned={} recovery_curtailed={}",
         report.initial,
         report.external_inflow,
         report.generated,
@@ -1407,8 +2180,12 @@ fn format_reconciliation(report: &ReconciliationReport) -> String {
         report.actual,
         report.market_to_tank,
         report.tank_to_market,
-        report.market_to_energy_cargo,
-        report.energy_cargo_to_market,
+        report.source_loaded,
+        report.destination_delivered,
+        report.allocation_converted,
+        report.owned_bulk_deposited,
+        report.recovery_returned,
+        report.recovery_curtailed,
     )
 }
 
@@ -1436,12 +2213,20 @@ mod tests {
             final_stability_maximums: final_populations.clone(),
             minimum_aggregate_population: minimum.iter().map(|(_, value)| *value).sum(),
             final_populations,
+            ordinary_trades: 1,
+            production_events: 1,
             final_window_trades: 1,
+            final_window_production: 1,
+            contracts_accepted: 1,
+            contracts_completed: 1,
+            final_window_contract_settlements: 1,
+            final_window_contract_completions: 1,
             final_window_stage_transitions: 1,
             post_midpoint_stage_transitions: 1,
             population_changes: 1,
             maximum_stationary_laden_streak: 0,
             final_window_ticks: FINAL_ACTIVITY_WINDOW_TICKS,
+            d10_attribution_consistent: true,
             final_stages: systems
                 .iter()
                 .cloned()
@@ -1463,19 +2248,8 @@ mod tests {
                 population_changes: 1,
                 ..game_core::AggregateDynamicsHistory::default()
             },
-            reconciliation: ReconciliationReport {
-                initial: 0,
-                external_inflow: 0,
-                generated: 0,
-                burned: 0,
-                curtailed: 0,
-                expected: 0,
-                actual: 0,
-                market_to_tank: 0,
-                tank_to_market: 0,
-                market_to_energy_cargo: 0,
-                energy_cargo_to_market: 0,
-            },
+            reconciliation: ReconciliationReport::default(),
+            ..SoakSummary::default()
         }
     }
 
@@ -1656,6 +2430,12 @@ mod tests {
         assert!(output.contains("burned="));
         assert!(output.contains("curtailed="));
         assert!(output.contains("difference=0 status=ok"), "{output}");
+        assert!(output.contains("source_loaded="), "{output}");
+        assert!(output.contains("destination_delivered="), "{output}");
+        assert!(output.contains("allocation_converted="), "{output}");
+        assert!(output.contains("owned_bulk_deposited="), "{output}");
+        assert!(output.contains("recovery_returned="), "{output}");
+        assert!(output.contains("recovery_curtailed="), "{output}");
         let system = format_system_dynamics(&snapshot.markets[0], 2_000);
         assert!(system.contains("net_flow="));
         assert!(system.contains("storage="));
@@ -1668,6 +2448,19 @@ mod tests {
         assert!(network.contains("npc_fleet_size=9"));
         assert!(network.contains("normalized_unserved_opportunity_per_system="));
         assert!(network.contains("opportunity_persistence="));
+        let logistics = format_energy_logistics(&snapshot);
+        assert!(logistics.contains("energy_logistics"), "{logistics}");
+        assert!(logistics.contains("active_contracts="), "{logistics}");
+        assert!(logistics.contains("locked_energy="), "{logistics}");
+        assert!(logistics.contains("accepted="), "{logistics}");
+        assert!(logistics.contains("completed="), "{logistics}");
+        assert!(logistics.contains("recovered="), "{logistics}");
+        assert!(logistics.contains("d10_arrived_blocked="), "{logistics}");
+        assert!(logistics.contains("d10_pending="), "{logistics}");
+        assert!(logistics.contains("d10_no_surplus="), "{logistics}");
+        assert!(logistics.contains("d10_no_viable="), "{logistics}");
+        assert!(logistics.contains("d10_unaccepted="), "{logistics}");
+        assert!(logistics.contains("archetypes=["), "{logistics}");
         let amplitude = CycleAmplitude {
             minimum_effective_output: 5,
             maximum_effective_output: 15,
@@ -1705,6 +2498,16 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(mismatch.contains("reconciliation mismatch"), "{mismatch}");
+
+        let mut named_mismatch = session.snapshot();
+        named_mismatch.markets[0].energy_flow.contract_source_loaded = game_core::Energy(1);
+        let named_error = reconcile_energy(&named_mismatch, initial)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            named_error.contains("named Energy logistics channels do not reconcile"),
+            "{named_error}"
+        );
 
         let calculation_error = physical_energy_from_parts([i128::MAX, 1], [], [])
             .unwrap_err()

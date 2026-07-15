@@ -294,3 +294,27 @@ fn el_d8_timeout_vectors_convert_only_reimbursement_and_recovery() {
         })
     );
 }
+
+#[test]
+fn el_d10_starvation_causes_are_exhaustive_and_priority_ordered() {
+    assert_eq!(
+        starvation_cause(true, true, false, false),
+        EnergyStarvationCause::ArrivedSettlementBlocked
+    );
+    assert_eq!(
+        starvation_cause(false, true, false, false),
+        EnergyStarvationCause::AcceptedDeliveryPending
+    );
+    assert_eq!(
+        starvation_cause(false, false, false, false),
+        EnergyStarvationCause::NoReachableSurplus
+    );
+    assert_eq!(
+        starvation_cause(false, false, true, false),
+        EnergyStarvationCause::NoViableCandidate
+    );
+    assert_eq!(
+        starvation_cause(false, false, true, true),
+        EnergyStarvationCause::ViableButUnaccepted
+    );
+}

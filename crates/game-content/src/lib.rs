@@ -2465,6 +2465,11 @@ mod tests {
             snapshot: String,
             energy_loaded: i64,
             energy_delivered: i64,
+            contracts_accepted: u64,
+            contracts_completed: u64,
+            contracts_recovered: u64,
+            starvation_attributions: u64,
+            unsupplied_destination_ticks: u64,
             trades_after_300: u64,
             production_after_300: u64,
             stage_transitions: u64,
@@ -2485,22 +2490,29 @@ mod tests {
                     .iter()
                     .map(|trader| {
                         trader.energy_tank.0
-                            + i64::try_from(
-                                trader
-                                    .cargo
-                                    .get(&ContentId::new(ENERGY_ID).unwrap())
-                                    .copied()
-                                    .unwrap_or(0),
-                            )
-                            .unwrap()
+                            + trader.bulk_energy.owned.0
+                            + trader.bulk_energy.locked.map_or(0, |lot| lot.amount.0)
                     })
                     .sum::<i64>();
             let mut events = Vec::new();
             let mut trades_after_300 = 0_u64;
             let mut production_after_300 = 0_u64;
+            let mut unsupplied_destination_ticks = 0_u64;
             for tick in 1..=1_000 {
                 session.step().unwrap();
                 let current = session.drain_events();
+                unsupplied_destination_ticks += current
+                    .iter()
+                    .filter(|event| {
+                        matches!(
+                            event,
+                            game_core::GameEvent::LifeSupport {
+                                unsupplied,
+                                ..
+                            } if *unsupplied > Energy::ZERO
+                        )
+                    })
+                    .count() as u64;
                 if tick > 300 {
                     trades_after_300 += current
                         .iter()
@@ -2535,20 +2547,20 @@ mod tests {
             let energy_loaded = final_snapshot
                 .markets
                 .iter()
-                .map(|market| market.energy_flow.market_to_energy_cargo.0)
+                .map(|market| market.energy_flow.contract_source_loaded.0)
                 .sum();
             let energy_delivered = final_snapshot
                 .markets
                 .iter()
-                .map(|market| market.energy_flow.energy_cargo_to_market.0)
+                .map(|market| market.energy_flow.contract_destination_delivered.0)
                 .sum();
             assert!(
                 energy_loaded > 0,
-                "no core:energy was loaded into a cargo bay"
+                "no Energy was loaded into a contract-locked bulk lot"
             );
             assert!(
                 energy_delivered > 0,
-                "no core:energy cargo completed funded settlement"
+                "no Energy contract delivered physical Energy"
             );
             assert!(trades_after_300 > 0, "trade stopped by tick 300");
             assert!(production_after_300 > 0, "production stopped by tick 300");
@@ -2608,14 +2620,8 @@ mod tests {
                     .iter()
                     .map(|trader| {
                         trader.energy_tank.0
-                            + i64::try_from(
-                                trader
-                                    .cargo
-                                    .get(&ContentId::new(ENERGY_ID).unwrap())
-                                    .copied()
-                                    .unwrap_or(0),
-                            )
-                            .unwrap()
+                            + trader.bulk_energy.owned.0
+                            + trader.bulk_energy.locked.map_or(0, |lot| lot.amount.0)
                     })
                     .sum::<i64>();
             let expected_delta = i64::try_from(i128::from(
@@ -2624,11 +2630,30 @@ mod tests {
             .unwrap();
             let reconciliation_difference = final_energy - initial_energy - expected_delta;
             assert_eq!(reconciliation_difference, 0);
+            let diagnostics = &final_snapshot.energy_logistics;
+            let starvation_attributions = diagnostics
+                .arrived_settlement_blocked
+                .checked_add(diagnostics.accepted_delivery_pending)
+                .and_then(|value| value.checked_add(diagnostics.no_reachable_surplus))
+                .and_then(|value| value.checked_add(diagnostics.no_viable_candidate))
+                .and_then(|value| value.checked_add(diagnostics.viable_but_unaccepted))
+                .unwrap();
+            assert_eq!(starvation_attributions, unsupplied_destination_ticks);
+            assert!(
+                diagnostics.accepted > 0,
+                "no Energy contracts were accepted"
+            );
+            assert!(diagnostics.completed > 0, "no Energy contracts completed");
             Outcome {
                 events,
                 snapshot: format!("{final_snapshot:?}"),
                 energy_loaded,
                 energy_delivered,
+                contracts_accepted: diagnostics.accepted,
+                contracts_completed: diagnostics.completed,
+                contracts_recovered: diagnostics.recovered_after_failure,
+                starvation_attributions,
+                unsupplied_destination_ticks,
                 trades_after_300,
                 production_after_300,
                 stage_transitions: final_snapshot.dynamics_history.stage_transitions,
@@ -2641,12 +2666,17 @@ mod tests {
         let second = run(load_directory(root()).unwrap());
         assert_eq!(first, second);
         println!(
-            "1000-tick acceptance: reconciliation_difference={} stage_transitions={} population_changes={} energy_loaded={} energy_delivered={} trades_after_300={} production_after_300={}",
+            "1000-tick acceptance: reconciliation_difference={} stage_transitions={} population_changes={} energy_loaded={} energy_delivered={} contracts_accepted={} contracts_completed={} contracts_recovered={} starvation_attributions={} unsupplied_destination_ticks={} trades_after_300={} production_after_300={}",
             first.reconciliation_difference,
             first.stage_transitions,
             first.population_changes,
             first.energy_loaded,
             first.energy_delivered,
+            first.contracts_accepted,
+            first.contracts_completed,
+            first.contracts_recovered,
+            first.starvation_attributions,
+            first.unsupplied_destination_ticks,
             first.trades_after_300,
             first.production_after_300
         );
