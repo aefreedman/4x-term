@@ -15,7 +15,7 @@ On macOS, run:
 
 See [setup/README.md](setup/README.md) for prerequisites and details.
 
-## Run the prototype
+## Run the game
 
 From the repository root:
 
@@ -23,33 +23,27 @@ From the repository root:
 cargo run -p game-cli
 ```
 
-Controls:
+The interface is organized into five top-level activities:
 
-- `Tab`: move focus
-- Arrow keys or `j`/`k`: move selection
-- `Space`: pause or resume
-- `s`: advance one tick while paused
-- `r`: change tick rate
-- `n`: enter the quantity used by buy and sell commands
-- `b` / `x`: buy or sell the selected quantity of the selected good
-- `Enter`: travel to the selected system
-- `[` / `]`: decrease or increase the governed market's reserve horizon
-- `,` / `.`: decrease or increase the governed market's producer margin
-- `I` / `i`: decrease or increase the selected good's governed import priority
-- `-` / `+`: decrease or increase the selected autonomous investment allocation
-- `?`: show or hide help
-- `q`: quit
+- `F1` **Systems**: `↑`/`↓` or `j`/`k` wraps through systems; `Enter` opens overview detail, including the goods that the system can produce from sources and recipes; `m` opens the selected system's read-only market; `o` changes the sort column; `d` reverses sort direction. Press `F2` to carry the selected destination into a route proposal.
+- `F2` **Trade**: `Tab`/`Shift-Tab` switches between local goods and read-only destination comparisons. `↑`/`↓` or `j`/`k` moves only the active region. `n` changes the reusable quantity; `b`/`s` immediately buys or sells that amount. `Shift-B`/`Shift-S` opens a focused one-transaction order with live cost, capacity, maximum-quantity, and limiting-reason feedback; `m` uses the current maximum, `Enter` confirms, and `Esc` cancels. `t` or `Enter` commits only the displayed travel proposal outside an order; `g` starts or continues the journey, runs the simulation until arrival, and then pauses.
+- `F3` **Governance**: `↑`/`↓` or `j`/`k` selects a row; `Tab`/`Shift-Tab` jumps between policy, market-target, import-priority, and investment sections; `←`/`→` edits an available governed row, including per-good target amounts; `i` inspects the stable Systems selection; `Esc` returns to the governed market. Autonomous markets are explicitly read-only.
+- `F4` **Intelligence**: `↑`/`↓` or `j`/`k` scrolls the bounded event history.
+- `F5` **Encyclopedia**: `Tab`/`Shift-Tab` switches factual manual sections; `↑`/`↓` or `j`/`k` selects an article; `PageUp`/`PageDown` scrolls the selected article. Encyclopedia articles describe game mechanics and catalog reference material separately from controls-only contextual help.
 
-The terminal should be at least 70 columns by 24 rows. The prototype exposes current market information for all systems. Frontier System 01 is the player's authored starting governorship; every other market remains read-only. Governance edits policy through typed application requests, while investments execute autonomously each tick rather than through upkeep clicks.
+Global controls are `Space` to pause/resume, `.` to single-step while paused, `r` to change tick rate, `?` for contextual help, and `q` to quit. Unavailable actions are shown as disabled with a reason.
+
+Terminal dimensions are measured in cells. `80x30` is the minimum supported compact layout and `160x45` enables the regular side-by-side layout; smaller terminals show only resize and quit guidance. The game remains menu- and table-oriented and deliberately does not render a spatial ASCII map. It exposes current market information for all systems. Frontier System 01 is the player's authored starting governorship; every other market remains read-only. Governance edits policy through typed application requests, while investments execute autonomously each tick rather than through upkeep clicks.
 
 ## Designer configuration
 
 Runtime content is stored under `content/`.
 
 - `economy_config.ron` controls global market policy, brownouts, population, all four diminishing-cost investment shapes, default AI allocations, raw-source output, and idle NPC repositioning.
+- `encyclopedia.ron` contains the player-facing manual sections, articles, and paragraphs. Its prose is loaded as content and projected unchanged through the application layer.
 - `economy.ron` controls per-system inventories, demand targets, recipes, raw sources, deterministic seasonal generation, optional investment-allocation overrides, and the optional starting governor.
 - `goods.ron` controls individual base prices.
-- `traders.ron` controls fixed/dynamic fleet mode, initial and maximum count, response/retirement windows, speed, physical starting tank, cargo capacity, naming, and distribution.
+- `traders.ron` controls fixed/dynamic fleet mode, initial and maximum count, response/retirement windows, speed, physical starting tank, cargo capacity, player trade-network access, naming, and distribution.
 
 The dynamic production fleet begins with nine evenly spaced NPC traders and adapts slowly to persistent normalized unserved profitable opportunity.
 

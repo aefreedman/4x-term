@@ -141,7 +141,7 @@ pub struct RecipeDefinition {
     pub margin_percent: Option<u32>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceDefinition {
     pub good: ContentId,
     pub quantity_per_tick: u32,
@@ -667,6 +667,43 @@ pub struct SystemDefinition {
     pub bootstrap_risk_acknowledged: bool,
 }
 
+/// Player progression capability for access to networked trade reservations.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TradeNetworkAccess {
+    /// Player reservation-backed trade commitments are unavailable.
+    #[default]
+    Offline,
+    /// Allows player commands to create reservation-backed trade commitments.
+    ReservationContracts,
+}
+
+/// Canonical constraint that currently caps an immediate local trade.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalTradeLimitReason {
+    TradingUnavailable,
+    MarketQuote,
+    MarketStock,
+    CargoCapacity,
+    TankEnergy,
+    MarketEnergyStorage,
+    UnitsHeld,
+    MarketFunding,
+    TankCapacity,
+    QuantityType,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalTradeQuantityLimit {
+    pub maximum: u32,
+    pub reason: LocalTradeLimitReason,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalTradeLimits {
+    pub buy: LocalTradeQuantityLimit,
+    pub sell: LocalTradeQuantityLimit,
+}
+
 #[derive(Clone, Debug)]
 pub struct TraderDefinition {
     pub id: ContentId,
@@ -706,6 +743,8 @@ pub struct GameDefinition {
     pub recipes: Vec<RecipeDefinition>,
     pub systems: Vec<SystemDefinition>,
     pub traders: Vec<TraderDefinition>,
+    /// Authored initial capability for the one player-controlled trader.
+    pub player_trade_network_access: TradeNetworkAccess,
     pub fleet: FleetDynamics,
     pub economy: EconomyConfig,
 }
@@ -1674,6 +1713,12 @@ struct TraderLifecycle {
     retirement: Option<TraderRetirementState>,
 }
 
+/// Mutable player-only progression state for networked trade capabilities.
+#[derive(Component, Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PlayerTradeNetworkAccess {
+    pub access: TradeNetworkAccess,
+}
+
 #[derive(Component, Clone, Debug)]
 pub struct Trader {
     pub system: ContentId,
@@ -1919,6 +1964,7 @@ pub enum GovernorRejectionReason {
     InvalidPolicy,
     InvalidInvestmentAllocation,
     UnknownMarket,
+    UnknownGood,
     Arithmetic,
 }
 
@@ -1930,6 +1976,7 @@ impl GovernorRejectionReason {
             Self::InvalidPolicy => "invalid market policy",
             Self::InvalidInvestmentAllocation => "invalid investment allocation",
             Self::UnknownMarket => "unknown market",
+            Self::UnknownGood => "unknown good",
             Self::Arithmetic => "policy arithmetic failed",
         }
     }
@@ -2043,6 +2090,11 @@ pub enum GameEvent {
     PolicyChanged {
         system: ContentId,
     },
+    MarketTargetChanged {
+        system: ContentId,
+        good: ContentId,
+        target: u32,
+    },
     Rejected(String),
 }
 
@@ -2086,6 +2138,11 @@ pub enum GameCommand {
     SetGovernorInvestmentPolicy {
         system: ContentId,
         policy: GovernorInvestmentPolicy,
+    },
+    SetGovernorMarketTarget {
+        system: ContentId,
+        good: ContentId,
+        target: u32,
     },
     /// A core-owned, auditable boundary for diagnostics and future adapters.
     /// This is deliberately not exposed through the player application API.
@@ -2135,16 +2192,22 @@ pub enum CoreError {
     InvalidPolicy,
     #[error("player is not authorized to govern this market")]
     UnauthorizedMarketPolicy,
+    #[error("market target must be greater than zero")]
+    InvalidMarketTarget,
     #[error("invalid investment allocation")]
     InvalidInvestmentPolicy,
     #[error("invalid physical definition")]
     InvalidPhysicalDefinition,
     #[error("refuel policy forbids this transfer")]
     RefuelForbidden,
+    #[error("requested quantity {requested} exceeds current maximum {maximum}")]
+    ExactQuantityUnavailable { requested: u32, maximum: u32 },
     #[error("no funded quantity available")]
     Unfunded,
     #[error("reservation not found")]
     ReservationNotFound,
+    #[error("player trade-network access does not permit reservation contracts")]
+    TradeNetworkAccessDenied,
     #[error("invalid world-dynamics configuration")]
     InvalidWorldDynamics,
 }
@@ -2162,6 +2225,9 @@ pub struct MarketSnapshot {
     pub position: Position3,
     pub inventory: BTreeMap<ContentId, u64>,
     pub targets: BTreeMap<ContentId, u32>,
+    pub authored_targets: BTreeMap<ContentId, u32>,
+    pub recipes: Vec<ContentId>,
+    pub sources: Vec<SourceDefinition>,
     pub energy_stock: Energy,
     pub energy_storage_cap: Energy,
     pub reserved_energy: Energy,
@@ -2209,6 +2275,7 @@ pub struct CoreSnapshot {
     pub tick: u64,
     pub markets: Vec<MarketSnapshot>,
     pub investment_shapes: BTreeMap<InvestmentKind, InvestmentShape>,
+    pub player_trade_network_access: TradeNetworkAccess,
     pub traders: Vec<TraderSnapshot>,
     pub reservations: Vec<TradeReservation>,
     pub energy_flow: GlobalEnergyFlowLedger,
@@ -2498,6 +2565,7 @@ impl GameSession {
                 .map(|r| (r.id.clone(), r))
                 .collect(),
         };
+        let player_trade_network_access = definition.player_trade_network_access;
         let mut world = World::new();
         world.insert_resource(graph);
         world.insert_resource(catalog.clone());
@@ -2638,6 +2706,19 @@ impl GameSession {
                     },
                 );
             }
+            let authored_targets = system.targets;
+            let mut effective_targets = authored_targets.clone();
+            for (good, units_per_thousand) in &population_config.tertiary_demand_per_thousand {
+                effective_targets.insert(
+                    good.clone(),
+                    population_demand_target(
+                        authored_targets.get(good).copied().unwrap_or(0),
+                        system.population_state.current,
+                        system.population_state.reference,
+                        *units_per_thousand,
+                    )?,
+                );
+            }
             world.spawn((
                 StableId(system.id),
                 DisplayName(system.name),
@@ -2646,8 +2727,8 @@ impl GameSession {
                 system.policy,
                 Market {
                     inventory: system.inventory,
-                    authored_targets: system.targets.clone(),
-                    targets: system.targets,
+                    authored_targets,
+                    targets: effective_targets,
                     recipes: system.recipes,
                     sources: system.sources,
                     cost_basis: bases,
@@ -2704,7 +2785,12 @@ impl GameSession {
                 },
             ));
             if player {
-                e.insert(PlayerControlled);
+                e.insert((
+                    PlayerControlled,
+                    PlayerTradeNetworkAccess {
+                        access: player_trade_network_access,
+                    },
+                ));
             } else {
                 e.insert(TraderLifecycle::default());
             }
@@ -2755,7 +2841,8 @@ impl GameSession {
             GameCommand::SetMarketPolicy { system, .. }
             | GameCommand::SetInvestmentPolicy { system, .. }
             | GameCommand::SetGovernorMarketPolicy { system, .. }
-            | GameCommand::SetGovernorInvestmentPolicy { system, .. } => Some(system.clone()),
+            | GameCommand::SetGovernorInvestmentPolicy { system, .. }
+            | GameCommand::SetGovernorMarketTarget { system, .. } => Some(system.clone()),
             _ => None,
         };
         let investment_command = matches!(
@@ -2769,8 +2856,16 @@ impl GameSession {
                 self.local_buy(e, &good, quantity)
             }
             GameCommand::Sell { good, quantity } => {
-                let e = self.player_entity()?;
-                self.local_sell(e, &good, quantity, false).map(|_| ())
+                let maximum = self.player_local_trade_limits(&good)?.sell.maximum;
+                if quantity > maximum {
+                    Err(CoreError::ExactQuantityUnavailable {
+                        requested: quantity,
+                        maximum,
+                    })
+                } else {
+                    let e = self.player_entity()?;
+                    self.local_sell(e, &good, quantity, false).map(|_| ())
+                }
             }
             GameCommand::BeginTravel { destination } => {
                 let e = self.player_entity()?;
@@ -2783,11 +2878,20 @@ impl GameSession {
                 quantity,
             } => {
                 let e = self.player_entity()?;
-                let system = self.world.get::<Trader>(e).unwrap().system.clone();
-                if system != origin {
-                    return Err(CoreError::WrongLocation);
+                let trader = self.world.get::<Trader>(e).unwrap();
+                let access = self
+                    .world
+                    .get::<PlayerTradeNetworkAccess>(e)
+                    .ok_or(CoreError::InvalidPlayerCount)?
+                    .access;
+                let system = trader.system.clone();
+                if access != TradeNetworkAccess::ReservationContracts {
+                    Err(CoreError::TradeNetworkAccessDenied)
+                } else if system != origin {
+                    Err(CoreError::WrongLocation)
+                } else {
+                    self.enqueue_commit_request(e, &destination, &good, quantity, true, true)
                 }
-                self.enqueue_commit_request(e, &destination, &good, quantity, true, true)
             }
             GameCommand::DepositTank { amount } => {
                 let e = self.player_entity()?;
@@ -2809,6 +2913,11 @@ impl GameSession {
             GameCommand::SetGovernorInvestmentPolicy { system, policy } => {
                 self.set_player_investment_policy(&system, policy.into())
             }
+            GameCommand::SetGovernorMarketTarget {
+                system,
+                good,
+                target,
+            } => self.set_player_market_target(&system, &good, target),
             GameCommand::RecordExternalDelivery {
                 system,
                 good,
@@ -2830,6 +2939,9 @@ impl GameSession {
                         }
                         CoreError::InvalidInvestmentPolicy if investment_command => {
                             GovernorRejectionReason::InvalidInvestmentAllocation
+                        }
+                        CoreError::Unknown { kind: "good", .. } => {
+                            GovernorRejectionReason::UnknownGood
                         }
                         CoreError::Unknown { .. } => GovernorRejectionReason::UnknownMarket,
                         CoreError::Overflow => GovernorRejectionReason::Arithmetic,
@@ -2937,6 +3049,126 @@ impl GameSession {
             self.bid_quote(market, policy, good)?,
             self.ask_quote(market, policy, good)?,
         ))
+    }
+
+    pub fn player_local_trade_limits(
+        &mut self,
+        good: &ContentId,
+    ) -> Result<LocalTradeLimits, CoreError> {
+        let trader_entity = self.player_entity()?;
+        let trader = self.world.get::<Trader>(trader_entity).unwrap();
+        if trader.travel.is_some() {
+            let unavailable = LocalTradeQuantityLimit {
+                maximum: 0,
+                reason: LocalTradeLimitReason::TradingUnavailable,
+            };
+            return Ok(LocalTradeLimits {
+                buy: unavailable,
+                sell: unavailable,
+            });
+        }
+        let system = trader.system.clone();
+        let tank = trader.energy_tank;
+        let tank_capacity = trader.energy_tank_capacity;
+        let cargo_used = Self::cargo_used(trader)?;
+        let cargo_capacity = u64::from(trader.cargo_capacity);
+        let held = trader.cargo.get(good).copied().unwrap_or(0);
+        let market_entity = self.market_entity(&system)?;
+        let market = self.world.get::<Market>(market_entity).unwrap();
+        let policy = self.world.get::<MarketPolicy>(market_entity).unwrap();
+        let ask = self.ask_quote(market, policy, good)?;
+        let bid = self.bid_quote(market, policy, good)?;
+
+        let buy = if ask.0 <= 0 {
+            LocalTradeQuantityLimit {
+                maximum: 0,
+                reason: LocalTradeLimitReason::MarketQuote,
+            }
+        } else {
+            let mut limit = LocalTradeQuantityLimit {
+                maximum: u32::MAX,
+                reason: LocalTradeLimitReason::QuantityType,
+            };
+            let mut apply = |candidate: u64, reason| {
+                let candidate = u32::try_from(candidate).unwrap_or(u32::MAX);
+                if candidate < limit.maximum {
+                    limit = LocalTradeQuantityLimit {
+                        maximum: candidate,
+                        reason,
+                    };
+                }
+            };
+            apply(
+                market.inventory.get(good).copied().unwrap_or(0),
+                LocalTradeLimitReason::MarketStock,
+            );
+            apply(
+                cargo_capacity.saturating_sub(cargo_used),
+                LocalTradeLimitReason::CargoCapacity,
+            );
+            apply(
+                u64::try_from(tank.0 / ask.0).unwrap_or(0),
+                LocalTradeLimitReason::TankEnergy,
+            );
+            let net_market_energy = if good.as_str() == ENERGY_ID {
+                ask.0.saturating_sub(1)
+            } else {
+                ask.0
+            };
+            if net_market_energy > 0 {
+                let headroom = market
+                    .energy_storage_cap
+                    .0
+                    .saturating_sub(market.energy_stock()?.0);
+                apply(
+                    u64::try_from(headroom / net_market_energy).unwrap_or(0),
+                    LocalTradeLimitReason::MarketEnergyStorage,
+                );
+            }
+            limit
+        };
+
+        let sell = if bid.0 <= 0 {
+            LocalTradeQuantityLimit {
+                maximum: 0,
+                reason: LocalTradeLimitReason::MarketQuote,
+            }
+        } else {
+            let life_support = self
+                .world
+                .resource::<EconomyConfig>()
+                .life_support_burn_per_capita;
+            let funded = market.funded_quantity_for_purchases(
+                policy,
+                life_support,
+                u32::MAX,
+                bid,
+                Energy::ZERO,
+            )?;
+            let mut limit = LocalTradeQuantityLimit {
+                maximum: u32::MAX,
+                reason: LocalTradeLimitReason::QuantityType,
+            };
+            let mut apply = |candidate: u64, reason| {
+                let candidate = u32::try_from(candidate).unwrap_or(u32::MAX);
+                if candidate < limit.maximum {
+                    limit = LocalTradeQuantityLimit {
+                        maximum: candidate,
+                        reason,
+                    };
+                }
+            };
+            apply(held, LocalTradeLimitReason::UnitsHeld);
+            apply(u64::from(funded), LocalTradeLimitReason::MarketFunding);
+            let tank_headroom = tank_capacity.checked_sub(tank)?;
+            apply(
+                u64::try_from(tank_headroom.0 / bid.0).unwrap_or(0),
+                LocalTradeLimitReason::TankCapacity,
+            );
+            limit
+        };
+
+        Ok(LocalTradeLimits { buy, sell })
     }
 
     pub fn market_demand(
@@ -3054,6 +3286,9 @@ impl GameSession {
                 position: pos.0,
                 inventory: m.inventory.clone(),
                 targets: m.targets.clone(),
+                authored_targets: m.authored_targets.clone(),
+                recipes: m.recipes.clone(),
+                sources: m.sources.clone(),
                 energy_stock: m.energy_stock().unwrap_or(Energy(0)),
                 energy_storage_cap: m.energy_storage_cap,
                 reserved_energy: m.reserved_energy,
@@ -3150,10 +3385,18 @@ impl GameSession {
                 aggregate
             },
         );
+        let player_trade_network_access = self
+            .world
+            .query_filtered::<&PlayerTradeNetworkAccess, With<PlayerControlled>>()
+            .iter(&self.world)
+            .next()
+            .expect("validated player access component")
+            .access;
         CoreSnapshot {
             tick: self.tick(),
             markets,
             investment_shapes: self.world.resource::<EconomyConfig>().investments.clone(),
+            player_trade_network_access,
             traders,
             reservations,
             energy_flow,
@@ -3212,7 +3455,7 @@ impl GameSession {
                 .unwrap_or(policy.default_target),
         );
         if target == 0 {
-            return Err(CoreError::InvalidPolicy);
+            return Ok(SCALE);
         }
         let stock = market.inventory.get(good).copied().unwrap_or(0);
         let shortage = target.saturating_sub(stock).min(target);
@@ -3967,6 +4210,51 @@ impl GameSession {
         merged.operating_reserve_ticks = policy.operating_reserve_ticks;
         merged.import_priorities = policy.import_priorities;
         self.apply_market_policy(system, market_entity, merged)
+    }
+
+    fn set_player_market_target(
+        &mut self,
+        system: &ContentId,
+        good: &ContentId,
+        target: u32,
+    ) -> Result<(), CoreError> {
+        let market_entity = self.player_governs(system)?;
+        if target == 0 {
+            return Err(CoreError::InvalidMarketTarget);
+        }
+        if !self.world.resource::<Catalog>().goods.contains_key(good) {
+            return Err(CoreError::Unknown {
+                kind: "good",
+                id: good.to_string(),
+            });
+        }
+        let market = self.world.get::<Market>(market_entity).unwrap();
+        let effective = self
+            .world
+            .resource::<EconomyConfig>()
+            .population
+            .tertiary_demand_per_thousand
+            .get(good)
+            .map_or(Ok(target), |units_per_thousand| {
+                population_demand_target(
+                    target,
+                    market.population_state.current,
+                    market.population_state.reference,
+                    *units_per_thousand,
+                )
+            })?;
+        let mut market = self.world.get_mut::<Market>(market_entity).unwrap();
+        market.authored_targets.insert(good.clone(), target);
+        market.targets.insert(good.clone(), effective);
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::MarketTargetChanged {
+                system: system.clone(),
+                good: good.clone(),
+                target: effective,
+            });
+        Ok(())
     }
 
     fn set_player_investment_policy(
@@ -6409,6 +6697,7 @@ mod tests {
                 refuel_policy: RefuelPolicy::DepositAndWithdraw,
                 player: true,
             }],
+            player_trade_network_access: TradeNetworkAccess::Offline,
             fleet: FleetDynamics {
                 mode: Some(FleetMode::Fixed { count: 0 }),
                 ..FleetDynamics::default()
@@ -7195,8 +7484,97 @@ mod tests {
         assert_eq!(before.energy_tank.0 - after.energy_tank.0, 10);
     }
     #[test]
-    fn energy_cargo_uses_funded_reservation_and_tank_headroom() {
+    fn offline_trade_network_access_rejects_commit_trade_atomically() {
+        let mut denied = GameSession::new(definition()).unwrap();
+        let mut control = GameSession::new(definition()).unwrap();
+        let before = denied.snapshot();
+
+        assert_eq!(
+            denied.submit(GameCommand::CommitTrade {
+                origin: id("core:s0"),
+                destination: id("core:s1"),
+                good: id("core:ore"),
+                quantity: 1,
+            }),
+            Err(CoreError::TradeNetworkAccessDenied)
+        );
+        assert!(
+            denied.world.resource::<PendingTradeRequests>().0.is_empty(),
+            "a denied player command must not leave deferred work"
+        );
+        assert_eq!(denied.snapshot(), before);
+        assert!(matches!(
+            denied.drain_events().as_slice(),
+            [GameEvent::Rejected(reason)] if reason.contains("trade-network access")
+        ));
+
+        denied.step().unwrap();
+        control.step().unwrap();
+        assert!(denied.world.resource::<PendingTradeRequests>().0.is_empty());
+        assert_eq!(
+            denied.snapshot(),
+            control.snapshot(),
+            "stepping after rejection must match a session that never received the command"
+        );
+        assert_eq!(denied.drain_events(), control.drain_events());
+    }
+
+    #[test]
+    fn offline_player_access_does_not_gate_npc_automated_commitments() {
         let mut d = definition();
+        d.traders.push(TraderDefinition {
+            id: id("core:ai"),
+            name: "AI".into(),
+            system: id("core:s0"),
+            energy_tank: Energy(500),
+            energy_tank_capacity: Energy(1_000),
+            cargo_capacity: 20,
+            speed: 10.0,
+            travel_burn_per_distance: Energy(1),
+            refuel_policy: RefuelPolicy::DepositAndWithdraw,
+            player: false,
+        });
+        let mut s = GameSession::new(d).unwrap();
+
+        s.step().unwrap();
+
+        let npc_entity = s
+            .world
+            .query_filtered::<(Entity, &StableId), Without<PlayerControlled>>()
+            .iter(&s.world)
+            .find(|(_, stable)| stable.0 == id("core:ai"))
+            .unwrap()
+            .0;
+        assert!(
+            s.world
+                .get::<PlayerTradeNetworkAccess>(npc_entity)
+                .is_none(),
+            "NPC entities must remain capability-free"
+        );
+        let snapshot = s.snapshot();
+        assert_eq!(
+            snapshot.player_trade_network_access,
+            TradeNetworkAccess::Offline
+        );
+        let reservation = snapshot
+            .reservations
+            .iter()
+            .find(|reservation| reservation.trader == id("core:ai"))
+            .expect("NPC automation should create its funded commitment");
+        assert_eq!(reservation.status, ReservationStatus::Active);
+        let npc = snapshot
+            .traders
+            .iter()
+            .find(|trader| trader.id == id("core:ai"))
+            .unwrap();
+        assert!(npc.travel.is_some());
+        assert!(npc.reservation.is_some());
+    }
+
+    #[test]
+    fn reservation_contract_access_queues_trade_commitment_and_respects_tank_headroom() {
+        let mut d = definition();
+        d.player_trade_network_access = TradeNetworkAccess::ReservationContracts;
         let energy = id(ENERGY_ID);
         d.systems[0].targets.insert(energy.clone(), 100);
         d.systems[1].inventory.insert(energy.clone(), 100);
@@ -7231,6 +7609,8 @@ mod tests {
             .unwrap();
         assert_eq!(reservation.quantity, 5, "profit must fit arrival headroom");
         assert_eq!(departure.traders[0].cargo.get(&energy), Some(&5));
+        assert!(departure.traders[0].travel.is_some());
+        assert!(departure.markets[1].reserved_energy > Energy::ZERO);
 
         s.step().unwrap();
         let arrival = s.snapshot();
@@ -7245,6 +7625,77 @@ mod tests {
             WideEnergy(WideAmount(5))
         );
         assert_eq!(arrival.markets[1].reserved_energy, Energy::ZERO);
+    }
+
+    #[test]
+    fn local_trade_limits_match_buy_capacity_and_target_met_sell_funding() {
+        let ore = id("core:ore");
+        let mut session = GameSession::new(definition()).unwrap();
+        let initial = session.player_local_trade_limits(&ore).unwrap();
+        assert_eq!(initial.buy.maximum, 20);
+        assert_eq!(initial.buy.reason, LocalTradeLimitReason::CargoCapacity);
+        assert_eq!(initial.sell.maximum, 0);
+        assert_eq!(initial.sell.reason, LocalTradeLimitReason::UnitsHeld);
+
+        session
+            .submit(GameCommand::Buy {
+                good: ore.clone(),
+                quantity: 5,
+            })
+            .unwrap();
+        let market = session
+            .snapshot()
+            .markets
+            .into_iter()
+            .find(|market| market.system_id == id("core:s0"))
+            .unwrap();
+        assert!(market.inventory[&ore] >= market.targets[&ore].into());
+        assert_eq!(
+            market.demand.get(&ore).copied().unwrap_or_default().funded,
+            0,
+            "advertised target demand is intentionally met"
+        );
+
+        let after_buy = session.player_local_trade_limits(&ore).unwrap();
+        assert_eq!(after_buy.sell.maximum, 5);
+        assert_eq!(after_buy.sell.reason, LocalTradeLimitReason::UnitsHeld);
+        let before_rejected = session.snapshot();
+        assert_eq!(
+            session.submit(GameCommand::Sell {
+                good: ore.clone(),
+                quantity: 6,
+            }),
+            Err(CoreError::ExactQuantityUnavailable {
+                requested: 6,
+                maximum: 5,
+            })
+        );
+        assert_eq!(
+            session.snapshot().traders[0].cargo,
+            before_rejected.traders[0].cargo
+        );
+        assert_eq!(
+            session.snapshot().traders[0].energy_tank,
+            before_rejected.traders[0].energy_tank
+        );
+        session
+            .submit(GameCommand::Sell {
+                good: ore,
+                quantity: after_buy.sell.maximum,
+            })
+            .unwrap();
+        assert_eq!(
+            session
+                .snapshot()
+                .traders
+                .into_iter()
+                .find(|trader| trader.player)
+                .unwrap()
+                .cargo
+                .values()
+                .sum::<u64>(),
+            0
+        );
     }
 
     #[test]
@@ -9758,6 +10209,143 @@ mod tests {
             GameSession::new(overflow),
             Err(CoreError::InvalidWorldDynamics)
         ));
+    }
+
+    #[test]
+    fn population_scaled_targets_are_effective_in_the_initial_snapshot() {
+        let ore = id("core:ore");
+        let mut dynamic = definition();
+        dynamic.economy.population.static_population = false;
+        dynamic
+            .economy
+            .population
+            .tertiary_demand_per_thousand
+            .insert(ore.clone(), 2);
+        dynamic.systems[0].population = 10;
+        dynamic.systems[0].population_state.current = 10;
+        dynamic.systems[0].population_state.reference = 5;
+        dynamic.systems[0].population_state.carrying_capacity = 10;
+        dynamic.systems[0].population_state.support_capacity = 10;
+        dynamic.systems[1].population = 10;
+        dynamic.systems[1].population_state.current = 10;
+        dynamic.systems[1].population_state.reference = 5;
+        dynamic.systems[1].population_state.carrying_capacity = 10;
+        dynamic.systems[1].population_state.support_capacity = 10;
+        dynamic.systems[1].targets.remove(&ore);
+        let mut session = GameSession::new(dynamic).unwrap();
+        let snapshot = session.snapshot();
+        assert_eq!(snapshot.markets[0].authored_targets[&ore], 10);
+        assert_eq!(snapshot.markets[0].targets[&ore], 20);
+        assert!(!snapshot.markets[1].authored_targets.contains_key(&ore));
+        assert_eq!(snapshot.markets[1].targets[&ore], 1);
+
+        let mut static_definition = definition();
+        static_definition
+            .economy
+            .population
+            .tertiary_demand_per_thousand
+            .insert(ore.clone(), 2);
+        static_definition.systems[0].targets.remove(&ore);
+        static_definition.systems[0].population = 10;
+        let mut static_session = GameSession::new(static_definition).unwrap();
+        assert_eq!(static_session.snapshot().markets[0].targets[&ore], 1);
+
+        let mut zero_population = definition();
+        zero_population.economy.population.static_population = false;
+        zero_population
+            .economy
+            .population
+            .tertiary_demand_per_thousand
+            .insert(ore.clone(), 2);
+        zero_population.systems[0].targets.remove(&ore);
+        zero_population.systems[0].population = 0;
+        zero_population.systems[0].population_state.current = 0;
+        zero_population.systems[0].population_state.reference = 1;
+        zero_population.systems[0]
+            .population_state
+            .carrying_capacity = 0;
+        zero_population.systems[0].population_state.support_capacity = 0;
+        let mut zero_session = GameSession::new(zero_population).unwrap();
+        assert_eq!(zero_session.snapshot().markets[0].targets[&ore], 0);
+        assert!(zero_session.quotes(&id("core:s0"), &ore).is_ok());
+        zero_session.step().unwrap();
+    }
+
+    #[test]
+    fn governor_market_targets_are_authorized_immediate_and_persistent() {
+        let ore = id("core:ore");
+        let mut definition = definition();
+        definition.systems[1].governance = Governance::default();
+        definition
+            .economy
+            .population
+            .tertiary_demand_per_thousand
+            .insert(ore.clone(), 1);
+        let mut session = GameSession::new(definition).unwrap();
+
+        session
+            .submit(GameCommand::SetGovernorMarketTarget {
+                system: id("core:s0"),
+                good: ore.clone(),
+                target: 200,
+            })
+            .unwrap();
+        let market = session
+            .snapshot()
+            .markets
+            .into_iter()
+            .find(|market| market.system_id == id("core:s0"))
+            .unwrap();
+        assert_eq!(market.targets[&ore], 200);
+        assert_eq!(market.demand[&ore].advertised, 100);
+        assert!(session.drain_events().iter().any(|event| matches!(
+            event,
+            GameEvent::MarketTargetChanged { system, good, target }
+                if system == &id("core:s0") && good == &ore && *target == 200
+        )));
+
+        session.step().unwrap();
+        let after_step = session
+            .snapshot()
+            .markets
+            .into_iter()
+            .find(|market| market.system_id == id("core:s0"))
+            .unwrap();
+        assert_eq!(after_step.targets[&ore], 200);
+
+        let before = session.snapshot();
+        assert_eq!(
+            session.submit(GameCommand::SetGovernorMarketTarget {
+                system: id("core:s0"),
+                good: ore.clone(),
+                target: 0,
+            }),
+            Err(CoreError::InvalidMarketTarget)
+        );
+        assert_eq!(
+            session.submit(GameCommand::SetGovernorMarketTarget {
+                system: id("core:s1"),
+                good: ore,
+                target: 50,
+            }),
+            Err(CoreError::UnauthorizedMarketPolicy)
+        );
+        assert!(matches!(
+            session.submit(GameCommand::SetGovernorMarketTarget {
+                system: id("core:s0"),
+                good: id("core:missing"),
+                target: 50,
+            }),
+            Err(CoreError::Unknown { kind: "good", .. })
+        ));
+        assert!(session.drain_events().iter().any(|event| matches!(
+            event,
+            GameEvent::GovernorPolicyRejected {
+                reason: GovernorRejectionReason::UnknownGood,
+                ..
+            }
+        )));
+        assert_eq!(session.snapshot().markets, before.markets);
     }
 
     #[test]

@@ -105,15 +105,37 @@ async fn main() -> Result<()> {
             println!("{}", format_reconciliation(&reconciliation));
         }
         ExecutionMode::Tui => {
+            let encyclopedia = encyclopedia_view(loaded.encyclopedia);
             let mut definition = loaded.definition;
             if let Some(mode) = pricing_mode_argument(&args)? {
                 apply_pricing_mode(&mut definition, mode);
             }
             let session = GameSession::new(definition).context("failed to construct simulation")?;
-            game_tui::run(game_app::spawn(session)).await?;
+            game_tui::run(game_app::spawn_with_encyclopedia(session, encyclopedia)).await?;
         }
     }
     Ok(())
+}
+
+fn encyclopedia_view(
+    sections: Vec<game_content::EncyclopediaSection>,
+) -> game_app::EncyclopediaView {
+    game_app::EncyclopediaView {
+        sections: sections
+            .into_iter()
+            .map(|section| game_app::EncyclopediaSectionView {
+                title: section.title,
+                articles: section
+                    .articles
+                    .into_iter()
+                    .map(|article| game_app::EncyclopediaArticleView {
+                        title: article.title,
+                        paragraphs: article.paragraphs,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1030,6 +1052,7 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
                 | GameEvent::ReservationReleased { .. }
                 | GameEvent::SaleDeferred { .. }
                 | GameEvent::PolicyChanged { .. }
+                | GameEvent::MarketTargetChanged { .. }
                 | GameEvent::TickAdvanced(_)
                 | GameEvent::Rejected(_) => {}
             }

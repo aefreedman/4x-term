@@ -9,6 +9,7 @@
     speed: 8.0,
     travel_burn_per_distance: 1,
     refuel_policy: DepositAndWithdraw,
+    trade_network_access: Offline,
   ),
   npcs: (
     mode: Dynamic,

@@ -23,6 +23,7 @@ check_command git
 check_command node
 check_command npm
 check_command pi
+check_command rg
 check_command rustc
 check_command cargo
 check_command op
