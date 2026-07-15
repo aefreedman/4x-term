@@ -30,6 +30,81 @@ fn authored_sizing(deadhead_burn: i64, net_cap: i64) -> GrossSizingInput {
 }
 
 #[test]
+fn el_inv_lot_bulk_usage_and_headroom_are_checked() {
+    let contract_id = ContractId(7);
+    let hold = BulkEnergyHold {
+        owned: e(40),
+        locked: Some(LockedEnergyLot {
+            contract_id,
+            amount: e(60),
+        }),
+    };
+    assert_eq!(hold.used(), Ok(e(100)));
+    assert_eq!(hold.headroom(e(125)), Ok(e(25)));
+    assert_eq!(
+        hold.headroom(e(99)),
+        Err(CoreError::InvalidPhysicalDefinition)
+    );
+    assert_eq!(
+        BulkEnergyHold {
+            owned: e(-1),
+            locked: None,
+        }
+        .used(),
+        Err(CoreError::InvalidPhysicalDefinition)
+    );
+}
+
+#[test]
+fn el_d15_policy_validation_and_stage_lookup_are_exact() {
+    let valid = EnergyLogisticsPolicy {
+        carrier_fee_bps: CarrierFeeSchedule {
+            normal: 50,
+            throttled: 100,
+            emergency: 200,
+            starvation: 300,
+        },
+        max_allocation_bps: 1_000,
+        curtailment_projection_window: 20,
+        export_reserve: e(0),
+        authored_export_base: e(3_200),
+        settlement_timeout_ticks: 20,
+    };
+    assert_eq!(valid.validate(), Ok(()));
+    assert_eq!(valid.carrier_fee_bps.for_stage(BrownoutStage::Normal), 50);
+    assert_eq!(
+        valid.carrier_fee_bps.for_stage(BrownoutStage::Starvation),
+        300
+    );
+
+    let mut invalid = valid;
+    invalid.carrier_fee_bps.emergency = 100;
+    assert_eq!(invalid.validate(), Err(CoreError::InvalidPolicy));
+    let mut invalid = valid;
+    invalid.max_allocation_bps = 300;
+    assert_eq!(invalid.validate(), Err(CoreError::InvalidPolicy));
+    let mut invalid = valid;
+    invalid.curtailment_projection_window = 0;
+    assert_eq!(invalid.validate(), Err(CoreError::InvalidPolicy));
+    let mut invalid = valid;
+    invalid.settlement_timeout_ticks = 0;
+    assert_eq!(invalid.validate(), Err(CoreError::InvalidPolicy));
+    let mut invalid = valid;
+    invalid.export_reserve = e(-1);
+    assert_eq!(invalid.validate(), Err(CoreError::InvalidPolicy));
+}
+
+#[test]
+fn el_inv_claim_contract_ids_are_monotonic_and_atomic_on_overflow() {
+    let mut contracts = EnergyContracts::default();
+    assert_eq!(contracts.allocate_id().unwrap().get(), 1);
+    assert_eq!(contracts.allocate_id().unwrap().get(), 2);
+    contracts.next_id = u64::MAX;
+    assert_eq!(contracts.allocate_id(), Err(CoreError::Overflow));
+    assert_eq!(contracts.next_id, u64::MAX);
+}
+
+#[test]
 fn el_d1_projection_and_protection_vectors_are_exact() {
     assert_eq!(
         exportable_energy(e(5_000), e(0), e(0), e(54), e(55), e(0)),

@@ -8,6 +8,14 @@ use thiserror::Error;
 
 mod energy_logistics;
 
+pub use energy_logistics::{
+    BulkEnergyHold, CarrierFeeSchedule, ContractId, ContractRoute, EnergyContract,
+    EnergyContractBlocker, EnergyContractEvent, EnergyContractIntent, EnergyContractSnapshot,
+    EnergyContractState, EnergyContractTerminalOutcome, EnergyContracts,
+    EnergyLogisticsDiagnostics, EnergyLogisticsPolicy, LockedEnergyLot,
+    PendingEnergyContractIntents,
+};
+
 pub const ENERGY_ID: &str = "core:energy";
 /// Content-facing upper bound for population sufficiency history.
 ///
@@ -533,10 +541,14 @@ pub enum FleetMode {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FleetArchetype {
+    pub id: ContentId,
     pub id_prefix: String,
     pub name_prefix: String,
+    pub initial_count: usize,
+    pub maximum_count: usize,
     pub starting_tank: Energy,
     pub energy_tank_capacity: Energy,
+    pub bulk_energy_capacity: Energy,
     pub cargo_capacity: u32,
     pub speed: f64,
     pub travel_burn_per_distance: Energy,
@@ -557,10 +569,9 @@ impl FleetArchetype {
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct FleetDynamics {
     pub mode: Option<FleetMode>,
-    /// Validated common NPC archetype. Anti-strand protection consumes this
-    /// configured capability rather than depending on active fleet size.
-    pub archetype: Option<FleetArchetype>,
-    pub archetype_capability: Option<LiquidationTraderCapability>,
+    /// Stable-ID ordered NPC archetype registry. Total caps live in `mode` and
+    /// each archetype contributes its own initial and maximum count.
+    pub archetypes: BTreeMap<ContentId, FleetArchetype>,
     /// Canonical profitable request score left after one request per idle NPC,
     /// normalized by system count.
     pub normalized_unserved_opportunity: u64,
@@ -664,6 +675,8 @@ pub struct SystemDefinition {
     pub investment_policy: InvestmentPolicy,
     pub governance: Governance,
     pub policy: MarketPolicy,
+    /// Fully resolved policy for this market; content overrides are compiled before core.
+    pub energy_logistics: EnergyLogisticsPolicy,
     /// Graph/content-compiled anti-strand reserve; never derived from policy knobs.
     pub protected_liquidation_budget: Energy,
     pub bootstrap_risk_acknowledged: bool,
@@ -711,8 +724,10 @@ pub struct TraderDefinition {
     pub id: ContentId,
     pub name: String,
     pub system: ContentId,
+    pub archetype: Option<ContentId>,
     pub energy_tank: Energy,
     pub energy_tank_capacity: Energy,
+    pub bulk_energy_capacity: Energy,
     pub cargo_capacity: u32,
     pub speed: f64,
     pub travel_burn_per_distance: Energy,
@@ -758,6 +773,7 @@ pub struct EconomyConfig {
     pub source_output_percent: u32,
     pub idle_trader_repositioning: bool,
     pub brownouts: BrownoutConfig,
+    pub energy_logistics: EnergyLogisticsPolicy,
     pub population: PopulationConfig,
     pub investments: BTreeMap<InvestmentKind, InvestmentShape>,
 }
@@ -770,6 +786,7 @@ impl Default for EconomyConfig {
             source_output_percent: 100,
             idle_trader_repositioning: true,
             brownouts: BrownoutConfig::default(),
+            energy_logistics: EnergyLogisticsPolicy::default(),
             population: PopulationConfig::default(),
             investments: default_investment_shapes(),
         }
@@ -946,23 +963,36 @@ fn validate_fleet_definition(
     let Some(mode) = &fleet.mode else {
         return Err(CoreError::InvalidWorldDynamics);
     };
-    let Some(archetype) = &fleet.archetype else {
-        return match mode {
-            FleetMode::Fixed { .. } => Ok(()),
-            FleetMode::Dynamic { .. } => Err(CoreError::InvalidWorldDynamics),
-        };
-    };
-    if archetype.starting_tank.0 < 0
-        || archetype.starting_tank > archetype.energy_tank_capacity
-        || archetype.energy_tank_capacity.0 <= 0
-        || archetype.cargo_capacity == 0
-        || !archetype.speed.is_finite()
-        || archetype.speed <= 0.0
-        || archetype.travel_burn_per_distance.0 < 0
-        || fleet.archetype_capability != Some(archetype.liquidation_capability())
-        || dynamic_trader_id(archetype, 1).is_err()
-        || archetype.name_prefix.trim().is_empty()
-    {
+    if matches!(mode, FleetMode::Dynamic { .. }) && fleet.archetypes.is_empty() {
+        return Err(CoreError::InvalidWorldDynamics);
+    }
+    let mut prefixes = BTreeSet::new();
+    for (id, archetype) in &fleet.archetypes {
+        if id != &archetype.id
+            || archetype.initial_count > archetype.maximum_count
+            || archetype.maximum_count == 0
+            || archetype.starting_tank.0 <= 0
+            || archetype.starting_tank > archetype.energy_tank_capacity
+            || archetype.energy_tank_capacity.0 <= 0
+            || archetype.bulk_energy_capacity.0 < 0
+            || archetype.cargo_capacity == 0
+            || !archetype.speed.is_finite()
+            || archetype.speed <= 0.0
+            || archetype.travel_burn_per_distance.0 <= 0
+            || dynamic_trader_id(archetype, 1).is_err()
+            || archetype.name_prefix.trim().is_empty()
+            || !prefixes.insert(archetype.id_prefix.as_str())
+        {
+            return Err(CoreError::InvalidWorldDynamics);
+        }
+    }
+    if prefixes.iter().any(|left| {
+        prefixes.iter().any(|right| {
+            left != right
+                && (left.starts_with(&format!("{right}_"))
+                    || right.starts_with(&format!("{left}_")))
+        })
+    }) {
         return Err(CoreError::InvalidWorldDynamics);
     }
     if let FleetMode::Dynamic {
@@ -974,7 +1004,29 @@ fn validate_fleet_definition(
         maximum_count,
         ..
     } = mode
-        && (*opportunity_threshold == 0
+    {
+        let authored_initial = fleet
+            .archetypes
+            .values()
+            .try_fold(0_usize, |sum, value| sum.checked_add(value.initial_count))
+            .ok_or(CoreError::Overflow)?;
+        let authored_maximum = fleet
+            .archetypes
+            .values()
+            .try_fold(0_usize, |sum, value| sum.checked_add(value.maximum_count))
+            .ok_or(CoreError::Overflow)?;
+        let mut actual = BTreeMap::<ContentId, usize>::new();
+        for trader in traders.iter().filter(|trader| !trader.player) {
+            let archetype = trader
+                .archetype
+                .as_ref()
+                .ok_or(CoreError::InvalidWorldDynamics)?;
+            if !fleet.archetypes.contains_key(archetype) {
+                return Err(CoreError::InvalidWorldDynamics);
+            }
+            *actual.entry(archetype.clone()).or_default() += 1;
+        }
+        if *opportunity_threshold == 0
             || *opportunity_window == 0
             || *opportunity_window > MAX_FLEET_WINDOW_TICKS
             || *spawn_cooldown_ticks == 0
@@ -982,15 +1034,21 @@ fn validate_fleet_definition(
             || *retirement_window > MAX_FLEET_WINDOW_TICKS
             || *maximum_count == 0
             || *initial_count > *maximum_count
+            || *maximum_count > authored_maximum
+            || *initial_count != authored_initial
             || *initial_count != traders.iter().filter(|trader| !trader.player).count()
-            || traders.iter().any(|trader| {
-                trader
-                    .id
-                    .as_str()
-                    .starts_with(&format!("{}_dynamic_", archetype.id_prefix))
-            }))
-    {
-        return Err(CoreError::InvalidWorldDynamics);
+            || fleet.archetypes.values().any(|archetype| {
+                actual.get(&archetype.id).copied().unwrap_or(0) != archetype.initial_count
+                    || traders.iter().any(|trader| {
+                        trader
+                            .id
+                            .as_str()
+                            .starts_with(&format!("{}_dynamic_", archetype.id_prefix))
+                    })
+            })
+        {
+            return Err(CoreError::InvalidWorldDynamics);
+        }
     }
     Ok(())
 }
@@ -1550,6 +1608,7 @@ pub struct Market {
     pub investment_policy: InvestmentPolicy,
     pub investment_state: InvestmentState,
     pub governance: Governance,
+    pub energy_logistics: EnergyLogisticsPolicy,
     pub throughput_carry: BTreeMap<ThroughputScheduleKey, u64>,
     pub source_output_percent: u32,
     pub recipe_operating_energy: BTreeMap<ContentId, Energy>,
@@ -1724,8 +1783,11 @@ pub struct PlayerTradeNetworkAccess {
 #[derive(Component, Clone, Debug)]
 pub struct Trader {
     pub system: ContentId,
+    pub archetype: Option<ContentId>,
     pub energy_tank: Energy,
     pub energy_tank_capacity: Energy,
+    pub bulk_energy_capacity: Energy,
+    pub bulk_energy: BulkEnergyHold,
     pub cargo: BTreeMap<ContentId, u64>,
     pub cargo_cost_basis: BTreeMap<ContentId, CostBasis>,
     pub cargo_capacity: u32,
@@ -1987,6 +2049,7 @@ impl GovernorRejectionReason {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GameEvent {
     TickAdvanced(u64),
+    EnergyLogistics(EnergyContractEvent),
     EnergyGenerated {
         system: ContentId,
         amount: Energy,
@@ -2248,6 +2311,7 @@ pub struct MarketSnapshot {
     pub governance: Governance,
     pub bootstrap_risk_acknowledged: bool,
     pub policy: MarketPolicy,
+    pub energy_logistics: EnergyLogisticsPolicy,
     pub cost_basis: BTreeMap<ContentId, CostBasis>,
     pub ledger: MarketLedger,
     pub energy_flow: EnergyFlowLedger,
@@ -2257,8 +2321,11 @@ pub struct TraderSnapshot {
     pub id: ContentId,
     pub name: String,
     pub system: ContentId,
+    pub archetype: Option<ContentId>,
     pub energy_tank: Energy,
     pub energy_tank_capacity: Energy,
+    pub bulk_energy_capacity: Energy,
+    pub bulk_energy: BulkEnergyHold,
     pub cargo: BTreeMap<ContentId, u64>,
     pub cargo_capacity: u32,
     pub speed: f64,
@@ -2548,6 +2615,7 @@ impl GameSession {
             .life_support_burn_per_capita
             .checked_mul(1)?;
         definition.economy.brownouts.validate()?;
+        definition.economy.energy_logistics.validate()?;
         validate_population_config(&definition.economy.population)?;
         validate_investment_shapes(
             &definition.economy.investments,
@@ -2578,8 +2646,11 @@ impl GameSession {
         world.insert_resource(EventBuffer::default());
         world.insert_resource(Reservations::default());
         world.insert_resource(PendingTradeRequests::default());
+        world.insert_resource(EnergyContracts::default());
+        world.insert_resource(PendingEnergyContractIntents::default());
         for mut system in definition.systems {
             system.policy.validate()?;
+            system.energy_logistics.validate()?;
             system.investment_policy.validate()?;
             // Additive Slice-2 defaults keep older fixed-output/static-population
             // fixtures source-compatible when they adjust the legacy fields.
@@ -2744,6 +2815,7 @@ impl GameSession {
                     investment_policy: system.investment_policy,
                     investment_state: InvestmentState::default(),
                     governance: system.governance,
+                    energy_logistics: system.energy_logistics,
                     throughput_carry: BTreeMap::new(),
                     source_output_percent: source_percent,
                     recipe_operating_energy,
@@ -2760,6 +2832,7 @@ impl GameSession {
             if trader.energy_tank.0 < 0
                 || trader.energy_tank > trader.energy_tank_capacity
                 || trader.energy_tank_capacity.0 <= 0
+                || trader.bulk_energy_capacity.0 < 0
                 || trader.cargo_capacity == 0
                 || !trader.speed.is_finite()
                 || trader.speed <= 0.0
@@ -2773,8 +2846,11 @@ impl GameSession {
                 DisplayName(trader.name),
                 Trader {
                     system: trader.system,
+                    archetype: trader.archetype,
                     energy_tank: trader.energy_tank,
                     energy_tank_capacity: trader.energy_tank_capacity,
+                    bulk_energy_capacity: trader.bulk_energy_capacity,
+                    bulk_energy: BulkEnergyHold::default(),
                     cargo: BTreeMap::new(),
                     cargo_cost_basis: BTreeMap::new(),
                     cargo_capacity: trader.cargo_capacity,
@@ -3314,6 +3390,7 @@ impl GameSession {
                 governance: m.governance.clone(),
                 bootstrap_risk_acknowledged: m.bootstrap_risk_acknowledged,
                 policy: p.clone(),
+                energy_logistics: m.energy_logistics,
                 cost_basis: m.cost_basis.clone(),
                 ledger: m.ledger,
                 energy_flow: m.energy_flow,
@@ -3353,8 +3430,11 @@ impl GameSession {
                 id: id.0.clone(),
                 name: n.0.clone(),
                 system: t.system.clone(),
+                archetype: t.archetype.clone(),
                 energy_tank: t.energy_tank,
                 energy_tank_capacity: t.energy_tank_capacity,
+                bulk_energy_capacity: t.bulk_energy_capacity,
+                bulk_energy: t.bulk_energy,
                 cargo: t.cargo.clone(),
                 cargo_capacity: t.cargo_capacity,
                 speed: t.speed,
@@ -4321,9 +4401,13 @@ impl GameSession {
                 travel_burn_per_distance: trader.travel_burn_per_distance,
             })
             .collect::<Vec<_>>();
-        if let Some(capability) = self.world.resource::<FleetDynamics>().archetype_capability {
-            capabilities.push(capability);
-        }
+        capabilities.extend(
+            self.world
+                .resource::<FleetDynamics>()
+                .archetypes
+                .values()
+                .map(FleetArchetype::liquidation_capability),
+        );
         let protected_liquidation_budget = compute_protected_liquidation_budget(
             self.graph(),
             system,
@@ -6282,12 +6366,18 @@ impl GameSession {
             .world
             .resource::<EconomyConfig>()
             .life_support_burn_per_capita;
-        let archetype = self
+        // Temporary Wave 1B compatibility path: ordinary dynamic spawning uses
+        // the first stable archetype below its authored cap. Phase 4 replaces
+        // this with canonical opportunity-based archetype selection.
+        let counts = self
             .world
-            .resource::<FleetDynamics>()
-            .archetype
-            .clone()
-            .ok_or(CoreError::InvalidWorldDynamics)?;
+            .query_filtered::<&Trader, Without<PlayerControlled>>()
+            .iter(&self.world)
+            .filter_map(|trader| trader.archetype.clone())
+            .fold(BTreeMap::<ContentId, usize>::new(), |mut counts, id| {
+                *counts.entry(id).or_default() += 1;
+                counts
+            });
         let mut markets = self
             .world
             .query_filtered::<(Entity, &StableId, &Market, &MarketPolicy), With<SystemMarker>>()
@@ -6301,10 +6391,21 @@ impl GameSession {
             })
             .collect::<Result<Vec<_>, CoreError>>()?;
         markets.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        let Some((_, system, market_entity)) = markets
-            .into_iter()
-            .find(|(surplus, _, _)| *surplus >= archetype.starting_tank)
-        else {
+        let selected = self
+            .world
+            .resource::<FleetDynamics>()
+            .archetypes
+            .values()
+            .filter(|archetype| {
+                counts.get(&archetype.id).copied().unwrap_or(0) < archetype.maximum_count
+            })
+            .find_map(|archetype| {
+                markets
+                    .iter()
+                    .find(|(surplus, _, _)| *surplus >= archetype.starting_tank)
+                    .map(|(_, system, entity)| (archetype.clone(), system.clone(), *entity))
+            });
+        let Some((archetype, system, market_entity)) = selected else {
             return Ok(false);
         };
 
@@ -6330,8 +6431,11 @@ impl GameSession {
             .checked_add(archetype.starting_tank)?;
         let trader = Trader {
             system: system.clone(),
+            archetype: Some(archetype.id.clone()),
             energy_tank: archetype.starting_tank,
             energy_tank_capacity: archetype.energy_tank_capacity,
+            bulk_energy_capacity: archetype.bulk_energy_capacity,
+            bulk_energy: BulkEnergyHold::default(),
             cargo: BTreeMap::new(),
             cargo_cost_basis: BTreeMap::new(),
             cargo_capacity: archetype.cargo_capacity,
@@ -6476,11 +6580,27 @@ impl GameSession {
             &self.world.resource::<FleetDynamics>().mode,
             Some(FleetMode::Dynamic { .. })
         ) {
-            // Score every market route with the same canonical margin-after-burn
-            // helper used above for active automated requests. One highest score is
-            // consumed per idle active NPC; the rest is genuinely unserved network
-            // opportunity and remains meaningful even when active count reaches 0.
-            let archetype = self.world.resource::<FleetDynamics>().archetype.clone();
+            // Wave 1B compatibility path: score ordinary opportunities with the
+            // first stable archetype that remains below its per-archetype cap.
+            // Canonical cross-kind/archetype opportunity selection arrives in Phase 4.
+            let counts = self
+                .world
+                .query_filtered::<&Trader, Without<PlayerControlled>>()
+                .iter(&self.world)
+                .filter_map(|trader| trader.archetype.clone())
+                .fold(BTreeMap::<ContentId, usize>::new(), |mut counts, id| {
+                    *counts.entry(id).or_default() += 1;
+                    counts
+                });
+            let archetype = self
+                .world
+                .resource::<FleetDynamics>()
+                .archetypes
+                .values()
+                .find(|archetype| {
+                    counts.get(&archetype.id).copied().unwrap_or(0) < archetype.maximum_count
+                })
+                .cloned();
             let mut route_scores = Vec::new();
             if let Some(archetype) = archetype {
                 for (origin_id, origin, origin_policy) in &markets {

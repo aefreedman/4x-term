@@ -214,4 +214,11 @@ Required metrics: gross/net delivery, loaded/deadhead/recovery burn, carrier fee
 - `cargo clippy -p game-core --all-targets -- -D warnings`, format check, and `git diff --check`: pass.
 - Covered: D1 protection/projection, D2 integer fee/freight, D3 bounded gross sizing including tank recovery capacity, D4 positive profit utility, D7 retry/reserve arithmetic, and D8 timeout conversion preparation.
 
-Pending lifecycle/content waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.
+#### Waves 1A/1B types and content
+
+- Main rerun: workspace tests pass (171 routine tests plus integration/doc targets); workspace Clippy with warnings denied, format, and diff checks pass.
+- Content policy tests cover exact repository values, strict/range/timeout/window failures, market override context, and duplicate archetype IDs.
+- The 1,000-tick transitional gate passes with exact reconciliation: 47 stage transitions, 450,902 ordinary Energy units loaded, 449,452 delivered, 5,092 trades after tick 300, and 638 production operations after tick 300. These are pre-contract compatibility metrics, not final feature evidence.
+- Core now owns monotonic contract IDs, canonical active/pending resources, typed records/events/snapshots, checked bulk holds, effective policy, and stable archetype registry. Content compiles two archetypes and the selected system 14/15 tuning.
+
+Pending lifecycle/legacy-removal/frontend waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.

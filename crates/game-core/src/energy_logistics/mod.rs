@@ -7,7 +7,9 @@
 // wired into the root session.
 #![cfg_attr(not(test), allow(dead_code))]
 
-use super::{CoreError, Energy};
+use super::{BrownoutStage, ContentId, CoreError, Energy};
+use bevy_ecs::prelude::Resource;
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct FeeTerms {
@@ -75,6 +77,267 @@ pub(crate) struct TimeoutPlan {
     pub recovery_conversion: Energy,
     pub recovery_burn: Energy,
     pub locked_after_departure: Energy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ContractId(u64);
+
+impl ContractId {
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LockedEnergyLot {
+    pub contract_id: ContractId,
+    pub amount: Energy,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BulkEnergyHold {
+    pub owned: Energy,
+    pub locked: Option<LockedEnergyLot>,
+}
+
+impl BulkEnergyHold {
+    pub fn used(self) -> Result<Energy, CoreError> {
+        checked_sum_energy(&[
+            self.owned,
+            self.locked.map_or(Energy::ZERO, |lot| lot.amount),
+        ])
+    }
+
+    pub fn headroom(self, capacity: Energy) -> Result<Energy, CoreError> {
+        require_non_negative(&[capacity])?;
+        let used = self.used()?;
+        if used > capacity {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        capacity.checked_sub(used)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CarrierFeeSchedule {
+    pub normal: u32,
+    pub throttled: u32,
+    pub emergency: u32,
+    pub starvation: u32,
+}
+
+impl Default for CarrierFeeSchedule {
+    fn default() -> Self {
+        Self {
+            normal: 50,
+            throttled: 100,
+            emergency: 200,
+            starvation: 300,
+        }
+    }
+}
+
+impl CarrierFeeSchedule {
+    #[must_use]
+    pub const fn for_stage(self, stage: BrownoutStage) -> u32 {
+        match stage {
+            BrownoutStage::Normal => self.normal,
+            BrownoutStage::Throttled => self.throttled,
+            BrownoutStage::Emergency => self.emergency,
+            BrownoutStage::Starvation => self.starvation,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EnergyLogisticsPolicy {
+    pub carrier_fee_bps: CarrierFeeSchedule,
+    pub max_allocation_bps: u32,
+    pub curtailment_projection_window: u32,
+    pub export_reserve: Energy,
+    pub authored_export_base: Energy,
+    pub settlement_timeout_ticks: u32,
+}
+
+impl Default for EnergyLogisticsPolicy {
+    fn default() -> Self {
+        Self {
+            carrier_fee_bps: CarrierFeeSchedule::default(),
+            max_allocation_bps: 1_000,
+            curtailment_projection_window: 20,
+            export_reserve: Energy::ZERO,
+            authored_export_base: Energy::ZERO,
+            settlement_timeout_ticks: 20,
+        }
+    }
+}
+
+impl EnergyLogisticsPolicy {
+    pub fn validate(self) -> Result<(), CoreError> {
+        let fees = self.carrier_fee_bps;
+        if !(fees.normal < fees.throttled
+            && fees.throttled < fees.emergency
+            && fees.emergency < fees.starvation)
+            || self.max_allocation_bps == 0
+            || self.max_allocation_bps > 10_000
+            || fees.starvation >= self.max_allocation_bps
+            || self.curtailment_projection_window == 0
+            || self.settlement_timeout_ticks == 0
+            || self.export_reserve.0 < 0
+            || self.authored_export_base.0 < 0
+        {
+            return Err(CoreError::InvalidPolicy);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractRoute {
+    pub systems: Vec<ContentId>,
+    pub burn: Energy,
+    pub ticks: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EnergyContractState {
+    DeadheadingToSource {
+        source_claim: Energy,
+        accepted_tick: u64,
+    },
+    InTransit {
+        loaded_tick: u64,
+    },
+    Arrived {
+        arrived_tick: u64,
+        settlement_deadline: u64,
+    },
+    Recovering {
+        recovery_departure_tick: u64,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnergyContract {
+    pub id: ContractId,
+    pub carrier: ContentId,
+    pub source: ContentId,
+    pub destination: ContentId,
+    pub deadhead_route: ContractRoute,
+    pub loaded_route: ContractRoute,
+    pub recovery_route: ContractRoute,
+    pub gross_payload: Energy,
+    pub carrier_fee_bps: u32,
+    pub carrier_profit: Energy,
+    pub net_delivery: Energy,
+    pub cumulative_settled: Energy,
+    pub state: EnergyContractState,
+    pub latest_blocker: Option<EnergyContractBlocker>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EnergyContractBlocker {
+    NoReachableSurplus,
+    NoViableCandidate,
+    ViableButUnaccepted,
+    ArrivedSettlementBlocked,
+    AcceptedDeliveryPending,
+    StaleMaximum,
+    SourceClaimRevoked,
+    StorageHeadroom,
+    RecoveryReserve,
+    Integrity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EnergyContractTerminalOutcome {
+    Completed,
+    CancelledBeforeLoad,
+    RevokedBeforeLoad,
+    RejectedBeforeLoad,
+    RecoveredAfterFailure,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnergyContractIntent {
+    pub carrier: ContentId,
+    pub source: ContentId,
+    pub destination: ContentId,
+    pub gross_payload: Energy,
+    pub command_driven: bool,
+}
+
+#[derive(Resource, Clone, Debug, Default, Eq, PartialEq)]
+pub struct PendingEnergyContractIntents(pub Vec<EnergyContractIntent>);
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EnergyLogisticsDiagnostics {
+    pub accepted: u64,
+    pub completed: u64,
+    pub cancelled_before_load: u64,
+    pub revoked_before_load: u64,
+    pub rejected_before_load: u64,
+    pub recovered_after_failure: u64,
+    pub recovery_curtailed: Energy,
+    pub arrived_settlement_blocked: u64,
+    pub accepted_delivery_pending: u64,
+    pub no_reachable_surplus: u64,
+    pub no_viable_candidate: u64,
+    pub viable_but_unaccepted: u64,
+}
+
+#[derive(Resource, Clone, Debug, Default, Eq, PartialEq)]
+pub struct EnergyContracts {
+    next_id: u64,
+    pub active: BTreeMap<ContractId, EnergyContract>,
+    pub diagnostics: EnergyLogisticsDiagnostics,
+}
+
+impl EnergyContracts {
+    pub fn allocate_id(&mut self) -> Result<ContractId, CoreError> {
+        let next_id = self.next_id.checked_add(1).ok_or(CoreError::Overflow)?;
+        self.next_id = next_id;
+        Ok(ContractId(next_id))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnergyContractSnapshot {
+    pub contract: EnergyContract,
+    pub locked_amount: Energy,
+    pub converted_reimbursement: Energy,
+    pub converted_fee: Energy,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EnergyContractEvent {
+    Accepted {
+        contract_id: ContractId,
+    },
+    Loaded {
+        contract_id: ContractId,
+    },
+    Departed {
+        contract_id: ContractId,
+    },
+    Settled {
+        contract_id: ContractId,
+        amount: Energy,
+    },
+    RecoveryCurtailed {
+        contract_id: ContractId,
+        source: ContentId,
+        amount: Energy,
+    },
+    Terminal {
+        contract_id: ContractId,
+        outcome: EnergyContractTerminalOutcome,
+    },
+    Rejected {
+        blocker: EnergyContractBlocker,
+        current_maximum: Option<Energy>,
+    },
 }
 
 fn require_non_negative(values: &[Energy]) -> Result<(), CoreError> {

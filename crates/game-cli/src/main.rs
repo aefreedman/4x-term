@@ -1042,7 +1042,8 @@ fn run_economy_diagnostics(session: &mut GameSession, ticks: u64) -> Result<Soak
                 }
                 GameEvent::TraderSpawned { .. } => activity.fleet_spawns += 1,
                 GameEvent::TraderRetired { .. } => activity.fleet_retirements += 1,
-                GameEvent::ExternalDeliveryRecorded { .. }
+                GameEvent::EnergyLogistics(_)
+                | GameEvent::ExternalDeliveryRecorded { .. }
                 | GameEvent::BrownoutTransition { .. }
                 | GameEvent::PopulationChanged { .. }
                 | GameEvent::PopulationTierChanged { .. }

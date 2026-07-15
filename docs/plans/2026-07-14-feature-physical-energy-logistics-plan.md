@@ -912,11 +912,11 @@ Files: `docs/energy-logistics-validation.md`, `crates/game-core/src/energy_logis
 
 Delegate Wave 1A and 1B only after the main agent's Phase 0 gate. Core and content workers receive separate bounded handoffs; the main agent integrates and validates between them.
 
-- [ ] Add `ContractId`, `BulkEnergyHold`, active contract states/records, resources, diagnostics, snapshots, events, and typed errors.
-- [ ] Add pure checked helpers for D1 projection/exportable/offers, D2 fee/rate, D3 gross sizing, D4 route utility, D7 settlement selection/allocation, and D8 timeout/recovery.
-- [ ] Extend trader/core definitions with bulk capacity and archetype identity.
-- [ ] Compile global/per-market logistics policy and NPC archetype registry in `game-content`.
-- [ ] Add semantic validations from D15 and repository content validation tests.
+- [x] Add `ContractId`, `BulkEnergyHold`, active contract states/records, resources, diagnostics, snapshots, events, and typed errors.
+- [x] Add pure checked helpers for D1 projection/exportable/offers, D2 fee/rate, D3 gross sizing, D4 route utility, D7 settlement selection/allocation, and D8 timeout/recovery.
+- [x] Extend trader/core definitions with bulk capacity and archetype identity.
+- [x] Compile global/per-market logistics policy and NPC archetype registry in `game-content`.
+- [x] Add semantic validations from D15 and repository content validation tests.
 - [ ] Update physical-stock test helpers to count tank + owned bulk + locked bulk, not generic Energy cargo.
 
 Files: `crates/game-core/src/energy_logistics/mod.rs`, limited root wiring in `crates/game-core/src/lib.rs`, `crates/game-content/src/energy_logistics.rs`, limited root compiler wiring in `crates/game-content/src/lib.rs`, and content RON files.

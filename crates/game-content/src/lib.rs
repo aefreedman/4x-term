@@ -1,5 +1,8 @@
 //! RON loading, validation, and compilation into format-independent core definitions.
 
+mod energy_logistics;
+
+use energy_logistics::{EnergyLogisticsOverrideSource, EnergyLogisticsSource};
 use game_core::{
     BrownoutConfig, ContentId, ENERGY_ID, EconomyConfig, Energy, FleetArchetype, FleetDynamics,
     FleetMode, GameDefinition, GoodAmount, GoodCategory, GoodDefinition, Governance,
@@ -168,6 +171,7 @@ struct EconomyConfigSource {
     population: PopulationConfigSource,
     investments: Vec<InvestmentShapeSource>,
     default_investment_allocation: Vec<InvestmentAllocationSource>,
+    energy_logistics: EnergyLogisticsSource,
 }
 
 #[derive(Deserialize)]
@@ -284,6 +288,8 @@ struct MarketSource {
     #[serde(default)]
     policy: MarketPolicyOverrideSource,
     #[serde(default)]
+    energy_logistics: EnergyLogisticsOverrideSource,
+    #[serde(default)]
     acknowledge_bootstrap_risk: bool,
 }
 
@@ -321,6 +327,7 @@ struct PlayerTraderSource {
     starting_system: String,
     energy_tank: i64,
     energy_tank_capacity: i64,
+    bulk_energy_capacity: i64,
     cargo_capacity: u32,
     speed: f64,
     travel_burn_per_distance: i64,
@@ -331,17 +338,25 @@ struct PlayerTraderSource {
 #[derive(Deserialize)]
 struct NpcTraderSource {
     mode: NpcFleetModeSource,
-    count: usize,
+    archetypes: Vec<NpcArchetypeSource>,
+    dynamic: DynamicFleetSource,
+}
+
+#[derive(Deserialize)]
+struct NpcArchetypeSource {
+    id: String,
     id_prefix: String,
     name_prefix: String,
+    initial_count: usize,
+    maximum_count: usize,
     energy_tank: i64,
     energy_tank_capacity: i64,
+    bulk_energy_capacity: i64,
     cargo_capacity: u32,
     speed: f64,
     travel_burn_per_distance: i64,
     refuel_policy: RefuelPolicySource,
-    distribution: TraderDistributionSource,
-    dynamic: DynamicFleetSource,
+    initial_distribution: Vec<String>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -391,11 +406,6 @@ impl From<RefuelPolicySource> for RefuelPolicy {
         }
     }
 }
-#[derive(Clone, Copy, Deserialize)]
-enum TraderDistributionSource {
-    EvenlySpaced,
-}
-
 pub fn load_directory(root: impl AsRef<Path>) -> Result<GameDefinition, ContentError> {
     Ok(load_directory_with_warnings(root)?.definition)
 }
@@ -655,6 +665,8 @@ fn compile(
         .collect::<BTreeSet<_>>();
 
     let default_policy = compile_policy_defaults(&config, &good_ids, &mut errors);
+    let default_energy_logistics =
+        energy_logistics::compile_global(&config.energy_logistics, &mut errors);
     let brownouts = compile_brownouts(&config.brownouts, &good_ids, &mut errors);
     let population_config = compile_population_config(&config.population, &good_ids, &mut errors);
     let investments =
@@ -671,6 +683,7 @@ fn compile(
         source_output_percent: config.source_output_percent,
         idle_trader_repositioning: config.idle_trader_repositioning,
         brownouts,
+        energy_logistics: default_energy_logistics,
         population: population_config,
         investments,
     };
@@ -827,11 +840,18 @@ fn compile(
                 }),
             None => Governance::default(),
         };
+        let context = format!("economy.ron:{system}");
         let policy = merge_policy(
             &default_policy,
             source.policy,
             &good_ids,
-            &format!("economy.ron:{system}"),
+            &context,
+            &mut errors,
+        );
+        let energy_logistics = energy_logistics::merge_market(
+            default_energy_logistics,
+            source.energy_logistics,
+            &context,
             &mut errors,
         );
         markets.insert(
@@ -849,6 +869,7 @@ fn compile(
                 investment_policy,
                 governance,
                 policy,
+                energy_logistics,
                 acknowledged: source.acknowledge_bootstrap_risk,
             },
         );
@@ -900,6 +921,7 @@ fn compile(
             investment_policy: market.investment_policy,
             governance: market.governance,
             policy: market.policy,
+            energy_logistics: market.energy_logistics,
             protected_liquidation_budget: Energy(0),
             bootstrap_risk_acknowledged: market.acknowledged,
         });
@@ -966,6 +988,7 @@ fn compile(
     if errors.is_empty()
         && let Some(graph) = &graph
     {
+        validate_archetype_route_capacity(&fleet, &compiled_systems, graph, &mut errors);
         compute_protected_budgets(
             &mut compiled_systems,
             &compiled_goods,
@@ -1015,6 +1038,7 @@ struct MarketCompiled {
     investment_policy: InvestmentPolicy,
     governance: Governance,
     policy: MarketPolicy,
+    energy_logistics: game_core::EnergyLogisticsPolicy,
     acknowledged: bool,
 }
 
@@ -1390,35 +1414,6 @@ fn compile_traders(
     errors: &mut Vec<String>,
 ) -> (Vec<TraderDefinition>, TradeNetworkAccess, FleetDynamics) {
     let player_trade_network_access = source.player.trade_network_access.into();
-    let fleet_mode = match source.npcs.mode {
-        NpcFleetModeSource::Fixed => FleetMode::Fixed {
-            count: source.npcs.count,
-        },
-        NpcFleetModeSource::Dynamic => FleetMode::Dynamic {
-            initial_count: source.npcs.count,
-            opportunity_threshold: source.npcs.dynamic.opportunity_threshold,
-            opportunity_window: source.npcs.dynamic.opportunity_window,
-            spawn_cooldown_ticks: source.npcs.dynamic.spawn_cooldown_ticks,
-            retirement_window: source.npcs.dynamic.retirement_window,
-            retirement_threshold: source.npcs.dynamic.retirement_threshold,
-            maximum_count: source.npcs.dynamic.maximum_count,
-        },
-    };
-    if source.npcs.dynamic.opportunity_threshold == 0
-        || source.npcs.dynamic.opportunity_window == 0
-        || source.npcs.dynamic.opportunity_window > 10_000
-        || source.npcs.dynamic.spawn_cooldown_ticks == 0
-        || source.npcs.dynamic.retirement_window == 0
-        || source.npcs.dynamic.retirement_window > 10_000
-        || source.npcs.dynamic.maximum_count == 0
-        || source.npcs.dynamic.maximum_count < source.npcs.count
-        || source.npcs.dynamic.maximum_count > systems.len()
-    {
-        errors.push("traders.ron:npcs:dynamic: thresholds/windows must be positive, windows must be at most 10000 ticks, and maximum_count must cover initial count without exceeding systems".into());
-    }
-    if ContentId::new(format!("{}_dynamic_00000001", source.npcs.id_prefix)).is_err() {
-        errors.push("traders.ron:npcs:id_prefix: cannot form stable generated trader IDs".into());
-    }
     let system_ids = systems
         .iter()
         .map(|system| system.id.clone())
@@ -1442,15 +1437,18 @@ fn compile_traders(
             source.player.cargo_capacity,
             source.player.speed,
             source.player.travel_burn_per_distance,
-        ) {
+        ) || source.player.bulk_energy_capacity < 0
+        {
             errors.push("traders.ron:player: invalid numeric value".into());
         }
         result.push(TraderDefinition {
             id,
             name: source.player.name,
             system,
+            archetype: None,
             energy_tank: Energy(source.player.energy_tank),
             energy_tank_capacity: Energy(source.player.energy_tank_capacity),
+            bulk_energy_capacity: Energy(source.player.bulk_energy_capacity),
             cargo_capacity: source.player.cargo_capacity,
             speed: source.player.speed,
             travel_burn_per_distance: Energy(source.player.travel_burn_per_distance),
@@ -1458,57 +1456,176 @@ fn compile_traders(
             player: true,
         });
     }
-    if source.npcs.count > systems.len() {
-        errors.push(format!(
-            "traders.ron:npcs: count {} exceeds system count {}",
-            source.npcs.count,
-            systems.len()
-        ));
+
+    let total_initial = source
+        .npcs
+        .archetypes
+        .iter()
+        .try_fold(0_usize, |sum, archetype| {
+            sum.checked_add(archetype.initial_count)
+        })
+        .unwrap_or_else(|| {
+            errors.push("traders.ron:npcs: initial count total overflows usize".into());
+            usize::MAX
+        });
+    let total_archetype_maximum = source
+        .npcs
+        .archetypes
+        .iter()
+        .try_fold(0_usize, |sum, archetype| {
+            sum.checked_add(archetype.maximum_count)
+        })
+        .unwrap_or_else(|| {
+            errors.push("traders.ron:npcs: maximum count total overflows usize".into());
+            usize::MAX
+        });
+    let fleet_mode = match source.npcs.mode {
+        NpcFleetModeSource::Fixed => FleetMode::Fixed {
+            count: total_initial,
+        },
+        NpcFleetModeSource::Dynamic => FleetMode::Dynamic {
+            initial_count: total_initial,
+            opportunity_threshold: source.npcs.dynamic.opportunity_threshold,
+            opportunity_window: source.npcs.dynamic.opportunity_window,
+            spawn_cooldown_ticks: source.npcs.dynamic.spawn_cooldown_ticks,
+            retirement_window: source.npcs.dynamic.retirement_window,
+            retirement_threshold: source.npcs.dynamic.retirement_threshold,
+            maximum_count: source.npcs.dynamic.maximum_count,
+        },
+    };
+    if source.npcs.dynamic.opportunity_threshold == 0
+        || source.npcs.dynamic.opportunity_window == 0
+        || source.npcs.dynamic.opportunity_window > 10_000
+        || source.npcs.dynamic.spawn_cooldown_ticks == 0
+        || source.npcs.dynamic.retirement_window == 0
+        || source.npcs.dynamic.retirement_window > 10_000
+        || source.npcs.dynamic.maximum_count == 0
+        || source.npcs.dynamic.maximum_count < total_initial
+        || source.npcs.dynamic.maximum_count > total_archetype_maximum
+        || source.npcs.dynamic.maximum_count > systems.len()
+    {
+        errors.push("traders.ron:npcs:dynamic: thresholds/windows must be positive, windows must be at most 10000 ticks, and total maximum_count must cover initial count, respect archetype caps, and not exceed systems".into());
     }
-    if !valid_trader_numbers(
-        source.npcs.energy_tank,
-        source.npcs.energy_tank_capacity,
-        source.npcs.cargo_capacity,
-        source.npcs.speed,
-        source.npcs.travel_burn_per_distance,
-    ) {
-        errors.push("traders.ron:npcs: invalid numeric value".into());
-    }
-    if source.npcs.name_prefix.trim().is_empty() {
-        errors.push("traders.ron:npcs: name_prefix cannot be empty".into());
-    }
-    if !systems.is_empty() && source.npcs.count <= systems.len() {
-        let TraderDistributionSource::EvenlySpaced = source.npcs.distribution;
-        for index in 0..source.npcs.count {
-            let system_index = ((2 * index + 1) * systems.len()) / (2 * source.npcs.count.max(1));
-            let raw_id = format!("{}_{:02}", source.npcs.id_prefix, index + 1);
-            let Some(id) = parse_id(&raw_id, "traders.ron:npcs:id_prefix", errors) else {
+
+    let mut archetypes = BTreeMap::new();
+    let mut prefixes = Vec::<String>::new();
+    for source_archetype in source.npcs.archetypes {
+        let context = format!("traders.ron:npcs:archetype:{}", source_archetype.id);
+        let Some(archetype_id) = parse_id(&source_archetype.id, &context, errors) else {
+            continue;
+        };
+        if source_archetype.initial_count > source_archetype.maximum_count
+            || source_archetype.maximum_count == 0
+            || source_archetype.initial_distribution.len() != source_archetype.initial_count
+        {
+            errors.push(format!(
+                "{context}: initial distribution/count must match and initial_count must not exceed a positive maximum_count"
+            ));
+        }
+        if source_archetype.energy_tank <= 0
+            || !valid_trader_numbers(
+                source_archetype.energy_tank,
+                source_archetype.energy_tank_capacity,
+                source_archetype.cargo_capacity,
+                source_archetype.speed,
+                source_archetype.travel_burn_per_distance,
+            )
+            || source_archetype.travel_burn_per_distance == 0
+            || source_archetype.bulk_energy_capacity < 0
+        {
+            errors.push(format!("{context}: invalid physical numeric value"));
+        }
+        if source_archetype.name_prefix.trim().is_empty()
+            || ContentId::new(format!("{}_dynamic_00000001", source_archetype.id_prefix)).is_err()
+        {
+            errors.push(format!(
+                "{context}: prefixes must form valid stable trader IDs and names"
+            ));
+        }
+        if prefixes.iter().any(|prefix| {
+            prefix == &source_archetype.id_prefix
+                || prefix.starts_with(&format!("{}_", source_archetype.id_prefix))
+                || source_archetype
+                    .id_prefix
+                    .starts_with(&format!("{prefix}_"))
+        }) {
+            errors.push(format!(
+                "{context}: id_prefix collides with another archetype prefix"
+            ));
+        }
+        prefixes.push(source_archetype.id_prefix.clone());
+
+        for (index, raw_system) in source_archetype.initial_distribution.iter().enumerate() {
+            let Some(system) = parse_id(
+                raw_system,
+                &format!("{context}:initial_distribution"),
+                errors,
+            ) else {
+                continue;
+            };
+            if !system_ids.contains(&system) {
+                errors.push(format!("{context}: unknown initial system {system}"));
+            }
+            let raw_id = format!("{}_{:02}", source_archetype.id_prefix, index + 1);
+            let Some(id) = parse_id(&raw_id, &format!("{context}:id_prefix"), errors) else {
                 continue;
             };
             result.push(TraderDefinition {
                 id,
-                name: format!("{} {:02}", source.npcs.name_prefix, index + 1),
-                system: systems[system_index].id.clone(),
-                energy_tank: Energy(source.npcs.energy_tank),
-                energy_tank_capacity: Energy(source.npcs.energy_tank_capacity),
-                cargo_capacity: source.npcs.cargo_capacity,
-                speed: source.npcs.speed,
-                travel_burn_per_distance: Energy(source.npcs.travel_burn_per_distance),
-                refuel_policy: source.npcs.refuel_policy.into(),
+                name: format!("{} {:02}", source_archetype.name_prefix, index + 1),
+                system,
+                archetype: Some(archetype_id.clone()),
+                energy_tank: Energy(source_archetype.energy_tank),
+                energy_tank_capacity: Energy(source_archetype.energy_tank_capacity),
+                bulk_energy_capacity: Energy(source_archetype.bulk_energy_capacity),
+                cargo_capacity: source_archetype.cargo_capacity,
+                speed: source_archetype.speed,
+                travel_burn_per_distance: Energy(source_archetype.travel_burn_per_distance),
+                refuel_policy: source_archetype.refuel_policy.into(),
                 player: false,
             });
         }
+        let archetype = FleetArchetype {
+            id: archetype_id.clone(),
+            id_prefix: source_archetype.id_prefix,
+            name_prefix: source_archetype.name_prefix,
+            initial_count: source_archetype.initial_count,
+            maximum_count: source_archetype.maximum_count,
+            starting_tank: Energy(source_archetype.energy_tank),
+            energy_tank_capacity: Energy(source_archetype.energy_tank_capacity),
+            bulk_energy_capacity: Energy(source_archetype.bulk_energy_capacity),
+            cargo_capacity: source_archetype.cargo_capacity,
+            speed: source_archetype.speed,
+            travel_burn_per_distance: Energy(source_archetype.travel_burn_per_distance),
+            refuel_policy: source_archetype.refuel_policy.into(),
+        };
+        if archetypes.insert(archetype_id.clone(), archetype).is_some() {
+            errors.push(format!("{context}: duplicate archetype id {archetype_id}"));
+        }
+    }
+    if archetypes.is_empty() {
+        errors.push("traders.ron:npcs: at least one archetype is required".into());
+    }
+    if !archetypes
+        .values()
+        .any(|archetype| archetype.bulk_energy_capacity > Energy::ZERO)
+    {
+        errors.push(
+            "traders.ron:npcs: at least one bulk Energy capable archetype is required".into(),
+        );
     }
     if matches!(&fleet_mode, FleetMode::Dynamic { .. }) {
-        let generated_namespace = format!("{}_dynamic_", source.npcs.id_prefix);
-        if let Some(collision) = result
-            .iter()
-            .find(|trader| trader.id.as_str().starts_with(&generated_namespace))
-        {
-            errors.push(format!(
-                "traders.ron:npcs:id_prefix: generated trader namespace {generated_namespace} collides with existing trader {}",
-                collision.id
-            ));
+        for archetype in archetypes.values() {
+            let generated_namespace = format!("{}_dynamic_", archetype.id_prefix);
+            if let Some(collision) = result
+                .iter()
+                .find(|trader| trader.id.as_str().starts_with(&generated_namespace))
+            {
+                errors.push(format!(
+                    "traders.ron:npcs:archetype:{}:id_prefix: generated trader namespace {generated_namespace} collides with existing trader {}",
+                    archetype.id, collision.id
+                ));
+            }
         }
     }
     if result
@@ -1525,21 +1642,7 @@ fn compile_traders(
         player_trade_network_access,
         FleetDynamics {
             mode: Some(fleet_mode),
-            archetype: Some(FleetArchetype {
-                id_prefix: source.npcs.id_prefix,
-                name_prefix: source.npcs.name_prefix,
-                starting_tank: Energy(source.npcs.energy_tank),
-                energy_tank_capacity: Energy(source.npcs.energy_tank_capacity),
-                cargo_capacity: source.npcs.cargo_capacity,
-                speed: source.npcs.speed,
-                travel_burn_per_distance: Energy(source.npcs.travel_burn_per_distance),
-                refuel_policy: source.npcs.refuel_policy.into(),
-            }),
-            archetype_capability: Some(LiquidationTraderCapability {
-                cargo_capacity: source.npcs.cargo_capacity,
-                energy_tank_capacity: Energy(source.npcs.energy_tank_capacity),
-                travel_burn_per_distance: Energy(source.npcs.travel_burn_per_distance),
-            }),
+            archetypes,
             ..FleetDynamics::default()
         },
     )
@@ -1625,6 +1728,28 @@ fn validate_roles_and_anticorrelation(
     }
 }
 
+fn validate_archetype_route_capacity(
+    fleet: &FleetDynamics,
+    systems: &[SystemDefinition],
+    graph: &SystemGraph,
+    errors: &mut Vec<String>,
+) {
+    for archetype in fleet.archetypes.values() {
+        let can_cover_adjacent_route = systems.iter().any(|system| {
+            graph.neighbors(&system.id).iter().any(|(_, distance)| {
+                game_core::travel_energy(*distance, archetype.travel_burn_per_distance)
+                    .is_ok_and(|burn| burn <= archetype.energy_tank_capacity)
+            })
+        });
+        if !can_cover_adjacent_route {
+            errors.push(format!(
+                "traders.ron:npcs:archetype:{}: tank capacity cannot cover any graph-adjacent route",
+                archetype.id
+            ));
+        }
+    }
+}
+
 fn compute_protected_budgets(
     systems: &mut [SystemDefinition],
     goods: &[GoodDefinition],
@@ -1646,9 +1771,12 @@ fn compute_protected_budgets(
             travel_burn_per_distance: trader.travel_burn_per_distance,
         })
         .collect::<Vec<_>>();
-    if let Some(capability) = fleet.archetype_capability {
-        capabilities.push(capability);
-    }
+    capabilities.extend(
+        fleet
+            .archetypes
+            .values()
+            .map(FleetArchetype::liquidation_capability),
+    );
     for system in systems.iter_mut() {
         match compute_protected_liquidation_budget(
             graph,
@@ -1890,7 +2018,86 @@ mod tests {
                 ..
             })
         ));
-        assert!(loaded.definition.fleet.archetype.is_some());
+        assert_eq!(loaded.definition.fleet.archetypes.len(), 2);
+        let logistics = loaded.definition.economy.energy_logistics;
+        assert_eq!(
+            logistics.carrier_fee_bps,
+            game_core::CarrierFeeSchedule {
+                normal: 50,
+                throttled: 100,
+                emergency: 200,
+                starvation: 300,
+            }
+        );
+        assert_eq!(logistics.max_allocation_bps, 1_000);
+        assert_eq!(logistics.curtailment_projection_window, 20);
+        assert_eq!(logistics.export_reserve, Energy::ZERO);
+        assert_eq!(logistics.authored_export_base, Energy::ZERO);
+        assert_eq!(logistics.settlement_timeout_ticks, 20);
+        let system_15 = loaded
+            .definition
+            .systems
+            .iter()
+            .find(|system| system.id.as_str() == "frontier:system_15")
+            .unwrap();
+        assert_eq!(system_15.inventory[&energy.id], 5_000);
+        assert_eq!(
+            system_15.energy_logistics.authored_export_base,
+            Energy(3_200)
+        );
+        let system_14 = loaded
+            .definition
+            .systems
+            .iter()
+            .find(|system| system.id.as_str() == "frontier:system_14")
+            .unwrap();
+        assert_eq!(system_14.targets[&energy.id], 5_000);
+        let player = loaded
+            .definition
+            .traders
+            .iter()
+            .find(|trader| trader.player)
+            .unwrap();
+        assert_eq!(player.bulk_energy_capacity, Energy(4_000));
+        let general = &loaded.definition.fleet.archetypes
+            [&ContentId::new("frontier:general_freighter").unwrap()];
+        assert_eq!((general.initial_count, general.maximum_count), (5, 10));
+        assert_eq!(
+            (general.starting_tank, general.energy_tank_capacity),
+            (Energy(1_000), Energy(1_500))
+        );
+        assert_eq!(general.bulk_energy_capacity, Energy::ZERO);
+        assert_eq!(general.cargo_capacity, 300);
+        assert_eq!(
+            (general.speed, general.travel_burn_per_distance),
+            (8.0, Energy(1))
+        );
+        let bulk = &loaded.definition.fleet.archetypes
+            [&ContentId::new("frontier:bulk_energy_hauler").unwrap()];
+        assert_eq!((bulk.initial_count, bulk.maximum_count), (4, 10));
+        assert_eq!(
+            (bulk.starting_tank, bulk.energy_tank_capacity),
+            (Energy(1_000), Energy(1_500))
+        );
+        assert_eq!(bulk.bulk_energy_capacity, Energy(4_000));
+        assert_eq!(bulk.cargo_capacity, 100);
+        assert_eq!(
+            (bulk.speed, bulk.travel_burn_per_distance),
+            (8.0, Energy(1))
+        );
+        assert_eq!(
+            loaded
+                .definition
+                .traders
+                .iter()
+                .filter(|trader| !trader.player)
+                .count(),
+            9
+        );
+        assert!(loaded.definition.traders.iter().any(|trader| {
+            trader.archetype.as_ref() == Some(&bulk.id)
+                && trader.system.as_str() == "frontier:system_15"
+        }));
         assert!(!loaded.definition.economy.population.static_population);
         assert_eq!(loaded.definition.economy.investments.len(), 4);
         assert!(
@@ -1970,7 +2177,13 @@ mod tests {
         economy.markets[0].seasonal.period_ticks = 0;
         economy.markets[0].governor = Some("frontier:missing_player".into());
         traders.npcs.mode = NpcFleetModeSource::Dynamic;
-        traders.npcs.dynamic.maximum_count = traders.npcs.count - 1;
+        traders.npcs.dynamic.maximum_count = traders
+            .npcs
+            .archetypes
+            .iter()
+            .map(|archetype| archetype.initial_count)
+            .sum::<usize>()
+            - 1;
 
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
@@ -1985,6 +2198,82 @@ mod tests {
         ] {
             assert!(error.contains(context), "missing {context} in {error}");
         }
+    }
+
+    #[test]
+    fn malformed_energy_logistics_policy_reports_exact_source_contexts() {
+        fn compile_with(mutator: fn(&mut EconomyConfigSource)) -> String {
+            let systems = load(root().join("systems.ron")).unwrap();
+            let goods = load(root().join("goods.ron")).unwrap();
+            let recipes = load(root().join("recipes.ron")).unwrap();
+            let economy = load(root().join("economy.ron")).unwrap();
+            let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+            mutator(&mut config);
+            let traders = load(root().join("traders.ron")).unwrap();
+            compile(systems, goods, recipes, economy, config, traders)
+                .unwrap_err()
+                .to_string()
+        }
+
+        type ConfigMutation = fn(&mut EconomyConfigSource);
+        let cases: [(ConfigMutation, &str); 4] = [
+            (
+                |config| config.energy_logistics.carrier_fee_bps[1] = 50,
+                "economy_config.ron:energy_logistics:carrier_fee_bps",
+            ),
+            (
+                |config| config.energy_logistics.max_allocation_bps = 0,
+                "economy_config.ron:energy_logistics:max_allocation_bps",
+            ),
+            (
+                |config| config.energy_logistics.curtailment_projection_window = 0,
+                "economy_config.ron:energy_logistics:curtailment_projection_window",
+            ),
+            (
+                |config| config.energy_logistics.settlement_timeout_ticks = 0,
+                "economy_config.ron:energy_logistics:settlement_timeout_ticks",
+            ),
+        ];
+        for (mutator, context) in cases {
+            let error = compile_with(mutator);
+            assert!(error.contains(context), "missing {context} in {error}");
+        }
+
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
+        economy.markets[0].energy_logistics.max_allocation_bps = Some(300);
+        let config = load(root().join("economy_config.ron")).unwrap();
+        let traders = load(root().join("traders.ron")).unwrap();
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("economy.ron:frontier:system_01:energy_logistics:carrier_fee_bps"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn duplicate_archetype_id_reports_source_context() {
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let economy = load(root().join("economy.ron")).unwrap();
+        let config = load(root().join("economy_config.ron")).unwrap();
+        let mut traders: TraderConfigSource = load(root().join("traders.ron")).unwrap();
+        traders.npcs.archetypes[1].id = traders.npcs.archetypes[0].id.clone();
+        let duplicate = traders.npcs.archetypes[1].id.clone();
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!(
+                "traders.ron:npcs:archetype:{duplicate}: duplicate archetype id"
+            )),
+            "{error}"
+        );
     }
 
     #[test]
@@ -2044,13 +2333,13 @@ mod tests {
         let config = load(root().join("economy_config.ron")).unwrap();
         let mut traders: TraderConfigSource = load(root().join("traders.ron")).unwrap();
         traders.npcs.mode = NpcFleetModeSource::Dynamic;
-        traders.player.id = format!("{}_dynamic_00000001", traders.npcs.id_prefix);
+        traders.player.id = format!("{}_dynamic_00000001", traders.npcs.archetypes[0].id_prefix);
 
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("traders.ron:npcs:id_prefix: generated trader namespace")
+            error.contains("traders.ron:npcs:archetype:frontier:general_freighter:id_prefix: generated trader namespace")
                 && error.contains("_dynamic_00000001"),
             "{error}"
         );

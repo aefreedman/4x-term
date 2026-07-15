@@ -3733,6 +3733,7 @@ mod tests {
                     Governance::default()
                 },
                 policy: MarketPolicy::default(),
+                energy_logistics: Default::default(),
                 protected_liquidation_budget: Energy(10),
                 bootstrap_risk_acknowledged: false,
             })
@@ -3758,8 +3759,10 @@ mod tests {
                 id: id("core:player"),
                 name: "Player".into(),
                 system: id("core:s0"),
+                archetype: None,
                 energy_tank: Energy(100),
                 energy_tank_capacity: Energy(1_000),
+                bulk_energy_capacity: Energy::ZERO,
                 cargo_capacity: 10,
                 speed: 1.0,
                 travel_burn_per_distance: Energy(1),
