@@ -323,7 +323,7 @@ claim_capacity = max(0,
 
 - Visit that source's pre-load contracts by ascending `ContractId`, maintaining remaining claim capacity. A claim is safe only when its full gross payload fits; reserve that capacity for it, otherwise revoke it. This oldest-first allocation is the sole distress winner rule.
 - If a safe carrier has reached the source, loading reduces source stock and releases the same claim in one prepared transition; the capacity already assigned to later claims does not change.
-- A player cancellation releases the claim immediately and removes the contract. Already-started deadhead travel continues to the source because travel itself is not cancellable.
+- A player cancellation releases the claim immediately and removes the contract. Commands resolve synchronously between steps, so a successful cancellation wins before the next travel/maintenance phases; after phase-6 loading it is rejected. Already-started deadhead travel continues to the source because travel itself is not cancellable. The same non-cancellable travel rule applies after `RevokedBeforeLoad`.
 - On source arrival, loading and loaded-route departure execute as one prepared atomic transition. Success subtracts source stock, creates the locked lot, and releases the source claim in the same apply step.
 - `RejectedBeforeLoad` is reserved for route/state/integrity validation failure after claim safety passes. Failure releases the claim and leaves the carrier docked with no locked cargo. Acceptance fuel validation guarantees the carrier retained at least the planned loaded-route burn after deadheading, preserving an escape budget.
 
@@ -420,7 +420,7 @@ Players cannot accept a contract with non-positive net commercial profit merely 
 For each destination tick with unsupplied life support, report one state in priority order:
 
 1. `ArrivedSettlementBlocked` — an arrived contract has undelivered net Energy but cannot currently settle because of headroom/recovery-reserve constraints.
-2. `AcceptedInTransit` — a non-recovering inbound commitment exists but has not arrived.
+2. `AcceptedDeliveryPending` — a non-recovering inbound commitment exists but was not available for this tick's phase-3 life support. This includes in-transit contracts and an arrived, unblocked contract that can settle later in phase 7; blocked arrived contracts remain in the higher-priority category above.
 3. `NoReachableSurplus` — no reachable source has positive offered payload.
 4. `NoViableCandidate` — surplus exists, but no carrier/source/payload passes route, fuel, capacity, freight-rate, recovery, and positive-profit checks.
 5. `ViableButUnaccepted` — a viable candidate exists but loses deterministic contention or the available carriers choose better work.
@@ -573,7 +573,7 @@ energy_logistics: (
 )
 ```
 
-Phase 0 chooses repository values. Initial fixture candidates are 50/100/200/300 fee bps, 1,000 maximum allocation bps, a 20-tick projection window, zero export reserve/base, and a 20-tick settlement timeout; they are not code defaults until validated against the authored map.
+Phase 0 selected repository defaults of 50/100/200/300 fee bps, 1,000 maximum allocation bps, a 20-tick projection window, zero global export reserve/base, and a 20-tick settlement timeout. The authored fixture gives `frontier:system_15` a 3,200-Energy export-base override and full starting storage, raises `frontier:system_14`'s Energy target to 5,000, and uses the exact archetype values recorded in `docs/energy-logistics-validation.md`; these are validated content values rather than hidden code defaults.
 
 #### `economy.ron`
 
@@ -592,7 +592,7 @@ Add `bulk_energy_capacity` to the player profile. Replace the single homogeneous
 - Tank amount/capacity, bulk Energy capacity, general cargo capacity.
 - Speed, burn, refuel policy, and initial distribution.
 
-Global dynamic-fleet windows/thresholds remain shared. `FleetDynamics` compiles a registry rather than one archetype. Dynamic spawn evaluation scores each eligible archetype against unserved ordinary and Energy opportunities, selects the highest score, and uses archetype stable ID as the final tie-break. Total and per-archetype caps both apply.
+Global dynamic-fleet windows/thresholds remain shared. `FleetDynamics` compiles a registry rather than one archetype. Dynamic spawn evaluation constructs hypothetical candidates at each opportunity source using each eligible archetype's authored initial tank and physical capacities; that source must be able to fund the starting tank. It compares the canonical opportunity score, then the D12 opportunity keys, then archetype stable ID, and spawns the winner at that opportunity source. This lets an unserved bulk opportunity attract the first compatible hauler instead of requiring one to exist already. Total and per-archetype caps both apply.
 
 At least one general freighter and one bulk-capable Energy-hauler archetype must exist in repository content after Phase 0. Exact values are tuning data.
 
@@ -878,14 +878,14 @@ Each phase should be a focused, testable change governed by the coordination str
 
 This is a mechanical refactor only. Complete and commit it separately before authoring new behavioral tests or delegating production implementation.
 
-- [ ] Record the clean pre-refactor output of `cargo fmt --all -- --check`, `cargo test --workspace`, and existing targeted economy/content tests.
-- [ ] Move the existing `game-core/src/lib.rs` root test module to `game-core/src/tests.rs` without changing test names, bodies, visibility, ordering assumptions, or expectations.
-- [ ] Leave only `#[cfg(test)] mod tests;` as root wiring and preserve all root public re-exports/API paths.
-- [ ] Create compile-safe `game-core/src/energy_logistics/mod.rs` and `game-core/src/energy_logistics/tests.rs` seams with no runtime behavior and no placeholder economic decisions.
-- [ ] Document in module comments that root scheduling remains authoritative and only the contract executor may mutate Energy logistics state.
-- [ ] Confirm no ordinary production code, tick phase, content value, event, snapshot, or ledger changed.
-- [ ] Run `git diff --check`, formatting, workspace tests, affected-crate Clippy, and the same targeted economy/content tests recorded before extraction.
-- [ ] Commit the mechanical seam preparation separately so later behavioral diffs remain reviewable.
+- [x] Record the clean pre-refactor output of `cargo fmt --all -- --check`, `cargo test --workspace`, and existing targeted economy/content tests.
+- [x] Move the existing `game-core/src/lib.rs` root test module to `game-core/src/tests.rs` without changing test names, bodies, visibility, ordering assumptions, or expectations.
+- [x] Leave only `#[cfg(test)] mod tests;` as root wiring and preserve all root public re-exports/API paths.
+- [x] Create compile-safe `game-core/src/energy_logistics/mod.rs` and `game-core/src/energy_logistics/tests.rs` seams with no runtime behavior and no placeholder economic decisions.
+- [x] Document in module comments that root scheduling remains authoritative and only the contract executor may mutate Energy logistics state.
+- [x] Confirm no ordinary production code, tick phase, content value, event, snapshot, or ledger changed.
+- [x] Run `git diff --check`, formatting, workspace tests, affected-crate Clippy, and the same targeted economy/content tests recorded before extraction.
+- [x] Commit the mechanical seam preparation separately so later behavioral diffs remain reviewable.
 
 Files: `crates/game-core/src/lib.rs`, `crates/game-core/src/tests.rs`, `crates/game-core/src/energy_logistics/mod.rs`, `crates/game-core/src/energy_logistics/tests.rs`.
 
@@ -895,16 +895,16 @@ The expensive 1,000/10,000-tick gates are not required solely for a byte-for-byt
 
 This phase is owned by the main agent. No production behavior is delegated until its gate is complete.
 
-- [ ] Confirm the post-Phase--1 baseline matches the recorded pre-refactor behavior and carry any explicitly documented pre-existing failures forward.
-- [ ] Create `docs/energy-logistics-validation.md` with the `EL-INV-*` map, transition table, exact arithmetic vectors, legacy rejection matrix, insertion permutations, boundary expectations, and evidence slots.
-- [ ] Add a test-only/pure modeling table over the authored 20-system graph for D1 offer projections, D3 gross sizing, all three route burns, fee stages, expected score, and system headroom.
-- [ ] Design shared fixtures/assertion helpers and add compile-safe executable tests or minimal API scaffolding for the first delegated slice.
-- [ ] Capture failure-first evidence for each first-wave behavior test; label tests that intentionally characterize existing behavior.
-- [ ] Choose repository values for fee bps, maximum freight rate, projection window, timeout, source overrides, Energy targets/caps, and at least two NPC archetypes.
-- [ ] Demonstrate at least one positive-profit Normal-stage Energy route and at least one correctly rejected burn-dominated route.
-- [ ] Demonstrate that accepted payloads retain recovery reserve under every partial-settlement boundary.
-- [ ] Freeze Wave 1 public signatures, allowed files, test names, expected results, and stop conditions before invoking an implementation worker.
-- [ ] Record the chosen values and representative table in the validation artifact before enabling runtime matching.
+- [x] Confirm the post-Phase--1 baseline matches the recorded pre-refactor behavior and carry any explicitly documented pre-existing failures forward.
+- [x] Create `docs/energy-logistics-validation.md` with the `EL-INV-*` map, transition table, exact arithmetic vectors, legacy rejection matrix, insertion permutations, boundary expectations, and evidence slots.
+- [x] Add a test-only/pure modeling table over the authored 20-system graph for D1 offer projections, D3 gross sizing, all three route burns, fee stages, expected score, and system headroom.
+- [x] Design shared fixtures/assertion helpers and add compile-safe executable tests or minimal API scaffolding for the first delegated slice.
+- [x] Capture failure-first evidence for each first-wave behavior test; label tests that intentionally characterize existing behavior.
+- [x] Choose repository values for fee bps, maximum freight rate, projection window, timeout, source overrides, Energy targets/caps, and at least two NPC archetypes.
+- [x] Demonstrate at least one positive-profit Normal-stage Energy route and at least one correctly rejected burn-dominated route.
+- [x] Demonstrate that accepted payloads retain recovery reserve under every partial-settlement boundary.
+- [x] Freeze Wave 1 public signatures, allowed files, test names, expected results, and stop conditions before invoking an implementation worker.
+- [x] Record the chosen values and representative table in the validation artifact before enabling runtime matching.
 
 Files: `docs/energy-logistics-validation.md`, `crates/game-core/src/energy_logistics/tests.rs`, minimal signatures in `crates/game-core/src/energy_logistics/mod.rs`, and the explicitly tuned content files.
 
