@@ -939,12 +939,12 @@ Files: `crates/game-core/src/lib.rs`, `crates/game-content/src/lib.rs`, `content
 
 Execute this as serial Waves 3A–3C, not one broad delegation. Before each wave, the main agent authors the corresponding D6, D7/D8, or D12/D13 executable fixtures and observes the expected failure.
 
-- [ ] Add player/NPC intent collection and D12 resolution.
+- [x] Add player/NPC intent collection and D12 resolution.
 - [x] Implement remote source claims/deadhead, source revocation, atomic load/depart, and cancellation semantics from D6.
 - [x] Implement arrival settlement, retries, exact timeout boundary, proportional fee conversion, recovery reserve, and terminal recovery on the same contract.
-- [ ] Add the D13 schedule phases in `GameSession::step`.
+- [x] Add the D13 schedule phases in `GameSession::step`.
 - [x] Block manual travel/transfer/liquidation and dynamic retirement around active contracts/locked lots.
-- [ ] Integrate earned fee/deadhead cost with trader profitability.
+- [x] Integrate earned fee/deadhead cost with trader profitability.
 - [x] Preserve one active contract and one locked lot invariants at every transition.
 
 Files: primarily `crates/game-core/src/energy_logistics/mod.rs`, with serial limited integration edits in `crates/game-core/src/lib.rs`; main-authored expectations remain in `crates/game-core/src/energy_logistics/tests.rs`.

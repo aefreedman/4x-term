@@ -241,4 +241,13 @@ Required metrics: gross/net delivery, loaded/deadhead/recovery burn, carrier fee
 - Runtime tests prove reimbursement converts once, a nonzero fee converts proportionally across multiple settlements, allocation fills tank before owned bulk, and a terminal contract cannot pay or emit again. Settlement, timeout, and recovery overflow injections preserve snapshots, contracts, and events without partial mutation.
 - Read-only accounting review found final captured-key ordering, stored recovery-arrival ordering, named presentation ledgers, and profitability-window integration remain owned by Waves 3C/5; those items are not claimed here.
 
-Pending NPC/order/profitability/frontend waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.
+#### Wave 3C selection, order, schedule, and profitability
+
+- Main rerun: all 101 game-core tests pass; game-core Clippy with warnings denied, format, and diff checks pass. Full workspace validation is recorded with the integration commit.
+- Existing NPCs collect one canonical positive-score choice across Energy and ordinary work. Executable cases prove Energy selection, more-profitable ordinary selection, stale exact-payload contention, stable carrier-ID winners, and no ordinary Energy request path.
+- Forward/reverse/pseudo-random insertion fixtures produce identical intent contention, destination settlement, and recovery results. Recovery uses checked immutable `departure + stored route ticks` arrival keys, including a fixture where arrival order conflicts with contract-ID order.
+- D13 phase order is wired in `GameSession::step`, with destination arrivals marked in phase 1 and Energy maintenance/settlement/selection/resolution in phases 6/7/10/11. `docs/energy-economy.md` now records the canonical 15 phases.
+- Profitability tracks cumulative reimbursement and reimbursed-travel subsets without duplicating mutable contract payment state. Local loaded burn and recovery are neutral across tick boundaries, remote deadhead remains cost, earned fee contributes once, and active contracts/locked lots cannot trigger or complete retirement. Pre-load arithmetic overflow propagates without terminalizing or partially mutating the contract.
+- Read-only architecture/spec review findings for retirement gating, frozen recovery-arrival order, phase-1 marking, and preload overflow classification were corrected and rerun. Archetype-aware spawn selection/unserved demand remains explicitly owned by Wave 4; named presentation ledgers remain Wave 5.
+
+Pending archetype/dynamic-fleet/frontend waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.

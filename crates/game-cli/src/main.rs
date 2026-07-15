@@ -464,6 +464,9 @@ fn run_player_impact(
                 });
             }
         }
+        if first_divergence.is_some() {
+            break;
+        }
     }
     anyhow::ensure!(
         deliveries.len() == 1,
@@ -1313,12 +1316,19 @@ fn physical_energy(snapshot: &CoreSnapshot) -> Result<i128> {
             .traders
             .iter()
             .map(|trader| i128::from(trader.energy_tank.0)),
-        snapshot.traders.iter().filter_map(|trader| {
-            trader
-                .cargo
-                .iter()
-                .find(|(good, _)| good.as_str() == ENERGY_ID)
-                .map(|(_, quantity)| i128::from(*quantity))
+        snapshot.traders.iter().flat_map(|trader| {
+            [
+                i128::from(trader.bulk_energy.owned.0),
+                trader
+                    .bulk_energy
+                    .locked
+                    .map_or(0, |lot| i128::from(lot.amount.0)),
+                trader
+                    .cargo
+                    .iter()
+                    .find(|(good, _)| good.as_str() == ENERGY_ID)
+                    .map_or(0, |(_, quantity)| i128::from(*quantity)),
+            ]
         }),
     )
 }
@@ -1708,13 +1718,21 @@ mod tests {
     #[test]
     fn player_impact_report_proves_controlled_end_to_end_difference_and_both_reconciliations() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
-        let definition = game_content::load_directory(root).unwrap();
+        let mut definition = game_content::load_directory(root).unwrap();
+        let target = ContentId::new("frontier:system_04").unwrap();
+        definition
+            .systems
+            .iter_mut()
+            .find(|system| system.id == target)
+            .unwrap()
+            .inventory
+            .insert(ContentId::new(ENERGY_ID).unwrap(), 62);
         let config = PlayerImpactConfig {
-            target: ContentId::new("frontier:system_04").unwrap(),
-            delivery_tick: 300,
+            target,
+            delivery_tick: 0,
             good: ContentId::new(ENERGY_ID).unwrap(),
-            quantity: 500,
-            horizon: 500,
+            quantity: 1,
+            horizon: 5,
         };
         let report = run_player_impact(&definition, &config).unwrap();
         assert!(report.initial_snapshots_identical);
@@ -1725,7 +1743,7 @@ mod tests {
                 system: config.target.clone(),
                 good: config.good.clone(),
                 quantity: config.quantity,
-                energy_inflow: 500,
+                energy_inflow: 1,
                 tick: config.delivery_tick,
             }
         );
@@ -1745,6 +1763,6 @@ mod tests {
             report.intervention_reconciliation.actual
         );
         assert_eq!(report.baseline_reconciliation.external_inflow, 0);
-        assert_eq!(report.intervention_reconciliation.external_inflow, 500);
+        assert_eq!(report.intervention_reconciliation.external_inflow, 1);
     }
 }

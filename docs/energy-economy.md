@@ -146,19 +146,23 @@ Aggregate simulation history, not formatted UI history, owns stage occupancy/tra
 
 ## Tick phases
 
-The headless core executes explicit deterministic phases for the current brownout checkpoint:
+The headless core executes these explicit deterministic phases:
 
-1. complete travel and refresh/expire reservation state;
-2. derive deterministic seasonal effective output from the current base, generate it, cap storage, and record curtailment;
-3. assess mandatory life support;
+1. complete travel, including contract arrivals at a source, destination, or recovery source;
+2. refresh and expire ordinary reservation state;
+3. derive seasonal output, generate Energy, cap storage, record ordinary curtailment, and assess mandatory life support;
 4. classify the brownout stage and derive the effective operating profile;
-5. execute sources and recipes with composed stage/labor throughput and operating energy;
-6. settle arrivals and funded liquidation fallback, then rebalance idle NPC tanks;
-7. execute one rate-limited autonomous investment per eligible market from protected surplus;
-8. collect and resolve automated commitments in stable order, including subsidy-adjusted opportunity, cargo purchase, reservation, and departure;
-9. evaluate dynamic-fleet profitability, deferred retirement cleanup, opportunity persistence, and at most one funded spawn for next-tick eligibility;
-10. record bounded energy/goods sufficiency, settle population decline/growth, labor, tertiary demand, tiers, and milestones for next-tick effect;
-11. advance the clock and publish events/snapshots.
+5. execute sources and recipes with composed stage/labor throughput and operating Energy;
+6. maintain pre-load Energy contracts in ascending contract-ID order, revoking unsafe claims or atomically loading arrived carriers;
+7. settle, retry, or time out Energy deliveries and settle recovery arrivals in their stable destination/source orders;
+8. settle ordinary laden arrivals and liquidation fallback, then rebalance idle NPC tanks;
+9. execute one rate-limited autonomous investment per eligible market from protected surplus;
+10. derive Energy offers/requests and collect one canonical positive-profit opportunity for each idle NPC across Energy contracts and ordinary trade;
+11. resolve selected Energy intents by severity, runway, payload, and stable IDs, rejecting stale exact payloads without downsizing;
+12. resolve ordinary trade intents for carriers that did not select Energy work;
+13. evaluate dynamic-fleet profitability, deferred retirement cleanup, opportunity persistence, and at most one funded spawn for next-tick eligibility;
+14. record bounded Energy/goods sufficiency, settle population decline/growth, labor, tertiary demand, tiers, and milestones for next-tick effect;
+15. advance the clock and publish events/snapshots.
 
 ECS iteration order is never used to choose contention winners.
 

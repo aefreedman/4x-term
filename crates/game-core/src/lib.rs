@@ -1753,9 +1753,28 @@ pub struct TravelPlan {
 pub struct TradeLedger {
     pub purchase_cost: Energy,
     pub sales_revenue: Energy,
+    /// Contract allocation converted solely to reimburse loaded/recovery burn.
+    pub contract_reimbursement: Energy,
     pub travel_cost: Energy,
+    /// Travel cost covered by contract reimbursement.
+    pub reimbursed_travel_cost: Energy,
     pub cargo_units_moved: u64,
     pub completed_transactions: u64,
+}
+
+impl TradeLedger {
+    fn validate_contract_subsets(&self) -> Result<(), CoreError> {
+        if self.sales_revenue.0 < 0
+            || self.contract_reimbursement.0 < 0
+            || self.contract_reimbursement > self.sales_revenue
+            || self.travel_cost.0 < 0
+            || self.reimbursed_travel_cost.0 < 0
+            || self.reimbursed_travel_cost > self.travel_cost
+        {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1769,7 +1788,9 @@ struct TraderLifecycle {
     profitability: Vec<i64>,
     observed_purchase_cost: Energy,
     observed_sales_revenue: Energy,
+    observed_contract_reimbursement: Energy,
     observed_travel_cost: Energy,
+    observed_reimbursed_travel_cost: Energy,
     failed_liquidation_ticks: u32,
     last_failed_tick: Option<u64>,
     retirement: Option<TraderRetirementState>,
@@ -3149,6 +3170,7 @@ impl GameSession {
 
     pub fn step(&mut self) -> Result<(), CoreError> {
         self.advance_travel()?;
+        self.mark_energy_contract_arrivals()?;
         self.refresh_enroute_reservations()?;
         self.expire_reservations()?;
         self.generate_and_life_support()?;
@@ -6350,22 +6372,53 @@ impl GameSession {
             .collect::<Vec<_>>();
         ordered.sort_by(|a, b| a.1.cmp(&b.1));
 
-        for (entity, _, trader, mut lifecycle) in ordered {
-            let purchases = trader
-                .ledger
-                .purchase_cost
-                .checked_sub(lifecycle.observed_purchase_cost)?;
-            let sales = trader
-                .ledger
-                .sales_revenue
-                .checked_sub(lifecycle.observed_sales_revenue)?;
-            let travel = trader
-                .ledger
-                .travel_cost
-                .checked_sub(lifecycle.observed_travel_cost)?;
-            let profit = i128::from(sales.0)
+        let mut prepared_lifecycles = Vec::with_capacity(ordered.len());
+        for (entity, id, trader, mut lifecycle) in ordered {
+            let checked_delta = |current: Energy, observed: Energy| {
+                if current.0 < 0 || observed.0 < 0 || current < observed {
+                    return Err(CoreError::InvalidPhysicalDefinition);
+                }
+                current.checked_sub(observed)
+            };
+            let checked_subset = |total: Energy, subset: Energy| {
+                if total.0 < 0 || subset.0 < 0 || subset > total {
+                    return Err(CoreError::InvalidPhysicalDefinition);
+                }
+                total.checked_sub(subset)
+            };
+
+            trader.ledger.validate_contract_subsets()?;
+            checked_subset(
+                lifecycle.observed_sales_revenue,
+                lifecycle.observed_contract_reimbursement,
+            )?;
+            checked_subset(
+                lifecycle.observed_travel_cost,
+                lifecycle.observed_reimbursed_travel_cost,
+            )?;
+
+            let purchases = checked_delta(
+                trader.ledger.purchase_cost,
+                lifecycle.observed_purchase_cost,
+            )?;
+            let sales = checked_delta(
+                trader.ledger.sales_revenue,
+                lifecycle.observed_sales_revenue,
+            )?;
+            let reimbursement = checked_delta(
+                trader.ledger.contract_reimbursement,
+                lifecycle.observed_contract_reimbursement,
+            )?;
+            let travel = checked_delta(trader.ledger.travel_cost, lifecycle.observed_travel_cost)?;
+            let reimbursed_travel = checked_delta(
+                trader.ledger.reimbursed_travel_cost,
+                lifecycle.observed_reimbursed_travel_cost,
+            )?;
+            let earned_sales = checked_subset(sales, reimbursement)?;
+            let unreimbursed_travel = checked_subset(travel, reimbursed_travel)?;
+            let profit = i128::from(earned_sales.0)
                 .checked_sub(i128::from(purchases.0))
-                .and_then(|value| value.checked_sub(i128::from(travel.0)))
+                .and_then(|value| value.checked_sub(i128::from(unreimbursed_travel.0)))
                 .ok_or(CoreError::Overflow)?;
             lifecycle
                 .profitability
@@ -6376,7 +6429,9 @@ impl GameSession {
             }
             lifecycle.observed_purchase_cost = trader.ledger.purchase_cost;
             lifecycle.observed_sales_revenue = trader.ledger.sales_revenue;
+            lifecycle.observed_contract_reimbursement = trader.ledger.contract_reimbursement;
             lifecycle.observed_travel_cost = trader.ledger.travel_cost;
+            lifecycle.observed_reimbursed_travel_cost = trader.ledger.reimbursed_travel_cost;
             if trader.cargo.is_empty() {
                 lifecycle.failed_liquidation_ticks = 0;
                 lifecycle.last_failed_tick = None;
@@ -6389,11 +6444,17 @@ impl GameSession {
                         sum.checked_add(*value).ok_or(CoreError::Overflow)
                     })?
                     <= retirement_threshold;
+            let retirement_blocked =
+                trader.bulk_energy.locked.is_some() || self.carrier_has_active_energy_contract(&id);
             if lifecycle.retirement.is_none()
+                && !retirement_blocked
                 && (sustained_loss || lifecycle.failed_liquidation_ticks >= retirement_window)
             {
                 lifecycle.retirement = Some(TraderRetirementState::CleaningUp);
             }
+            prepared_lifecycles.push((entity, lifecycle));
+        }
+        for (entity, lifecycle) in prepared_lifecycles {
             *self.world.get_mut::<TraderLifecycle>(entity).unwrap() = lifecycle;
         }
 
@@ -6677,9 +6738,59 @@ impl GameSession {
             score: i128,
             trader_id: ContentId,
             e: Entity,
+            source: ContentId,
             good: ContentId,
             destination: ContentId,
             quantity: u32,
+        }
+
+        enum Opportunity {
+            Energy(energy_logistics::NpcEnergyContractOpportunity),
+            Ordinary(Request),
+        }
+
+        impl Opportunity {
+            fn score(&self) -> i128 {
+                match self {
+                    Self::Energy(opportunity) => opportunity.score,
+                    Self::Ordinary(request) => request.score,
+                }
+            }
+
+            fn kind_rank(&self) -> u8 {
+                match self {
+                    Self::Energy(_) => 0,
+                    Self::Ordinary(_) => 1,
+                }
+            }
+
+            fn source(&self) -> &ContentId {
+                match self {
+                    Self::Energy(opportunity) => &opportunity.source,
+                    Self::Ordinary(request) => &request.source,
+                }
+            }
+
+            fn destination(&self) -> &ContentId {
+                match self {
+                    Self::Energy(opportunity) => &opportunity.destination,
+                    Self::Ordinary(request) => &request.destination,
+                }
+            }
+
+            fn good(&self) -> Option<&ContentId> {
+                match self {
+                    Self::Energy(_) => None,
+                    Self::Ordinary(request) => Some(&request.good),
+                }
+            }
+
+            fn carrier(&self) -> &ContentId {
+                match self {
+                    Self::Energy(opportunity) => &opportunity.carrier,
+                    Self::Ordinary(request) => &request.trader_id,
+                }
+            }
         }
         let graph = self.graph().clone();
         let markets = self
@@ -6689,6 +6800,7 @@ impl GameSession {
             .map(|(id, m, p)| (id.0.clone(), m.clone(), p.clone()))
             .collect::<Vec<_>>();
         let mut requests = Vec::new();
+        let mut eligible_carriers = Vec::new();
         for (e, id, t, lifecycle) in self
             .world
             .query_filtered::<
@@ -6705,6 +6817,7 @@ impl GameSession {
             {
                 continue;
             }
+            eligible_carriers.push(id.0.clone());
             for (good, stock) in markets
                 .iter()
                 .find(|(sid, _, _)| sid == &t.system)
@@ -6761,10 +6874,14 @@ impl GameSession {
                         )? else {
                             continue;
                         };
+                        if score <= 0 {
+                            continue;
+                        }
                         requests.push(Request {
                             score,
                             trader_id: id.0.clone(),
                             e,
+                            source: t.system.clone(),
                             good: good.clone(),
                             destination: destination.clone(),
                             quantity,
@@ -6908,19 +7025,68 @@ impl GameSession {
                 .resource_mut::<FleetDynamics>()
                 .normalized_unserved_opportunity = unserved;
         }
+        let mut opportunities = requests
+            .into_iter()
+            .map(Opportunity::Ordinary)
+            .collect::<Vec<_>>();
+        for carrier in eligible_carriers {
+            opportunities.extend(
+                self.npc_energy_contract_opportunities(&carrier)?
+                    .into_iter()
+                    .map(Opportunity::Energy),
+            );
+        }
+        opportunities.sort_by(|left, right| {
+            right
+                .score()
+                .cmp(&left.score())
+                .then_with(|| left.kind_rank().cmp(&right.kind_rank()))
+                .then_with(|| left.source().cmp(right.source()))
+                .then_with(|| left.destination().cmp(right.destination()))
+                .then_with(|| left.good().cmp(&right.good()))
+                .then_with(|| left.carrier().cmp(right.carrier()))
+        });
+
+        let mut selected_carriers = BTreeSet::new();
+        let mut energy_intents = Vec::new();
+        let mut ordinary_requests = Vec::new();
+        for opportunity in opportunities {
+            if !selected_carriers.insert(opportunity.carrier().clone()) {
+                continue;
+            }
+            match opportunity {
+                Opportunity::Energy(opportunity) => {
+                    energy_intents.push(EnergyContractIntent {
+                        carrier: opportunity.carrier,
+                        source: opportunity.source,
+                        destination: opportunity.destination,
+                        gross_payload: opportunity.gross_payload,
+                        command_driven: false,
+                    });
+                }
+                Opportunity::Ordinary(request) => {
+                    ordinary_requests.push(PendingTradeRequest {
+                        score: request.score,
+                        trader_id: request.trader_id,
+                        trader: request.e,
+                        destination: request.destination,
+                        good: request.good,
+                        quantity: request.quantity,
+                        buy_at_origin: true,
+                        command_driven: false,
+                    });
+                }
+            }
+        }
+
+        self.world
+            .resource_mut::<PendingEnergyContractIntents>()
+            .0
+            .extend(energy_intents);
         self.world
             .resource_mut::<PendingTradeRequests>()
             .0
-            .extend(requests.into_iter().map(|request| PendingTradeRequest {
-                score: request.score,
-                trader_id: request.trader_id,
-                trader: request.e,
-                destination: request.destination,
-                good: request.good,
-                quantity: request.quantity,
-                buy_at_origin: true,
-                command_driven: false,
-            }));
+            .extend(ordinary_requests);
         Ok(())
     }
 }
