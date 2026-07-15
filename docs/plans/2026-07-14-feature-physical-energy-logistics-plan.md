@@ -963,13 +963,13 @@ Files: `crates/game-core/src/lib.rs`, `crates/game-content/src/lib.rs`, `content
 
 Freeze core commands, snapshots, diagnostics, and vocabulary before Wave 5. App and CLI may proceed in parallel; TUI follows the integrated app views. The main agent owns cross-layer acceptance tests.
 
-- [ ] Add D16 app requests, immutable views, resolved names, typed rejections, and lifecycle presentation events.
-- [ ] Replace Energy bid/ask rows with request/offer/logistics state in both supported TUI layouts.
-- [ ] Show tank, owned bulk, locked bulk, contract details, transfer maxima, deadlines, and blockers.
-- [ ] Add exact ledger fields for source loading, destination delivery, allocation conversion, owned-bulk deposit, recovery return, and recovery curtailment.
-- [ ] Add exhaustive D10 starvation attribution and contract/fleet metrics to CLI diagnostics.
-- [ ] Update `docs/energy-economy.md`, `content/encyclopedia.ron`, README, and CHANGELOG in the same implementation.
-- [ ] Append pre-merge acceptance evidence to `docs/world-dynamics-validation.md`.
+- [x] Add D16 app requests, immutable views, resolved names, typed rejections, and lifecycle presentation events.
+- [x] Replace Energy bid/ask rows with request/offer/logistics state in both supported TUI layouts.
+- [x] Show tank, owned bulk, locked bulk, contract details, transfer maxima, deadlines, and blockers.
+- [x] Add exact ledger fields for source loading, destination delivery, allocation conversion, owned-bulk deposit, recovery return, and recovery curtailment.
+- [x] Add exhaustive D10 starvation attribution and contract/fleet metrics to CLI diagnostics.
+- [x] Update `docs/energy-economy.md`, `content/encyclopedia.ron`, README, and CHANGELOG in the same implementation.
+- [x] Append pre-merge acceptance evidence to `docs/world-dynamics-validation.md`.
 
 Files: `crates/game-app/src/energy_logistics.rs` plus limited root wiring, `crates/game-tui/src/screens/energy_logistics.rs` plus limited screen/input wiring, `crates/game-cli/src/main.rs`, and docs/content listed above.
 
@@ -977,42 +977,42 @@ Files: `crates/game-app/src/energy_logistics.rs` plus limited root wiring, `crat
 
 ### Economic and physical correctness
 
-- [ ] Delivering Energy never reduces destination stock; every completed contract produces strictly positive net delivery.
-- [ ] A zero-Energy destination can request and receive Energy without pre-paying Energy.
-- [ ] Every gross payload reconciles into destination delivery, travel burn, carrier-owned allocation, returned locked Energy, or explicit recovery curtailment.
-- [ ] No unledgered Energy disappears under any tank, bulk, or market capacity shortfall.
-- [ ] Recovery curtailment is the only contract capacity-loss path and is separately ledgered.
-- [ ] Contract fee is never paid for undelivered Energy.
-- [ ] Reimbursement, fee, claims, locked lots, terminal events, and counters apply exactly once.
+- [x] Delivering Energy never reduces destination stock; every completed contract produces strictly positive net delivery.
+- [x] A zero-Energy destination can request and receive Energy without pre-paying Energy.
+- [x] Every gross payload reconciles into destination delivery, travel burn, carrier-owned allocation, returned locked Energy, or explicit recovery curtailment.
+- [x] No unledgered Energy disappears under any tank, bulk, or market capacity shortfall.
+- [x] Recovery curtailment is the only contract capacity-loss path and is separately ledgered.
+- [x] Contract fee is never paid for undelivered Energy.
+- [x] Reimbursement, fee, claims, locked lots, terminal events, and counters apply exactly once.
 
 ### Lifecycle and anti-strand
 
-- [ ] Remote acceptance creates one source claim; loading or terminal pre-load failure releases it once.
-- [ ] Source distress can revoke only before loading.
-- [ ] Cancellation during deadhead releases the claim but does not cancel physical travel.
-- [ ] Post-loading cancellation, redirection, spending, tank transfer, liquidation, and retirement are rejected without mutation.
-- [ ] Every incomplete delivery retains enough locked Energy for its accepted recovery route.
-- [ ] Every accepted contract reaches completion, a pre-load terminal outcome, or recovered failure; no recovery loop or permanent locked cargo remains.
-- [ ] A contract carrier is never left with no route fuel and no valid recovery/escape budget.
+- [x] Remote acceptance creates one source claim; loading or terminal pre-load failure releases it once.
+- [x] Source distress can revoke only before loading.
+- [x] Cancellation during deadhead releases the claim but does not cancel physical travel.
+- [x] Post-loading cancellation, redirection, spending, tank transfer, liquidation, and retirement are rejected without mutation.
+- [x] Every incomplete delivery retains enough locked Energy for its accepted recovery route.
+- [x] Every accepted contract reaches completion, a pre-load terminal outcome, or recovered failure; no recovery loop or permanent locked cargo remains.
+- [x] A contract carrier is never left with no route fuel and no valid recovery/escape budget.
 
 ### Determinism and coexistence
 
-- [ ] Matching, pre-load maintenance, settlement, timeout, and recovery are invariant to system/trader/contract ECS insertion order.
-- [ ] Inbound commitments suppress duplicate request sizing without blocking generation or direct deposits.
-- [ ] NPCs choose Energy only when it beats their best ordinary positive-profit opportunity under the canonical score.
-- [ ] A higher brownout fee raises otherwise identical Energy opportunity score and can alter carrier selection.
-- [ ] Ordinary-goods trade, reservations, liquidation, route subsidies, investments, and population dynamics remain active.
-- [ ] Dynamic fleet spawning can select both Energy-hauler and general-freighter archetypes from actual unserved opportunities.
+- [x] Matching, pre-load maintenance, settlement, timeout, and recovery are invariant to system/trader/contract ECS insertion order.
+- [x] Inbound commitments suppress duplicate request sizing without blocking generation or direct deposits.
+- [x] NPCs choose Energy only when it beats their best ordinary positive-profit opportunity under the canonical score.
+- [x] A higher brownout fee raises otherwise identical Energy opportunity score and can alter carrier selection.
+- [x] Ordinary-goods trade, reservations, liquidation, route subsidies, investments, and population dynamics remain active.
+- [x] Dynamic fleet spawning can select both Energy-hauler and general-freighter archetypes from actual unserved opportunities.
 
 ### Boundary and presentation
 
-- [ ] Every old ordinary trade entry point rejects `core:energy` atomically.
-- [ ] Player contract and bulk-transfer flows execute entirely through app requests and immutable views.
-- [ ] Stale contract acceptance reports a typed blocker/current maximum without mutation.
-- [ ] UI and docs show no Energy bid/ask explanation.
-- [ ] Contract cards show payload, all route burns, fee, net profit, net delivery, freight rate, recovery reserve, runway, ownership, deadline, and blockers.
-- [ ] D10 starvation attribution is mutually exclusive and exhaustive for every unsupplied destination tick.
-- [ ] The feature passes with service fleets absent.
+- [x] Every old ordinary trade entry point rejects `core:energy` atomically.
+- [x] Player contract and bulk-transfer flows execute entirely through app requests and immutable views.
+- [x] Stale contract acceptance reports a typed blocker/current maximum without mutation.
+- [x] UI and docs show no Energy bid/ask explanation.
+- [x] Contract cards show payload, all route burns, fee, net profit, net delivery, freight rate, recovery reserve, runway, ownership, deadline, and blockers.
+- [x] D10 starvation attribution is mutually exclusive and exhaustive for every unsupplied destination tick.
+- [x] The feature passes with service fleets absent.
 
 ## Testing Strategy
 

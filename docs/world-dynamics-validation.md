@@ -116,3 +116,27 @@ The non-interactive environment validated terminal behavior through Ratatui `Tes
 - Route-subsidy suppression in Emergency/Starvation and automatic resumption after recovery
 
 No screenshot workflow was used: this is a terminal Rust project, not a Unity project, and deterministic buffer assertions provide the visual regression evidence.
+
+## Physical Energy logistics refresh — 2026-07-15
+
+Branch: `feat/physical-energy-logistics`
+
+The physical logistics implementation replaces ordinary Energy trading with exact delivery contracts, typed owned/locked bulk, deterministic recovery, archetype-aware commercial hauling, exhaustive D10 attribution, and app/TUI/CLI observability.
+
+### Current automated evidence
+
+Routine workspace tests, workspace Clippy with warnings denied, formatting, content validation, and diff checks pass. Focused gates cover full/partial/zero settlement, deadline timeout, recovery return/curtailment, allocation exactly-once behavior, source claims, insertion permutations, stale intents, profitability, dynamic archetype selection, all D10 causes, immutable app requests/views, and both supported TUI layouts.
+
+The refreshed release 1,000-tick deterministic acceptance passed and printed:
+
+```text
+1000-tick acceptance: reconciliation_difference=0 stage_transitions=13 population_changes=1 energy_loaded=5120 energy_delivered=4937 contracts_accepted=3 contracts_completed=3 contracts_recovered=0 starvation_attributions=0 unsupplied_destination_ticks=0 trades_after_300=4563 production_after_300=975
+```
+
+The test executes the complete run twice and requires identical events, final snapshots, metrics, contract activity, D10 attribution totals, continuing ordinary trade/production, and exact physical reconciliation including market stock, tanks, owned bulk, and locked bulk.
+
+The controlled five-tick player-impact unit fixture passes with a one-Energy intervention at a deliberately constructed runway boundary and exits as soon as the first stage divergence is observed. This replaced the formerly slow routine 500-tick fixture without weakening its identical-state, typed-delivery, bounded-divergence, or dual-reconciliation assertions.
+
+Opportunity prefiltering reduced the warm deterministic 50-tick repository smoke from roughly 91 seconds to 5.45 seconds. Per explicit user direction, the 10,000-tick soak was not rerun for this refresh; the historical result above is not claimed as current physical-logistics evidence. Current long-run confidence is therefore bounded by the passing 1,000-tick gate and updated 10,000-tick validator.
+
+App actor tests and Ratatui `TestBackend` traces replace a live-terminal manual session in the non-interactive environment. They cover request submission and phase-11 resolution, exact bulk deposit/transfer, resolved contract names, payload and route burns, fee/profit/net/freight/runway, locked ownership, deadline/blocker text, and compact/regular rendering.

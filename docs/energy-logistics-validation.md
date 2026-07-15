@@ -259,4 +259,18 @@ Required metrics: gross/net delivery, loaded/deadhead/recovery burn, carrier fee
 - Deterministic fixtures prove bulk-only demand spawns a bulk hauler at its source, higher-scoring ordinary demand selects a general freighter despite archetype ID order, post-tank nonviability suppresses demand, and stale Energy/ordinary candidates do not spawn or mutate state.
 - Read-only architecture findings for tank double-use, fungible idle capacity, and stale phase-13 candidates were corrected and rerun. Frontend and named diagnostic work remains Wave 5.
 
-Pending frontend/diagnostic/documentation waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.
+#### Wave 5 boundaries, diagnostics, and current documentation
+
+- Core immutable projections expose ordered market logistics, viable player opportunities, active contract accounting, storage, D10 state, and named physical channels. `try_snapshot` returns typed projection failures; generic Energy-cargo ledger dimensions and player-facing bay-Energy surfaces are removed.
+- App actor tests execute typed accept, owned-bulk deposit, and owned-bulk-to-tank requests and verify resolved names, contract state, storage maxima, and lifecycle events. Duplicate paused acceptance is typed as pending; the TUI reports submission until phase-11 resolution rather than claiming premature acceptance.
+- Ratatui `TestBackend` verifies the complete contract card and storage/request facts at 160x45 plus prioritized logistics facts at 80x30. Trade keys `e/x/f/p` submit only typed app requests. Ordinary market rows contain no Energy quote row.
+- CLI diagnostics report active/terminal contracts, claims/lots, D10 causes, archetype activity, contract versus ordinary final-window activity, and six named channels. Reconciliation checks market/global named-channel aggregation and the exact decomposition `source loaded = delivered + allocation converted + recovery returned + recovery curtailed + active locked` without double-counting internal transfers.
+- All five D10 outcomes and their priority order have a focused pure gate; integration coverage proves exhaustive one-row attribution for every unsupplied destination tick. Current README, economy documentation, encyclopedia, contextual help, and changelog use the canonical unit-of-account explanation.
+
+#### Final bounded evidence
+
+- Routine crates: 113 game-core tests, 25 game-app tests, 15 game-cli unit/boundary tests, 43 game-tui unit/acceptance tests, and 18 routine game-content tests pass; workspace Clippy denies warnings, formatting/content validation, and `git diff --check` pass. The final workspace rerun is recorded with the feature commit.
+- The optimized release 1,000-tick deterministic acceptance passed twice internally with: reconciliation difference 0; stage transitions 13; population changes 1; source loaded 5,120; destination delivered 4,937; contracts accepted/completed/recovered 3/3/0; D10 attribution rows 0 matching 0 unsupplied destination ticks; 4,563 ordinary trades and 975 production events after tick 300.
+- The player-impact routine gate uses the fast controlled five-tick fixture and passes both reconciliations. App actor and TUI buffer tests provide the non-interactive manual contract/storage trace evidence.
+- Per explicit user direction, the 10,000-tick soak was not rerun. Its validator and metrics were updated, but current long-run metastability beyond the passing 1,000-tick contract gate remains unclaimed.
+- Opportunity prefiltering reduced the deterministic 50-tick repository smoke runtime from roughly 91 seconds to 5.45 seconds after warm compilation, making future long acceptance runs materially cheaper without changing outcomes.

@@ -7,7 +7,16 @@
         paragraphs: [
           "A system is a location with a market and routes to other systems. The distance along a route determines how long a journey takes and how much Energy a trader's tank must provide.",
           "A system's market stores Energy. Local generation adds Energy to that store, while life support, production, investments, and trade payments remove it. Energy generated beyond the market's storage capacity is lost.",
-          "Market Energy, tank Energy, and Energy carried as cargo are separate. Market Energy belongs to a system. Tank Energy pays for purchases and travel. Cargo Energy uses cargo space and cannot be spent or used to power a journey until it is sold to a market.",
+          "Market Energy, contract-locked Energy, tank Energy, and owned bulk are separate. Market Energy belongs to a system. Tank Energy pays for ordinary-goods purchases and travel. Owned bulk can move only by an exact storage transfer or an Energy delivery contract; it is never ordinary cargo for sale.",
+        ],
+      ),
+      (
+        title: "Energy Logistics",
+        paragraphs: [
+          "Energy remains the only unit of account for ordinary goods, but Energy itself moves physically only through delivery contracts and exact storage transfers. Markets publish offers and requests as logistics signals, not bids or asks.",
+          "An accepted contract splits its exact gross payload between delivered Energy, carrier fee, and the route and recovery amounts required to complete it. The payload is locked while loaded, so it cannot be spent twice.",
+          "Contracts load at a source, travel, and settle at the destination. A pre-load integrity failure rejects the contract before cargo is locked. If destination settlement remains blocked until its deadline, the same contract reserves return fuel and recovers through its recorded route; recovery can be curtailed only when source storage is full.",
+          "The player controls Energy logistics through the offer/request panel and exact transfer actions. Tank deposit or protected withdrawal moves Energy between the tank and current market; owned bulk can move exactly to the tank or current market. Ordinary trade still uses Energy as its unit of account, but there is no Energy bid/ask market.",
         ],
       ),
       (
@@ -36,7 +45,7 @@
       (
         title: "Understanding Goods",
         paragraphs: [
-          "Goods are physical items held by markets or carried by traders. Energy is also a good, but market Energy and tank Energy have special roles as the game's means of payment and travel power.",
+          "Goods are physical items held by markets or carried by traders. Energy is the unit of account for ordinary goods, while market Energy and tank Energy are physical stores with separate roles for logistics, payment, and travel.",
           "Raw materials are gathered directly. Primary and secondary products are made by recipes. These categories describe where a good belongs in the production chain; a recipe gives the exact inputs and outputs.",
           "Each good has a baseline cost. The simulation assigns this cost to starting and externally delivered stock, and uses it as a minimum when it has no higher recorded production cost. A baseline cost is not a market price.",
         ],
@@ -45,7 +54,7 @@
         title: "Markets and Prices",
         paragraphs: [
           "Each system has a market that stores goods and exchanges them for Energy. Stock is the amount held now. A target is the amount the market wants to keep available.",
-          "A market's buying price is what it pays when a trader sells one unit to the market. Its selling price is what it charges when a trader buys one unit. Prices can differ between systems because their stock, targets, costs, available Energy, policies, and brownout conditions differ.",
+          "For ordinary goods, a market's buying price is what it pays when a trader sells one unit, and its selling price is what it charges when a trader buys one unit. Prices can differ between systems because their stock, targets, costs, available Energy, policies, and brownout conditions differ. Energy itself uses offers, requests, and contracts rather than a buying or selling quote.",
           "Funded demand is the number of units the market currently wants and can afford to buy. A market may want more goods than it can fund with its available Energy.",
           "Some market Energy is protected for essential obligations. Operating reserve covers expected life-support, extraction, and recipe costs. Reservation claims set aside payment for accepted remote deliveries. Protected Energy still exists in the market, but ordinary purchases cannot spend it.",
           "Cost basis is the recorded Energy cost of obtaining the goods currently in stock. Cost-aware pricing starts from this recorded cost, then adjusts for the market's margin and shortages.",
@@ -155,7 +164,7 @@
       (
         title: "Traders and Travel",
         paragraphs: [
-          "A trader carries goods in a cargo bay and stores spendable Energy in a tank. Cargo capacity limits the total units carried. Tank capacity limits the Energy available for purchases and journeys.",
+          "A trader carries ordinary goods in a cargo bay, stores spendable Energy in a tank, and may hold owned Energy bulk for logistics. Cargo capacity limits ordinary goods; tank and bulk capacities limit physical Energy separately. Energy bulk is transferred exactly or locked to a delivery contract, not sold as cargo.",
           "Travel follows connected routes between systems. Route distance and the trader's travel-burn rate determine the Energy required. Starting a journey removes the full route's travel Energy from the tank at departure.",
           "Travel takes a number of simulation ticks. A trader cannot use local market actions while in transit; arrival and any reserved sale are processed later.",
         ],
@@ -164,7 +173,7 @@
         title: "Reservations",
         paragraphs: [
           "A reservation is Energy that a destination market sets aside to pay for a planned delivery. Reserved Energy remains part of the market's stock, but it cannot fund an unrelated purchase.",
-          "When a reservation-backed trade is accepted, the trader buys the goods at the origin, the destination reserves payment, and the trader departs. All three parts succeed together. If any part fails, none of them happen.",
+          "When a reservation-backed ordinary-goods trade is accepted, the trader buys the goods at the origin, the destination reserves payment, and the trader departs. All three parts succeed together. Energy delivery contracts use separate exact payload, locking, settlement, and recovery rules.",
           "Reservations expire if they are not used in time, and their expiry time is extended while the trader is travelling. If a trade is cancelled or expires, its reserved Energy becomes available again. When it settles, that Energy pays the trader and the reservation closes.",
         ],
       ),

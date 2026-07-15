@@ -8,18 +8,13 @@ The prototype economy was replaced rather than migrated. Persistence does not ex
 
 ## Physical model
 
-`core:energy` is both the numéraire and a physical good. Every price, embodied cost, reservation, and settlement is denominated in energy minor units.
+Energy remains the only unit of account for ordinary goods, but Energy itself moves physically only through delivery contracts and exact storage transfers. Every price, embodied cost, reservation, and ordinary-goods settlement is denominated in energy minor units.
 
-Each market has one canonical `core:energy` inventory line. It is simultaneously storage, production input, purchasing power, and tradable stock. Reservations and protected budgets are claims or spending constraints, not additional inventories.
+A market has one canonical Energy stock. Markets publish Energy **offers** (surplus available to deliver) and **requests** (shortage and runway needs); these are logistics signals, not bids and asks. Claims and protected budgets remain accounting constraints, not physical inventories.
 
-A trader has two distinct physical stores:
+A trader has an Energy tank for travel and ordinary-goods purchases, typed owned bulk, and at most one carrier-held contract-locked bulk lot. A delivery contract splits its gross payload among delivered Energy, carrier fee, and route/recovery needs; loaded bulk is locked to that contract until settlement or recovery. Exact player transfers can move owned bulk to the tank or current market when capacity and headroom allow. There is no ordinary Energy cargo purchase or sale path and no Energy bid/ask market.
 
-- **Energy tank:** wallet and travel-burn source, bounded by tank capacity.
-- **Cargo bay:** ordinary inventory, including haulable `core:energy`, bounded by cargo capacity. Bay energy cannot pay prices or power travel.
-
-Buying energy cargo transfers market stock into the bay and pays the ask from the tank. Selling it transfers bay stock into the market and pays the funded bid into the tank. Tank deposit/withdraw and idle-NPC balancing are direct physical transfers; energy is never bought with a second abstract currency during refueling.
-
-The closed loop is generation → market stock → trade proceeds → trader travel burn or spending at another market. Markets gain energy through generation and goods sold to traders. Travel is a universal sink.
+Contracts load at the source, travel to the destination, settle as much of the accepted net delivery as current headroom allows, and recover safely after the exact settlement timeout. D7 settlement/recovery preserves the physical ledger and never silently downsizes an accepted gross payload. The closed loop is generation → market stock → contract delivery or exact storage transfer; ordinary trade remains Energy-denominated, while travel and logistics are physical sinks.
 
 ## Generation, life support, and storage
 
@@ -41,7 +36,7 @@ Available stock burns first. Any shortfall leaves stock at zero and increments `
 
 ## Cost basis and pricing
 
-Each market/good stores `(stock_quantity, total_embodied_energy)`. Unit cost uses checked ceiling division. `core:energy` has embodied cost exactly 1 per unit; this anchors the chain but does **not** clamp its bid or ask to 1.
+Each market/good stores `(stock_quantity, total_embodied_energy)`. Unit cost uses checked ceiling division. `core:energy` has embodied cost exactly 1 per unit; this anchors ordinary-goods accounting but does not create an Energy bid or ask.
 
 Raw output receives extraction-energy cost. Recipe output receives removed input cost plus operating energy. A recipe's authored margin override, when present, replaces the market producer margin for that recipe's outputs; if multiple local recipes produce one good, the highest explicit override is the deterministic floor. Multi-output recipes author positive `cost_weight` values. Runtime first sorts outputs by stable `ContentId`, floors every proportional share against the full weight sum, then assigns each remaining unit to the earliest IDs in that order. Allocation is therefore invariant to authored output order while preserving the exact total.
 
@@ -53,7 +48,7 @@ scarcity = 1.000 + ceil(0.500 × min(shortage, target) / target)
 ask = ceil(sustainable × scarcity)
 ```
 
-The fixed-point scarcity multiplier is bounded to 1.000–1.500. Every multiply and rounding step is checked integer arithmetic. Energy follows the same formula: its basis remains exactly 1, while its integral ask can rise through margin and scarcity. Explicit liquidation pricing applies the configured discount to the good's validated bootstrap-cost reference through one shared content/runtime contract and is the only below-floor path. Dynamic bids cannot change this guarantee price. For processor inputs, each eligible recipe derives a non-recursive maximum input budget from current output cost-basis asks and yield, subtracts operating energy, and distributes that budget deterministically across inputs in proportion to grounded embodied costs. A good consumed by multiple local recipes uses the minimum eligible ceiling, guaranteeing every eligible process remains structurally solvent; import priority can lower but never raise that ceiling. The liquidation threshold is a percentage of the cheapest adjacent-leg burn; a laden trader below that tank threshold liquidates the minimum whole-unit payout needed to reach it. Scarcity mode remains available only for deterministic A/B diagnostics.
+The fixed-point scarcity multiplier is bounded to 1.000–1.500. Every multiply and rounding step is checked integer arithmetic. Ordinary goods use the cost-aware formula above. Energy logistics does not use an Energy price quote: offers and requests describe physical surplus and need, while contract terms deterministically split payload and carrier compensation. Explicit liquidation pricing remains applicable only to ordinary goods through the validated bootstrap-cost reference; Energy is never bought or sold as cargo. For processor inputs, each eligible recipe derives a non-recursive maximum input budget from current output cost-basis asks and yield, subtracts operating energy, and distributes that budget deterministically across inputs in proportion to grounded embodied costs. A good consumed by multiple local recipes uses the minimum eligible ceiling, guaranteeing every eligible process remains structurally solvent; import priority can lower but never raise that ceiling. The liquidation threshold is a percentage of the cheapest adjacent-leg burn; a laden trader below that tank threshold liquidates the minimum whole-unit payout needed to reach it. Scarcity mode remains available only for deterministic A/B diagnostics.
 
 ## Reserves, funding, and anti-strand protection
 
@@ -67,12 +62,12 @@ unreserved purchasing energy =
   − active reservation claims
   − operating reserve
   − protected liquidation budget
-funded quantity = floor(max(0, unreserved purchasing energy) / bid)
+funded ordinary-goods quantity = floor(max(0, unreserved purchasing energy) / ordinary-good bid)
 ```
 
 The operating reserve is a tunable policy knob. Its horizon simulation uses distinct source and recipe schedule keys and never mutates persistent production carries. One shared core contract computes `protected_liquidation_budget` from graph adjacency, trader travel burn/capabilities, eligible cargo bootstrap references, and the policy's liquidation settings. `game-content` uses it during compilation; an atomic whole-policy replacement recomputes and validates it from current runtime inputs before applying either the policy or budget. It is never authored and changing operating-reserve ticks cannot weaken it.
 
-Every laden trader can sell the funded liquidation sub-quantity needed to afford the cheapest adjacent jump. The same checked funded-settlement primitive handles ordinary sales, energy cargo, reservations, partial sales, and liquidation. Remaining cargo is deterministically rerouted rather than retried as an ignored full-stack failure.
+Every laden trader can sell the funded ordinary-goods liquidation sub-quantity needed to afford the cheapest adjacent jump. The checked settlement primitive handles ordinary sales, reservations, partial sales, and liquidation; Energy delivery contracts use their own exact payload and recovery rules. Remaining ordinary cargo is deterministically rerouted rather than retried as an ignored full-stack failure.
 
 ## Reservations and deterministic execution
 
@@ -80,7 +75,7 @@ A reservation encumbers existing destination energy; it does not transfer stock 
 
 Command-driven, laden-reroute, and automated commitment requests enter one pending queue. It resolves once per tick in a stable total order: opportunity score, trader ID, good ID, destination ID, then request kind. Each acceptance recalculates available funding. Creation, refresh, cancellation, expiry, partial fulfillment, and release update the claim exactly once without entering the physical flow ledger. En-route reservations refresh their TTL. Mandatory life support may exhaust stock that was claimed earlier. On arrival, settlement therefore recomputes the quantity funded by current physical stock after other claims, operating reserve, and protected budget, then applies cargo quantity and tank-headroom limits. It settles that partial quantity at no less than the locked floor, releases the entire unused claim exactly once, and sends remaining automated cargo through liquidation or deterministic rerouting without failing the tick for expected insufficiency. Integrity and overflow failures still propagate.
 
-Travel energy is the checked sum of `ceil(leg_distance × energy_per_distance)` once for every route leg. Planning, departure, rerouting, and bootstrap validation use that same rule. Bay energy is excluded. Multi-component operations calculate complete checked next state before applying it or emitting events.
+Travel energy is the checked sum of `ceil(leg_distance × energy_per_distance)` once for every route leg. Planning, departure, rerouting, and bootstrap validation use that same rule. Owned and contract-locked bulk cannot power travel. Multi-component operations calculate complete checked next state before applying it or emitting events.
 
 ## World-dynamics contracts
 
@@ -90,7 +85,7 @@ Slice 2 extends the same physical economy additively. Its compatibility defaults
 
 After generation, storage capping, and mandatory life support, each market computes integer runway as `floor(energy stock / life-support obligation)`. A zero obligation has unlimited runway. Unsupplied life support forces **Starvation**; otherwise ordered authored entry thresholds select **Normal**, **Throttled**, **Emergency**, or **Starvation**. Authored recovery thresholds are higher than their corresponding entry thresholds, and a minimum stage duration prevents edge chatter. A severe shock may cross several entry bands in one transition, while recovery proceeds one band at a time. Core owns per-stage occupancy and transition counts.
 
-The current stage derives an operating profile without rewriting authored market policy. Normal retains 100% throughput. Throttled reduces industrial throughput. Emergency and Starvation allow demand only for authored survival goods (which must include `core:energy`), disable investment eligibility, and raise the energy bid toward—but never above—the authored emergency ceiling. Core validates that ceiling against each compiled market's conservative maximum normal energy bid, so entering distress can never lower the bid. Suppression governs newly advertised demand and overrides future route-subsidy premiums; it does not cancel existing reservations. Those reservations continue through the normal funded partial-settlement and release lifecycle.
+The current stage derives an operating profile without rewriting authored market policy. Normal retains 100% throughput. Throttled reduces industrial throughput. Emergency and Starvation allow ordinary-goods demand only for authored survival goods (which must include `core:energy`) and disable investment eligibility. Energy requests instead remain logistics signals shaped by runway and stage; they do not become an emergency Energy quote or bid. Suppression governs newly advertised ordinary demand and overrides future route-subsidy premiums; it does not cancel existing reservations or accepted Energy contracts. Those obligations continue through their normal exact settlement, timeout, and recovery lifecycle.
 
 Production uses one fixed-point contract:
 
@@ -158,8 +153,8 @@ The headless core executes these explicit deterministic phases:
 8. settle ordinary laden arrivals and liquidation fallback, then rebalance idle NPC tanks;
 9. execute one rate-limited autonomous investment per eligible market from protected surplus;
 10. derive Energy offers/requests and collect one canonical positive-profit opportunity for each idle NPC across Energy contracts and ordinary trade;
-11. resolve selected Energy intents by severity, runway, payload, and stable IDs, rejecting stale exact payloads without downsizing;
-12. resolve ordinary trade intents for carriers that did not select Energy work;
+11. resolve selected Energy intents by severity, runway, exact payload, and stable IDs, rejecting stale requests without downsizing;
+12. resolve ordinary trade intents for carriers that did not select Energy logistics work;
 13. evaluate dynamic-fleet profitability, deferred retirement cleanup, opportunity persistence, and at most one funded spawn for next-tick eligibility;
 14. record bounded Energy/goods sufficiency, settle population decline/growth, labor, tertiary demand, tiers, and milestones for next-tick effect;
 15. advance the clock and publish events/snapshots.
@@ -172,25 +167,25 @@ ECS iteration order is never used to choose contention winners.
 - `recipes.ron`: operating energy, output quantities, and allocation weights.
 - `economy_config.ron`: pricing mode, policy defaults, reservation TTL, life-support rate, brownout/population rules, all four investment shapes, default AI allocations, and diagnostic controls.
 - `economy.ron`: starting energy, solar/collector inputs, storage, population, sources, risk acknowledgement, policy/allocation overrides, and optional starting governor.
-- `traders.ron`: tank stock/capacity, cargo capacity, speed, travel burn, and an authored physical-transfer refuel policy (`DepositAndWithdraw`, `DepositOnly`, or `Disabled`) compiled into each runtime trader. Withdrawals retain reservation claims, operating reserve, and protected liquidation budget; deposits retain storage headroom. Either direction is one physical transfer.
+- `traders.ron`: tank stock/capacity, owned-bulk storage, cargo capacity, speed, travel burn, Energy-logistics archetype, and an authored physical-transfer policy (`DepositAndWithdraw`, `DepositOnly`, or `Disabled`) compiled into each runtime trader. Withdrawals retain reservation claims, operating reserve, and protected liquidation budget; deposits retain storage headroom. Either direction is one exact physical transfer.
 
-Validation checks IDs and references, exact energy identity/cost 1, checked ranges and generation, positive capacities/weights, stock caps, policy merging, exporter/importer/knife-edge roles, solar/resource anti-correlation, liquidation feasibility, and graph-aware importer runway. It verifies exporter surplus and available stock after protection, energy-cargo purchase affordability from the trader tank, exporter storage headroom, per-leg route burn, cargo delivery capacity, settlement tank headroom, and scheduling time.
+Validation checks IDs and references, exact energy identity/cost 1, checked ranges and generation, positive capacities/weights, stock caps, policy merging, exporter/importer/knife-edge roles, solar/resource anti-correlation, liquidation feasibility, and graph-aware importer runway. It verifies exporter surplus and available stock after protection, contract payload and carrier-fee feasibility, exporter storage headroom, per-leg route burn, owned-bulk delivery capacity, settlement tank headroom, and scheduling time.
 
 Importer runway must exceed plausible first-delivery time plus one scheduling tick. It fails by default. `acknowledge_bootstrap_risk: true` downgrades only that failure to a structured source/system warning surfaced by content validation and diagnostics.
 
 ## Observability and reconciliation
 
-Snapshots and the TUI distinguish market stock/cap, active claims, operating reserve, protected liquidation budget, unreserved purchasing energy, canonical effective advertised/funded demand, health/deficit, trader tank/cap, bay energy, cargo capacity, and runway. Frontends and diagnostics consume the core demand projection rather than reconstructing funding.
+Snapshots and the TUI distinguish owned market bulk/cap, contract-locked bulk, active claims, operating reserve, protected liquidation budget, unreserved purchasing Energy, ordinary advertised/funded demand, Energy offers/requests, contract payload and state, trader tank/cap, owned bulk, cargo capacity, and runway. The headless app boundary publishes immutable projections; TUI and CLI submit typed requests or render those projections and never access ECS state directly.
 
-The energy ledger separately tracks generation, life support, source/production/travel burn, curtailment, market↔tank and market↔energy-cargo transfers, and unsupplied life support. Per-market counters remain checked `Energy`; global reporting aggregates exactly in wider `i128` counters and never saturates or clamps. Reservation claim changes are non-physical and excluded. Diagnostics reconcile:
+The named `EnergyFlowLedger`, per-market `MarketLedger`, and trader ledgers separately track generation, life support, source/production/travel burn, curtailment, market↔tank transfers, owned-bulk deposits, contract payload and recovery flows, and unsupplied life support. Per-market counters remain checked `Energy`; global reporting aggregates exactly in wider `i128` counters and never saturates or clamps. Reservation claim changes are non-physical and excluded. Diagnostics reconcile:
 
 ```text
 initial physical stock + recorded external inflow + generated − life support − source burn − production burn − investment burn − travel burn − curtailed = final physical stock
 ```
 
-The CLI supports identical-seed scarcity versus cost-aware A/B runs and reports interval activity, per-system net stock flow/storage/stage history, network stage percentages, stationary-laden traders, seasonal phase and cycle amplitudes, realized processor input cost, operating energy, output revenue, realized margin, structural processor solvency, reserves, claims, and storage. Diagnostics report active NPC fleet size, normalized unserved profitable opportunity per system, persistence, spawn/retirement totals, rolling profitability, cleanup state, and failed-liquidation ticks. They also expose population/trend/cap/tier, bounded recent sufficiency trajectory, settled changes/milestones, and aggregate stage-history score inputs. A 10,000-tick run is an explicit CLI acceptance path that enforces exact reconciliation, no system extinction or global collapse, no final aggregate ratchet below 90% of initial population, final-window trade and stage activity, a post-midpoint transition, a changed population stable over the final 100 ticks, and no final-window stationary-laden deadlock. Short deterministic tests compare system-only and trader-only insertion permutations using exact final population/stage maps, market ledgers, energy-flow/reconciliation outcomes, and aggregate dynamics; long insertion permutations are not part of routine tests. Typed spawn/retire events use resolved app-log trader and system labels. Diagnostics display market↔tank and market↔energy-cargo transfer dimensions separately while excluding those internal transfers from exact external-flow reconciliation.
+The CLI supports identical-seed scarcity versus cost-aware A/B runs and reports interval activity, per-system net stock flow/storage/stage history, network stage percentages, stationary-laden traders, seasonal phase and cycle amplitudes, realized processor input cost, operating energy, output revenue, realized margin, structural processor solvency, reserves, claims, and storage. Energy-logistics diagnostics report offers, requests, accepted/completed/cancelled/revoked/rejected contracts, blocked arrivals, timeout/recovery outcomes, recovery curtailment, and starvation causes (including no reachable surplus, no viable candidate, viable-but-unaccepted, accepted pending, and settlement blocked). Diagnostics also report active NPC fleet size, archetype activity, normalized unserved profitable opportunity per system, persistence, spawn/retirement totals, rolling profitability, cleanup state, and failed-liquidation ticks. They also expose population/trend/cap/tier, bounded recent sufficiency trajectory, settled changes/milestones, and aggregate stage-history score inputs. A 10,000-tick run is an explicit CLI acceptance path that enforces exact reconciliation, no system extinction or global collapse, no final aggregate ratchet below 90% of initial population, final-window trade and stage activity, a post-midpoint transition, a changed population stable over the final 100 ticks, and no final-window stationary-laden deadlock. Short deterministic tests compare system-only and trader-only insertion permutations using exact final population/stage maps, market ledgers, energy-flow/reconciliation outcomes, and aggregate dynamics; long insertion permutations are not part of routine tests. Typed spawn/retire events use resolved app-log trader and system labels. Diagnostics display market↔tank, owned-bulk, contract-delivery, and recovery dimensions separately while excluding those internal transfers from exact external-flow reconciliation.
 
-`--player-impact` runs two identical deterministic sessions and applies exactly one typed `RecordExternalDelivery` to the intervention session. Target, delivery tick, good, quantity, and bounded horizon are explicit CLI inputs. The core validates the full delivery before mutation, emits one recorded-delivery event, and accounts energy deliveries as external inflow in exact reconciliation. The probe reports the first target stage/population divergence or fails when none occurs within the requested horizon.
+The optional `--player-impact` probe runs two identical deterministic sessions and applies one typed external delivery; it is a controlled diagnostic, not a routine logistics command. Target, delivery tick, good, quantity, and bounded horizon are explicit inputs. The core validates the full delivery before mutation and accounts it as external inflow in exact reconciliation.
 
 ### Enforced world-dynamics pre-merge gate
 
