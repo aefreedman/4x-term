@@ -418,34 +418,30 @@ async fn handle_key_for_layout(
             }
         }
         InputAction::OpenQuantity => {
-            if view.local_trade.market.is_empty() {
-                ui.message = "No local market goods are available".into();
+            if ordinary_market_rows(view).is_empty() {
+                ui.message = "No ordinary local market goods are available".into();
             } else {
                 ui.quantity_input = Some(String::new());
                 ui.input_layer = InputLayer::Quantity;
             }
         }
         InputAction::OpenBuyOrder | InputAction::OpenSellOrder => {
-            if view.local_trade.market.get(ui.market_index).is_none() {
-                ui.message = "No local market goods are available".into();
-            } else {
+            if let Some(row) = selected_ordinary_market_row(view, ui) {
                 ui.trade_order_side = Some(if action == InputAction::OpenBuyOrder {
                     TradeOrderSide::Buy
                 } else {
                     TradeOrderSide::Sell
                 });
-                ui.trade_order_good = view
-                    .local_trade
-                    .market
-                    .get(ui.market_index)
-                    .map(|row| row.good_id.clone());
+                ui.trade_order_good = Some(row.good_id.clone());
                 ui.quantity_input = Some(String::new());
                 ui.input_layer = InputLayer::Order;
                 ui.message.clear();
+            } else {
+                ui.message = "No ordinary local market goods are available".into();
             }
         }
         InputAction::Buy => {
-            if let Some(row) = view.local_trade.market.get(ui.market_index) {
+            if let Some(row) = selected_ordinary_market_row(view, ui) {
                 if let Some(reason) = buy_unavailable_reason(view, row, ui.trade_quantity) {
                     ui.message = reason;
                 } else {
@@ -463,11 +459,11 @@ async fn handle_key_for_layout(
                     }
                 }
             } else {
-                ui.message = "No local market goods are available".into();
+                ui.message = "No ordinary local market goods are available".into();
             }
         }
         InputAction::Sell => {
-            if let Some(row) = view.local_trade.market.get(ui.market_index) {
+            if let Some(row) = selected_ordinary_market_row(view, ui) {
                 if let Some(reason) = sell_unavailable_reason(view, row, ui.trade_quantity) {
                     ui.message = reason;
                 } else {
@@ -483,7 +479,95 @@ async fn handle_key_for_layout(
                     }
                 }
             } else {
-                ui.message = "No local market goods are available".into();
+                ui.message = "No ordinary local market goods are available".into();
+            }
+        }
+        InputAction::AcceptEnergyContract => {
+            let Some(destination) = ui.selected_trade_destination.as_ref() else {
+                ui.message =
+                    "Select a Trade destination before accepting an Energy contract".into();
+                return Ok(false);
+            };
+            let Some(opportunity) =
+                view.energy_logistics
+                    .opportunities
+                    .iter()
+                    .find(|opportunity| {
+                        &opportunity.destination.id == destination && opportunity.blocker.is_none()
+                    })
+            else {
+                ui.message =
+                    "No viable Energy opportunity is available for the selected destination".into();
+                return Ok(false);
+            };
+            match app
+                .request(AppRequest::AcceptEnergyContract {
+                    source: opportunity.source.id.clone(),
+                    destination: opportunity.destination.id.clone(),
+                    gross_payload: opportunity.maximum_gross_payload,
+                })
+                .await
+            {
+                Ok(()) => {
+                    ui.message = format!(
+                        "Submitted Energy contract request to {} at gross payload {} E; step to resolve",
+                        opportunity.destination.name,
+                        format_energy(opportunity.maximum_gross_payload)
+                    );
+                }
+                Err(error) => ui.message = error.to_string(),
+            }
+        }
+        InputAction::CancelEnergyContract => {
+            let Some(contract) = view
+                .energy_logistics
+                .contracts
+                .iter()
+                .find(|contract| contract.player_owned)
+            else {
+                ui.message = "No player-owned Energy contract is active".into();
+                return Ok(false);
+            };
+            match app
+                .request(AppRequest::CancelEnergyContract {
+                    contract_id: contract.id,
+                })
+                .await
+            {
+                Ok(()) => {
+                    ui.message = format!("Cancelled Energy contract #{}", contract.id.get());
+                }
+                Err(error) => ui.message = error.to_string(),
+            }
+        }
+        InputAction::TransferOwnedBulkToTank => {
+            let amount = game_app::Energy(i64::from(ui.trade_quantity));
+            match app
+                .request(AppRequest::TransferOwnedBulkToTank { amount })
+                .await
+            {
+                Ok(()) => {
+                    ui.message = format!(
+                        "Transferred {} E from owned bulk to tank",
+                        format_energy(amount)
+                    );
+                }
+                Err(error) => ui.message = error.to_string(),
+            }
+        }
+        InputAction::DepositOwnedBulkEnergy => {
+            let amount = game_app::Energy(i64::from(ui.trade_quantity));
+            match app
+                .request(AppRequest::DepositOwnedBulkEnergy { amount })
+                .await
+            {
+                Ok(()) => {
+                    ui.message = format!(
+                        "Deposited {} E from owned bulk into the current market",
+                        format_energy(amount)
+                    );
+                }
+                Err(error) => ui.message = error.to_string(),
             }
         }
         InputAction::BeginTravel => {
@@ -757,9 +841,7 @@ fn move_selection(ui: &mut UiState, view: &ApplicationView, delta: isize) {
             }
         }
         Activity::Trade => match ui.trade_region {
-            TradeRegion::Goods => {
-                ui.market_index = shifted(ui.market_index, view.local_trade.market.len(), delta);
-            }
+            TradeRegion::Goods => move_ordinary_market_selection(ui, view, delta),
             TradeRegion::Destinations => {
                 let destinations = trade_destination_ids(view, ui);
                 ui.reconcile_trade_destination(&destinations);
@@ -827,7 +909,7 @@ async fn activate_trade_destination(ui: &mut UiState, view: &ApplicationView, ap
 }
 
 fn trade_destination_ids(view: &ApplicationView, ui: &UiState) -> Vec<game_app::ContentId> {
-    if view.local_trade.market.get(ui.market_index).is_none() {
+    if selected_ordinary_market_row(view, ui).is_none() {
         return Vec::new();
     }
     view.trade_markets
@@ -933,9 +1015,14 @@ fn sync_system_row(ui: &mut UiState, view: &ApplicationView) {
 
 fn clamp_selection(ui: &mut UiState, view: &ApplicationView) {
     sync_system_row(ui, view);
-    ui.market_index = ui
-        .market_index
-        .min(view.local_trade.market.len().saturating_sub(1));
+    if view
+        .local_trade
+        .market
+        .get(ui.market_index)
+        .is_none_or(|row| row.good_id.as_str() == ENERGY_GOOD_ID)
+    {
+        ui.market_index = ordinary_market_indices(view).first().copied().unwrap_or(0);
+    }
     let destinations = trade_destination_ids(view, ui);
     ui.reconcile_trade_destination(&destinations);
     clamp_encyclopedia_selection(ui, view);
@@ -998,18 +1085,17 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
     if ui.input_layer == InputLayer::Quantity {
         let input = ui.quantity_input.as_deref().unwrap_or_default();
         let popup = centered_rect(54, 8, area);
-        let (good, buy_total, sell_total) =
-            view.local_trade.market.get(ui.market_index).map_or_else(
-                || ("No good selected".into(), "—".into(), "—".into()),
-                |row| {
-                    let quantity = input.parse::<u32>().unwrap_or(1).max(1);
-                    (
-                        row.name.clone(),
-                        total_label(row.sell_quote, quantity),
-                        total_label(row.buy_quote, quantity),
-                    )
-                },
-            );
+        let (good, buy_total, sell_total) = selected_ordinary_market_row(view, ui).map_or_else(
+            || ("No good selected".into(), "—".into(), "—".into()),
+            |row| {
+                let quantity = input.parse::<u32>().unwrap_or(1).max(1);
+                (
+                    row.name.clone(),
+                    total_label(row.sell_quote, quantity),
+                    total_label(row.buy_quote, quantity),
+                )
+            },
+        );
         frame.render_widget(Clear, popup);
         frame.render_widget(
             Paragraph::new(vec![
@@ -1254,7 +1340,16 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: 
             }));
             spans.push(shortcut_span("N"));
             spans.push(Span::raw(format!(") Qty {} · ", ui.trade_quantity)));
-            if let Some(row) = view.local_trade.market.get(ui.market_index) {
+            spans.push(Span::raw("("));
+            spans.push(shortcut_span("e"));
+            spans.push(Span::raw(") Energy accept · ("));
+            spans.push(shortcut_span("x"));
+            spans.push(Span::raw(") cancel · ("));
+            spans.push(shortcut_span("f"));
+            spans.push(Span::raw(") bulk→tank · ("));
+            spans.push(shortcut_span("p"));
+            spans.push(Span::raw(") bulk→market · "));
+            if let Some(row) = selected_ordinary_market_row(view, ui) {
                 let buy_reason = buy_unavailable_reason(view, row, ui.trade_quantity);
                 let sell_reason = sell_unavailable_reason(view, row, ui.trade_quantity);
                 spans.push(Span::raw("("));
@@ -1843,6 +1938,7 @@ fn render_system_market(frame: &mut Frame<'_>, area: Rect, view: &ApplicationVie
         .inspection
         .market
         .iter()
+        .filter(|row| row.good_id.as_str() != ENERGY_GOOD_ID)
         .map(|row| {
             Row::new(vec![
                 Cell::from(row.name.clone()),
@@ -2307,28 +2403,32 @@ fn render_trade_activity(
     ui: &UiState,
     layout_class: LayoutClass,
 ) {
-    if layout_class == LayoutClass::Regular {
-        let columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-            .split(area);
-        let left = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(10), Constraint::Length(7)])
-            .split(columns[0]);
-        let right = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(10),
-                Constraint::Length(7),
-                Constraint::Length(5),
-            ])
-            .split(columns[1]);
-        render_local_market(frame, left[0], view, ui, layout_class);
-        render_trade_action(frame, left[1], view, ui, layout_class);
-        render_trade_destinations(frame, right[0], view, ui, layout_class);
-        render_trade_route(frame, right[1], view, ui, layout_class);
-        render_trade_player(frame, right[2], view, ui);
+    if has_energy_logistics(view) {
+        if layout_class == LayoutClass::Regular {
+            let panes = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(19), Constraint::Length(16)])
+                .split(area);
+            render_regular_trade_core(frame, panes[0], view, ui);
+            render_energy_logistics(frame, panes[1], view, ui, layout_class);
+        } else {
+            // At the minimum supported size, immutable logistics facts take
+            // priority over action previews that remain available through the
+            // footer/help and typed controls.
+            let panes = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(16), Constraint::Min(10)])
+                .split(area);
+            render_energy_logistics(frame, panes[0], view, ui, layout_class);
+            let trade = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(5), Constraint::Min(6)])
+                .split(panes[1]);
+            render_local_market(frame, trade[0], view, ui, layout_class);
+            render_trade_destinations(frame, trade[1], view, ui, layout_class);
+        }
+    } else if layout_class == LayoutClass::Regular {
+        render_regular_trade_core(frame, area, view, ui);
     } else {
         let panes = Layout::default()
             .direction(Direction::Vertical)
@@ -2346,6 +2446,241 @@ fn render_trade_activity(
     }
 }
 
+fn render_regular_trade_core(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(area);
+    let left = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(10), Constraint::Length(7)])
+        .split(columns[0]);
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(10),
+            Constraint::Length(7),
+            Constraint::Length(5),
+        ])
+        .split(columns[1]);
+    render_local_market(frame, left[0], view, ui, LayoutClass::Regular);
+    render_trade_action(frame, left[1], view, ui, LayoutClass::Regular);
+    render_trade_destinations(frame, right[0], view, ui, LayoutClass::Regular);
+    render_trade_route(frame, right[1], view, ui, LayoutClass::Regular);
+    render_trade_player(frame, right[2], view, ui);
+}
+
+fn has_energy_logistics(view: &ApplicationView) -> bool {
+    let logistics = &view.energy_logistics;
+    !logistics.markets.is_empty()
+        || !logistics.opportunities.is_empty()
+        || !logistics.contracts.is_empty()
+        || logistics.storage.tank_capacity.0 != 0
+        || logistics.storage.bulk_capacity.0 != 0
+}
+
+fn focused_energy_market<'a>(
+    view: &'a ApplicationView,
+    ui: &UiState,
+) -> Option<&'a game_app::EnergyMarketLogisticsView> {
+    ui.selected_trade_destination
+        .as_ref()
+        .and_then(|selected| {
+            view.energy_logistics
+                .markets
+                .iter()
+                .find(|market| &market.system.id == selected)
+        })
+        .or_else(|| {
+            view.energy_logistics
+                .markets
+                .iter()
+                .find(|market| market.system.id == view.player.location)
+        })
+        .or_else(|| view.energy_logistics.markets.first())
+}
+
+fn focused_energy_opportunity<'a>(
+    view: &'a ApplicationView,
+    ui: &UiState,
+) -> Option<&'a game_app::EnergyContractOpportunityView> {
+    let selected = ui
+        .selected_trade_destination
+        .as_ref()
+        .or(ui.route_proposal.as_ref());
+    match selected {
+        Some(selected) => view
+            .energy_logistics
+            .opportunities
+            .iter()
+            .find(|opportunity| {
+                &opportunity.destination.id == selected && opportunity.blocker.is_none()
+            }),
+        None => view
+            .energy_logistics
+            .opportunities
+            .iter()
+            .find(|opportunity| opportunity.blocker.is_none()),
+    }
+}
+
+fn player_energy_contract(view: &ApplicationView) -> Option<&game_app::ActiveEnergyContractView> {
+    view.energy_logistics
+        .contracts
+        .iter()
+        .find(|contract| contract.player_owned)
+}
+
+fn render_energy_logistics(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+    _layout_class: LayoutClass,
+) {
+    let mut lines = Vec::new();
+    if let Some(market) = focused_energy_market(view, ui) {
+        lines.push(Line::from(format!(
+            "Market {} · Stock {}/{} · Target {} · Request {}",
+            market.system.name,
+            format_energy(market.stock),
+            format_energy(market.capacity),
+            format_energy(market.target),
+            format_energy(market.requested),
+        )));
+        lines.push(Line::from(format!(
+            "Offer {} · Inbound {} · Runway {} · Stage {}",
+            format_energy(market.offered),
+            format_energy(market.inbound),
+            format_u64(market.runway),
+            market.stage.label(),
+        )));
+        lines.push(Line::from(format!(
+            "Cause {} · Blocker {}",
+            market
+                .cause
+                .as_ref()
+                .map_or_else(|| "none".into(), debug_label),
+            market.blocker.as_deref().unwrap_or("none"),
+        )));
+    }
+
+    let storage = &view.energy_logistics.storage;
+    lines.push(Line::from(format!(
+        "Tank {}/{} · Owned bulk {} · Locked {}{}",
+        format_energy(storage.tank),
+        format_energy(storage.tank_capacity),
+        format_energy(storage.owned_bulk),
+        format_energy(storage.locked_bulk),
+        storage
+            .locked_contract
+            .map_or_else(String::new, |contract| {
+                format!(" (Contract #{})", contract.get())
+            }),
+    )));
+    lines.push(Line::from(format!(
+        "Bulk {}/{} · General cargo {}/{}: {}",
+        format_energy(storage.bulk_used),
+        format_energy(storage.bulk_capacity),
+        view.player.cargo_used,
+        view.player.cargo_capacity,
+        general_cargo_label(view),
+    )));
+    lines.push(Line::from(format!(
+        "Transfer max: tank {} · market {}{}",
+        format_energy(storage.owned_to_tank_maximum),
+        format_energy(storage.owned_to_market_maximum),
+        storage
+            .transfer_blocker
+            .as_deref()
+            .map_or_else(String::new, |blocker| format!(" · blocked: {blocker}")),
+    )));
+
+    if let Some(opportunity) = focused_energy_opportunity(view, ui) {
+        lines.push(Line::from(format!(
+            "Best {} → {} · Payload {}",
+            opportunity.source.name,
+            opportunity.destination.name,
+            format_energy(opportunity.maximum_gross_payload),
+        )));
+        lines.push(Line::from(format!(
+            "Deadhead {} E/{}t · Loaded {} E/{}t · Recovery {} E/{}t",
+            format_energy(opportunity.deadhead.burn),
+            opportunity.deadhead.ticks,
+            format_energy(opportunity.loaded.burn),
+            opportunity.loaded.ticks,
+            format_energy(opportunity.recovery.burn),
+            opportunity.recovery.ticks,
+        )));
+        lines.push(Line::from(format!(
+            "Fee {} · Allocation {} · Profit {} · Net {} · Freight {}",
+            format_energy(opportunity.carrier_fee),
+            format_energy(opportunity.carrier_allocation),
+            format_energy(opportunity.expected_net_profit),
+            format_energy(opportunity.net_delivery),
+            format_bps(opportunity.freight_rate_bps),
+        )));
+        lines.push(Line::from(format!(
+            "Runway {} → {} · Blocker {}",
+            format_u64(opportunity.destination_runway_before),
+            format_u64(opportunity.destination_runway_after),
+            opportunity.blocker.as_deref().unwrap_or("none"),
+        )));
+    }
+
+    if let Some(contract) = player_energy_contract(view) {
+        lines.push(Line::from(format!(
+            "Contract #{} {} · {} → {} · Deadline {}",
+            contract.id.get(),
+            contract_state_label(&contract.state),
+            contract.source.name,
+            contract.destination.name,
+            contract.deadline.map_or_else(|| "—".into(), format_u64),
+        )));
+        lines.push(Line::from(format!(
+            "Payload {} · Locked {} · D/L/R {}/{}/{} E · ticks {}/{}/{}",
+            format_energy(contract.gross_payload),
+            format_energy(contract.locked_amount),
+            format_energy(contract.deadhead.burn),
+            format_energy(contract.loaded.burn),
+            format_energy(contract.recovery.burn),
+            contract.deadhead.ticks,
+            contract.loaded.ticks,
+            contract.recovery.ticks,
+        )));
+        lines.push(Line::from(format!(
+            "Fee {} · Allocation {} · Profit {} · Net {} · Freight {}",
+            format_energy(contract.carrier_fee),
+            format_energy(contract.carrier_allocation),
+            format_energy(contract.expected_net_profit),
+            format_energy(contract.net_delivery),
+            format_bps(contract.freight_rate_bps),
+        )));
+        lines.push(Line::from(format!(
+            "Settled {} · Reimb {} · Fee converted {} · Recovery reserve {}",
+            format_energy(contract.cumulative_settled),
+            format_energy(contract.converted_reimbursement),
+            format_energy(contract.converted_fee),
+            format_energy(contract.recovery_reserve),
+        )));
+        lines.push(Line::from(format!(
+            "Carrier {} · Blocker {}",
+            contract.carrier_name,
+            contract.latest_blocker.as_deref().unwrap_or("none"),
+        )));
+    }
+
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title("Energy Logistics")),
+        area,
+    );
+}
+
 fn render_local_market(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -2354,16 +2689,20 @@ fn render_local_market(
     layout_class: LayoutClass,
 ) {
     let capacity = usize::from(area.height.saturating_sub(3)).max(1);
-    let selected_index = ui
-        .market_index
-        .min(view.local_trade.market.len().saturating_sub(1));
-    let (start, end) = viewport(view.local_trade.market.len(), selected_index, capacity);
-    let mut rows = view.local_trade.market[start..end]
+    let ordinary_rows = ordinary_market_rows(view);
+    let ordinary_indices = ordinary_market_indices(view);
+    let selected_index = ordinary_indices
         .iter()
+        .position(|index| *index == ui.market_index)
+        .unwrap_or(0);
+    let (start, end) = viewport(ordinary_rows.len(), selected_index, capacity);
+    let mut rows = ordinary_rows[start..end]
+        .iter()
+        .copied()
         .enumerate()
         .map(|(offset, row)| {
             let index = start + offset;
-            let selected = index == ui.market_index && ui.trade_region == TradeRegion::Goods;
+            let selected = index == selected_index && ui.trade_region == TradeRegion::Goods;
             let common = vec![
                 Cell::from(if selected { ">" } else { " " }),
                 Cell::from(row.name.clone()),
@@ -2402,7 +2741,7 @@ fn render_local_market(
         } else {
             " — UNAVAILABLE"
         },
-        viewport_label(start, end, view.local_trade.market.len())
+        viewport_label(start, end, ordinary_rows.len())
     );
     if layout_class == LayoutClass::Regular {
         frame.render_widget(
@@ -2468,7 +2807,7 @@ fn render_trade_action(
     ui: &UiState,
     layout_class: LayoutClass,
 ) {
-    let lines = view.local_trade.market.get(ui.market_index).map_or_else(
+    let lines = selected_ordinary_market_row(view, ui).map_or_else(
         || {
             vec![
                 Line::from("No goods are listed at the local market."),
@@ -2786,15 +3125,7 @@ fn render_trade_route(
 
 fn render_trade_player(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: &UiState) {
     let p = &view.player;
-    let cargo = if p.cargo.is_empty() {
-        "empty".into()
-    } else {
-        p.cargo
-            .iter()
-            .map(|item| format!("{} x{}", item.good_name, item.quantity))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+    let cargo = general_cargo_label(view);
     let lines = vec![
         Line::from(format!(
             "Location {}{} · Tank {}/{} E · Value {} E · Rank #{}",
@@ -2806,8 +3137,8 @@ fn render_trade_player(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView
             p.energy_value_rank
         )),
         Line::from(format!(
-            "Cargo bay {}/{} · bay energy {} · value {} E: {}",
-            p.cargo_used, p.cargo_capacity, p.bay_energy, p.cargo_energy_value.0, cargo
+            "General cargo {}/{} · value {} E: {}",
+            p.cargo_used, p.cargo_capacity, p.cargo_energy_value.0, cargo
         )),
         Line::from(format!(
             "Sales {} E · Gain {} E · Trades {} · Runway {}",
@@ -2835,7 +3166,7 @@ fn render_trade_destinations(
     ui: &UiState,
     layout_class: LayoutClass,
 ) {
-    let Some(good) = view.local_trade.market.get(ui.market_index) else {
+    let Some(good) = selected_ordinary_market_row(view, ui) else {
         frame.render_widget(
             Paragraph::new("No selected local good; destination comparison is empty")
                 .block(Block::bordered().title("Destination Comparison — read-only")),
@@ -3369,6 +3700,115 @@ fn render_fleet_world_summary(frame: &mut Frame<'_>, area: Rect, view: &Applicat
     );
 }
 
+const ENERGY_GOOD_ID: &str = "core:energy";
+
+fn ordinary_market_rows(view: &ApplicationView) -> Vec<&game_app::MarketRow> {
+    view.local_trade
+        .market
+        .iter()
+        .filter(|row| row.good_id.as_str() != ENERGY_GOOD_ID)
+        .collect()
+}
+
+fn ordinary_market_indices(view: &ApplicationView) -> Vec<usize> {
+    view.local_trade
+        .market
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| (row.good_id.as_str() != ENERGY_GOOD_ID).then_some(index))
+        .collect()
+}
+
+fn selected_ordinary_market_row<'a>(
+    view: &'a ApplicationView,
+    ui: &UiState,
+) -> Option<&'a game_app::MarketRow> {
+    view.local_trade
+        .market
+        .get(ui.market_index)
+        .filter(|row| row.good_id.as_str() != ENERGY_GOOD_ID)
+        .or_else(|| ordinary_market_rows(view).first().copied())
+}
+
+fn move_ordinary_market_selection(ui: &mut UiState, view: &ApplicationView, delta: isize) {
+    let indices = ordinary_market_indices(view);
+    let current = indices
+        .iter()
+        .position(|index| *index == ui.market_index)
+        .unwrap_or(0);
+    let next = shifted(current, indices.len(), delta);
+    ui.market_index = indices.get(next).copied().unwrap_or(0);
+}
+
+fn format_energy(value: game_app::Energy) -> String {
+    format_i128(i128::from(value.0))
+}
+
+fn format_u64(value: u64) -> String {
+    format_i128(i128::from(value))
+}
+
+fn format_i128(value: i128) -> String {
+    let negative = value < 0;
+    let digits = value.unsigned_abs().to_string();
+    let mut grouped =
+        String::with_capacity(digits.len() + digits.len() / 3 + usize::from(negative));
+    if negative {
+        grouped.push('-');
+    }
+    for (index, character) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(character);
+    }
+    grouped
+}
+
+fn format_bps(bps: u32) -> String {
+    let whole = bps / 100;
+    let fraction = bps % 100;
+    if fraction == 0 {
+        format!("{whole}%")
+    } else if fraction.is_multiple_of(10) {
+        format!("{whole}.{}%", fraction / 10)
+    } else {
+        format!("{whole}.{fraction:02}%")
+    }
+}
+
+fn debug_label(value: &impl std::fmt::Debug) -> String {
+    format!("{value:?}")
+}
+
+fn contract_state_label(state: &impl std::fmt::Debug) -> &'static str {
+    let state = format!("{state:?}");
+    if state.starts_with("DeadheadingToSource") {
+        "Deadheading"
+    } else if state.starts_with("InTransit") {
+        "In Transit"
+    } else if state.starts_with("Arrived") {
+        "Arrived"
+    } else if state.starts_with("Recovering") {
+        "Recovering"
+    } else {
+        "Unknown"
+    }
+}
+
+fn general_cargo_label(view: &ApplicationView) -> String {
+    if view.player.cargo.is_empty() {
+        "empty".into()
+    } else {
+        view.player
+            .cargo
+            .iter()
+            .map(|item| format!("{} x{}", item.good_name, item.quantity))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 fn quote_total(quote: game_app::Energy, quantity: u32) -> Option<game_app::Energy> {
     quote
         .0
@@ -3552,6 +3992,14 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
             Span::raw(" quick trade · "),
             shortcut_span("Shift-B/Shift-S"),
             Span::raw(" one-transaction order · ("),
+            shortcut_span("E"),
+            Span::raw(") accept best Energy · ("),
+            shortcut_span("X"),
+            Span::raw(") cancel contract · ("),
+            shortcut_span("F"),
+            Span::raw(") owned bulk to tank · ("),
+            shortcut_span("P"),
+            Span::raw(") owned bulk to market · ("),
             shortcut_span("T"),
             Span::raw(")ravel/"),
             shortcut_span("Enter"),
@@ -3559,7 +4007,9 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
             shortcut_span("g"),
             Span::raw(") run to arrival · "),
             shortcut_span("Esc"),
-            Span::raw(" clear route"),
+            Span::raw(
+                " clear route · Energy remains the only unit of account for ordinary goods, but Energy itself moves physically only through delivery contracts and exact storage transfers.",
+            ),
         ]),
         Activity::Governance => Line::from(vec![
             Span::raw("Governance: "),
@@ -4029,7 +4479,6 @@ mod tests {
                 location_name: "Aster Reach".into(),
                 tank_energy: Energy(100),
                 tank_capacity: Energy(250),
-                bay_energy: 0,
                 cargo: vec![CargoItemView {
                     good_id: id("core:ore"),
                     good_name: "Ferrite Ore".into(),
@@ -4051,6 +4500,7 @@ mod tests {
                 traveling: false,
             },
             fleet: game_app::FleetView::default(),
+            energy_logistics: game_app::EnergyLogisticsView::default(),
             events: vec![],
         }
     }
@@ -4132,6 +4582,132 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    #[test]
+    fn energy_logistics_render_all_required_contract_facts_in_both_layouts() {
+        let mut view = test_view();
+        let mut ids = game_core::EnergyContracts::default();
+        let contract_id = ids.allocate_id().unwrap();
+        let source = SystemIdentityView {
+            id: id("core:s0"),
+            name: "Aster Reach".into(),
+        };
+        let destination = SystemIdentityView {
+            id: id("core:s1"),
+            name: "Brasshaven".into(),
+        };
+        let route = |burn, ticks| game_app::EnergyRouteFactsView {
+            systems: vec![source.clone(), destination.clone()],
+            burn: Energy(burn),
+            ticks,
+        };
+        view.energy_logistics = game_app::EnergyLogisticsView {
+            markets: vec![game_app::EnergyMarketLogisticsView {
+                system: destination.clone(),
+                stock: Energy(30),
+                capacity: Energy(5_000),
+                target: Energy(5_000),
+                offered: Energy::ZERO,
+                requested: Energy(3_940),
+                inbound: Energy(3_940),
+                runway: 3,
+                stage: BrownoutStage::Emergency,
+                cause: Some(game_core::EnergyStarvationCause::AcceptedDeliveryPending),
+                blocker: Some("accepted delivery pending".into()),
+            }],
+            opportunities: vec![game_app::EnergyContractOpportunityView {
+                source: source.clone(),
+                destination: destination.clone(),
+                maximum_gross_payload: Energy(4_000),
+                deadhead: route(10, 1),
+                loaded: route(20, 2),
+                recovery: route(20, 2),
+                carrier_fee: Energy(40),
+                carrier_allocation: Energy(60),
+                net_delivery: Energy(3_940),
+                freight_rate_bps: 150,
+                expected_net_profit: Energy(30),
+                score: 10_000_000,
+                destination_runway_before: 3,
+                destination_runway_after: 42,
+                blocker: None,
+            }],
+            contracts: vec![game_app::ActiveEnergyContractView {
+                id: contract_id,
+                state: game_core::EnergyContractState::Arrived {
+                    arrived_tick: 7,
+                    settlement_deadline: 27,
+                },
+                source: source.clone(),
+                destination: destination.clone(),
+                carrier_id: id("core:player"),
+                carrier_name: "Free Trader".into(),
+                player_owned: true,
+                gross_payload: Energy(4_000),
+                deadhead: route(10, 1),
+                loaded: route(20, 2),
+                recovery: route(20, 2),
+                carrier_fee: Energy(40),
+                carrier_allocation: Energy(60),
+                net_delivery: Energy(3_940),
+                freight_rate_bps: 150,
+                expected_net_profit: Energy(30),
+                current_leg: None,
+                remaining_ticks: None,
+                locked_amount: Energy(1_940),
+                cumulative_settled: Energy(2_000),
+                converted_reimbursement: Energy(20),
+                converted_fee: Energy(20),
+                deadline: Some(27),
+                recovery_reserve: Energy(20),
+                latest_blocker: Some("storage headroom".into()),
+            }],
+            storage: game_app::PlayerEnergyStorageView {
+                tank: Energy(100),
+                tank_capacity: Energy(250),
+                owned_bulk: Energy(60),
+                locked_bulk: Energy(1_940),
+                locked_contract: Some(contract_id),
+                bulk_used: Energy(2_000),
+                bulk_capacity: Energy(4_000),
+                owned_to_tank_maximum: Energy::ZERO,
+                owned_to_market_maximum: Energy::ZERO,
+                transfer_blocker: Some("active Energy contract".into()),
+            },
+            diagnostics: game_core::EnergyLogisticsDiagnostics::default(),
+        };
+        let ui = UiState {
+            activity: Activity::Trade,
+            ..UiState::default()
+        };
+
+        let regular = rendered_at(160, 45, &view, &ui);
+        for fact in [
+            "Energy Logistics",
+            "Payload 4,000",
+            "Deadhead 10",
+            "Loaded 20",
+            "Fee 40",
+            "Profit 30",
+            "Net 3,940",
+            "Freight 1.5%",
+            "Recovery 20",
+            "Runway 3 → 42",
+            "Locked 1,940",
+            "Deadline 27",
+        ] {
+            assert!(regular.contains(fact), "missing {fact:?} in:\n{regular}");
+        }
+        let compact = rendered_at(80, 30, &view, &ui);
+        for fact in [
+            "Energy Logistics",
+            "Request 3,940",
+            "Tank 100/250",
+            "Locked 1,940",
+        ] {
+            assert!(compact.contains(fact), "missing {fact:?} in:\n{compact}");
+        }
     }
 
     #[test]
@@ -4385,7 +4961,7 @@ mod tests {
             .governor
             .policy
             .import_priorities
-            .insert(invalid.inspection.market[0].good_id.clone(), 10_000);
+            .insert(id(ENERGY_ID), 100);
         ui.governance_index = 2 + invalid.inspection.market.len();
         handle_key(KeyCode::Right, &mut ui, &invalid, &app)
             .await
@@ -5521,11 +6097,11 @@ mod tests {
         let app = game_app::spawn(test_session());
         let mut ui = UiState {
             activity: Activity::Trade,
-            market_index: 1,
+            market_index: 0,
             ..UiState::default()
         };
         let mut view = app.views.borrow().clone();
-        let local_good = view.local_trade.market[1].good_id.clone();
+        let local_good = view.local_trade.market[0].good_id.clone();
 
         handle_key(KeyCode::Tab, &mut ui, &view, &app)
             .await
@@ -5542,8 +6118,8 @@ mod tests {
             Some(&id("core:s1"))
         );
         assert!(!view.player.traveling);
-        assert_eq!(ui.market_index, 1);
-        assert_eq!(view.local_trade.market[1].good_id, local_good);
+        assert_eq!(ui.market_index, 0);
+        assert_eq!(view.local_trade.market[0].good_id, local_good);
 
         handle_key(KeyCode::Char('t'), &mut ui, &view, &app)
             .await

@@ -33,6 +33,10 @@ pub enum InputAction {
     PreviousSection,
     Buy,
     Sell,
+    AcceptEnergyContract,
+    CancelEnergyContract,
+    TransferOwnedBulkToTank,
+    DepositOwnedBulkEnergy,
     BeginTravel,
     TravelUntilArrival,
     ClearContext,
@@ -116,6 +120,10 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
             KeyCode::Char('s') => InputAction::Sell,
             KeyCode::Char('B') => InputAction::OpenBuyOrder,
             KeyCode::Char('S') => InputAction::OpenSellOrder,
+            KeyCode::Char('e') => InputAction::AcceptEnergyContract,
+            KeyCode::Char('x') => InputAction::CancelEnergyContract,
+            KeyCode::Char('f') => InputAction::TransferOwnedBulkToTank,
+            KeyCode::Char('p') => InputAction::DepositOwnedBulkEnergy,
             KeyCode::Char('t') | KeyCode::Enter => InputAction::BeginTravel,
             KeyCode::Char('g') => InputAction::TravelUntilArrival,
             KeyCode::Tab => InputAction::NextSection,
@@ -201,6 +209,30 @@ mod tests {
         assert_eq!(
             route_key(KeyCode::Char('g'), &ui, true),
             InputAction::TravelUntilArrival
+        );
+    }
+
+    #[test]
+    fn trade_routes_typed_energy_logistics_actions_without_fallbacks() {
+        let ui = UiState {
+            activity: Activity::Trade,
+            ..UiState::default()
+        };
+        assert_eq!(
+            route_key(KeyCode::Char('e'), &ui, true),
+            InputAction::AcceptEnergyContract
+        );
+        assert_eq!(
+            route_key(KeyCode::Char('x'), &ui, true),
+            InputAction::CancelEnergyContract
+        );
+        assert_eq!(
+            route_key(KeyCode::Char('f'), &ui, true),
+            InputAction::TransferOwnedBulkToTank
+        );
+        assert_eq!(
+            route_key(KeyCode::Char('p'), &ui, true),
+            InputAction::DepositOwnedBulkEnergy
         );
     }
 }
