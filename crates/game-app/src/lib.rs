@@ -2311,7 +2311,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn app_funded_demand_matches_canonical_core_snapshot_in_normal_and_emergency() {
+    async fn app_ordinary_funded_demand_matches_core_in_normal_and_emergency() {
         for emergency in [false, true] {
             let mut definition = definition();
             if emergency {
@@ -2342,13 +2342,16 @@ mod tests {
             if emergency {
                 handle.request(AppRequest::Step).await.unwrap();
             }
+            assert!(!expected.contains_key(&id(ENERGY_ID)));
             for row in &handle.views.borrow().inspection.market {
-                assert_eq!(
-                    row.funded_demand,
-                    u64::from(expected[&row.good_id].funded),
-                    "{} demand mismatch in emergency={emergency}",
-                    row.good_id
-                );
+                if row.good_id.as_str() != ENERGY_ID {
+                    assert_eq!(
+                        row.funded_demand,
+                        u64::from(expected[&row.good_id].funded),
+                        "{} demand mismatch in emergency={emergency}",
+                        row.good_id
+                    );
+                }
             }
             handle.shutdown().await.unwrap();
         }

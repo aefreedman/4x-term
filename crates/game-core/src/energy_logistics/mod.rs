@@ -338,6 +338,15 @@ pub enum EnergyContractEvent {
         blocker: EnergyContractBlocker,
         current_maximum: Option<Energy>,
     },
+    OwnedBulkTransferredToTank {
+        trader: ContentId,
+        amount: Energy,
+    },
+    OwnedBulkDepositedToMarket {
+        trader: ContentId,
+        system: ContentId,
+        amount: Energy,
+    },
 }
 
 fn require_non_negative(values: &[Energy]) -> Result<(), CoreError> {

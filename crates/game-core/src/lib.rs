@@ -208,7 +208,6 @@ pub struct BrownoutConfig {
     pub throttled_throughput_percent: u32,
     pub emergency_throughput_percent: u32,
     pub starvation_throughput_percent: u32,
-    pub emergency_energy_bid_ceiling: Energy,
     pub survival_goods: BTreeSet<ContentId>,
 }
 
@@ -225,7 +224,6 @@ impl Default for BrownoutConfig {
             throttled_throughput_percent: 50,
             emergency_throughput_percent: 0,
             starvation_throughput_percent: 0,
-            emergency_energy_bid_ceiling: Energy(10),
             survival_goods: BTreeSet::from([ContentId::new(ENERGY_ID).expect("constant id")]),
         }
     }
@@ -244,7 +242,6 @@ impl BrownoutConfig {
             || self.throttled_throughput_percent > 100
             || self.emergency_throughput_percent > self.throttled_throughput_percent
             || self.starvation_throughput_percent > self.emergency_throughput_percent
-            || self.emergency_energy_bid_ceiling.0 <= 0
             || !self
                 .survival_goods
                 .iter()
@@ -650,6 +647,10 @@ impl MarketPolicy {
             || self.liquidation_threshold_percent < 100
             || self.liquidation_discount_percent > 100
             || self.default_target == 0
+            || self
+                .import_priorities
+                .keys()
+                .any(|good| good.as_str() == ENERGY_ID)
         {
             return Err(CoreError::InvalidPolicy);
         }
@@ -2188,6 +2189,12 @@ pub enum GameCommand {
     WithdrawTank {
         amount: Energy,
     },
+    TransferOwnedBulkToTank {
+        amount: Energy,
+    },
+    DepositOwnedBulkEnergy {
+        amount: Energy,
+    },
     SetMarketPolicy {
         system: ContentId,
         policy: MarketPolicy,
@@ -2253,6 +2260,12 @@ pub enum CoreError {
     InvalidPlayerCount,
     #[error("core:energy definition missing or invalid")]
     InvalidEnergyGood,
+    #[error("core:energy is not available through ordinary trade")]
+    EnergyNotTradable,
+    #[error("locked contract energy cannot be moved or spent")]
+    LockedEnergy,
+    #[error("an active energy contract blocks this action")]
+    ActiveEnergyContract,
     #[error("invalid market policy")]
     InvalidPolicy,
     #[error("player is not authorized to govern this market")]
@@ -2649,6 +2662,14 @@ impl GameSession {
         world.insert_resource(EnergyContracts::default());
         world.insert_resource(PendingEnergyContractIntents::default());
         for mut system in definition.systems {
+            if system
+                .policy
+                .import_priorities
+                .keys()
+                .any(|good| good.as_str() == ENERGY_ID)
+            {
+                return Err(CoreError::InvalidWorldDynamics);
+            }
             system.policy.validate()?;
             system.energy_logistics.validate()?;
             system.investment_policy.validate()?;
@@ -2873,9 +2894,7 @@ impl GameSession {
                 e.insert(TraderLifecycle::default());
             }
         }
-        let mut session = Self { world };
-        session.validate_emergency_energy_bid_ceiling()?;
-        Ok(session)
+        Ok(Self { world })
     }
     #[must_use]
     pub fn tick(&self) -> u64 {
@@ -2934,15 +2953,19 @@ impl GameSession {
                 self.local_buy(e, &good, quantity)
             }
             GameCommand::Sell { good, quantity } => {
-                let maximum = self.player_local_trade_limits(&good)?.sell.maximum;
-                if quantity > maximum {
-                    Err(CoreError::ExactQuantityUnavailable {
-                        requested: quantity,
-                        maximum,
-                    })
+                if good.as_str() == ENERGY_ID {
+                    Err(CoreError::EnergyNotTradable)
                 } else {
-                    let e = self.player_entity()?;
-                    self.local_sell(e, &good, quantity, false).map(|_| ())
+                    let maximum = self.player_local_trade_limits(&good)?.sell.maximum;
+                    if quantity > maximum {
+                        Err(CoreError::ExactQuantityUnavailable {
+                            requested: quantity,
+                            maximum,
+                        })
+                    } else {
+                        let e = self.player_entity()?;
+                        self.local_sell(e, &good, quantity, false).map(|_| ())
+                    }
                 }
             }
             GameCommand::BeginTravel { destination } => {
@@ -2955,20 +2978,24 @@ impl GameSession {
                 good,
                 quantity,
             } => {
-                let e = self.player_entity()?;
-                let trader = self.world.get::<Trader>(e).unwrap();
-                let access = self
-                    .world
-                    .get::<PlayerTradeNetworkAccess>(e)
-                    .ok_or(CoreError::InvalidPlayerCount)?
-                    .access;
-                let system = trader.system.clone();
-                if access != TradeNetworkAccess::ReservationContracts {
-                    Err(CoreError::TradeNetworkAccessDenied)
-                } else if system != origin {
-                    Err(CoreError::WrongLocation)
+                if good.as_str() == ENERGY_ID {
+                    Err(CoreError::EnergyNotTradable)
                 } else {
-                    self.enqueue_commit_request(e, &destination, &good, quantity, true, true)
+                    let e = self.player_entity()?;
+                    let trader = self.world.get::<Trader>(e).unwrap();
+                    let access = self
+                        .world
+                        .get::<PlayerTradeNetworkAccess>(e)
+                        .ok_or(CoreError::InvalidPlayerCount)?
+                        .access;
+                    let system = trader.system.clone();
+                    if access != TradeNetworkAccess::ReservationContracts {
+                        Err(CoreError::TradeNetworkAccessDenied)
+                    } else if system != origin {
+                        Err(CoreError::WrongLocation)
+                    } else {
+                        self.enqueue_commit_request(e, &destination, &good, quantity, true, true)
+                    }
                 }
             }
             GameCommand::DepositTank { amount } => {
@@ -2978,6 +3005,14 @@ impl GameSession {
             GameCommand::WithdrawTank { amount } => {
                 let e = self.player_entity()?;
                 self.transfer_tank(e, amount, false)
+            }
+            GameCommand::TransferOwnedBulkToTank { amount } => {
+                let e = self.player_entity()?;
+                self.transfer_owned_bulk(e, amount, false)
+            }
+            GameCommand::DepositOwnedBulkEnergy { amount } => {
+                let e = self.player_entity()?;
+                self.transfer_owned_bulk(e, amount, true)
             }
             GameCommand::SetMarketPolicy { system, policy } => {
                 self.set_player_policy(&system, policy)
@@ -3120,6 +3155,9 @@ impl GameSession {
         system: &ContentId,
         good: &ContentId,
     ) -> Result<(Energy, Energy), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let e = self.market_entity(system)?;
         let market = self.world.get::<Market>(e).unwrap();
         let policy = self.world.get::<MarketPolicy>(e).unwrap();
@@ -3133,6 +3171,16 @@ impl GameSession {
         &mut self,
         good: &ContentId,
     ) -> Result<LocalTradeLimits, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            let unavailable = LocalTradeQuantityLimit {
+                maximum: 0,
+                reason: LocalTradeLimitReason::TradingUnavailable,
+            };
+            return Ok(LocalTradeLimits {
+                buy: unavailable,
+                sell: unavailable,
+            });
+        }
         let trader_entity = self.player_entity()?;
         let trader = self.world.get::<Trader>(trader_entity).unwrap();
         if trader.travel.is_some() {
@@ -3188,21 +3236,14 @@ impl GameSession {
                 u64::try_from(tank.0 / ask.0).unwrap_or(0),
                 LocalTradeLimitReason::TankEnergy,
             );
-            let net_market_energy = if good.as_str() == ENERGY_ID {
-                ask.0.saturating_sub(1)
-            } else {
-                ask.0
-            };
-            if net_market_energy > 0 {
-                let headroom = market
-                    .energy_storage_cap
-                    .0
-                    .saturating_sub(market.energy_stock()?.0);
-                apply(
-                    u64::try_from(headroom / net_market_energy).unwrap_or(0),
-                    LocalTradeLimitReason::MarketEnergyStorage,
-                );
-            }
+            let headroom = market
+                .energy_storage_cap
+                .0
+                .saturating_sub(market.energy_stock()?.0);
+            apply(
+                u64::try_from(headroom / ask.0).unwrap_or(0),
+                LocalTradeLimitReason::MarketEnergyStorage,
+            );
             limit
         };
 
@@ -3254,6 +3295,9 @@ impl GameSession {
         system: &ContentId,
         good: &ContentId,
     ) -> Result<MarketDemandSnapshot, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let entity = self.market_entity(system)?;
         let market = self.world.get::<Market>(entity).unwrap();
         let policy = self.world.get::<MarketPolicy>(entity).unwrap();
@@ -3407,6 +3451,7 @@ impl GameSession {
         for market in &mut markets {
             market.demand = goods
                 .iter()
+                .filter(|good| good.as_str() != ENERGY_ID)
                 .map(|good| {
                     (
                         good.clone(),
@@ -3559,6 +3604,9 @@ impl GameSession {
         policy: &MarketPolicy,
         good: &ContentId,
     ) -> Result<Energy, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let basis = self.good_cost_basis(market, good)?;
         let scarcity = self.scarcity_multiplier(market, policy, good)?;
         let price = match policy.pricing_mode {
@@ -3641,45 +3689,6 @@ impl GameSession {
         Ok(ceilings.into_iter().min())
     }
 
-    fn maximum_normal_energy_bid(
-        &self,
-        market: &Market,
-        policy: &MarketPolicy,
-    ) -> Result<Energy, CoreError> {
-        let energy = ContentId::new(ENERGY_ID).expect("constant id");
-        let mut maximum_scarcity = market.clone();
-        maximum_scarcity.set_energy_stock(Energy::ZERO)?;
-        let ask = self.ask_quote(&maximum_scarcity, policy, &energy)?;
-        let priority = u64::from(
-            policy
-                .import_priorities
-                .get(&energy)
-                .copied()
-                .unwrap_or(100),
-        );
-        checked_mul_ratio_ceil(ask, priority, 100)
-    }
-
-    fn validate_emergency_energy_bid_ceiling(&mut self) -> Result<(), CoreError> {
-        let ceiling = self
-            .world
-            .resource::<EconomyConfig>()
-            .brownouts
-            .emergency_energy_bid_ceiling;
-        let markets = self
-            .world
-            .query::<(&Market, &MarketPolicy)>()
-            .iter(&self.world)
-            .map(|(market, policy)| (market.clone(), policy.clone()))
-            .collect::<Vec<_>>();
-        for (market, policy) in markets {
-            if self.maximum_normal_energy_bid(&market, &policy)? > ceiling {
-                return Err(CoreError::InvalidWorldDynamics);
-            }
-        }
-        Ok(())
-    }
-
     fn demand_allowed(&self, market: &Market, good: &ContentId) -> bool {
         market.operating_profile.stage < BrownoutStage::Emergency
             || self
@@ -3714,6 +3723,9 @@ impl GameSession {
         policy: &MarketPolicy,
         good: &ContentId,
     ) -> Result<Energy, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         if !self.demand_allowed(market, good) {
             return Ok(Energy::ZERO);
         }
@@ -3756,25 +3768,6 @@ impl GameSession {
                 }
             }
         }
-        if good.as_str() == ENERGY_ID && market.operating_profile.stage >= BrownoutStage::Emergency
-        {
-            let brownouts = &self.world.resource::<EconomyConfig>().brownouts;
-            let ceiling = brownouts.emergency_energy_bid_ceiling;
-            debug_assert!(
-                bid <= ceiling,
-                "validated emergency ceiling must not lower bids"
-            );
-            if market.operating_profile.stage == BrownoutStage::Starvation {
-                bid = ceiling;
-            } else if bid < ceiling {
-                let range = u64::from(brownouts.emergency_recovery_ticks);
-                let pressure = range.saturating_sub(u64::from(market.brownout.ticks_of_burn));
-                let increase = Energy(ceiling.0 - bid.0);
-                bid = bid
-                    .checked_add(checked_mul_ratio_ceil(increase, pressure, range)?)?
-                    .min(ceiling);
-            }
-        }
         Ok(bid)
     }
     fn cargo_used(trader: &Trader) -> Result<u64, CoreError> {
@@ -3790,6 +3783,9 @@ impl GameSession {
         good: &ContentId,
         quantity: u32,
     ) -> Result<(), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         if quantity == 0 {
             return Err(CoreError::ZeroQuantity);
         }
@@ -3839,13 +3835,7 @@ impl GameSession {
             .get::<Market>(market_entity)
             .unwrap()
             .energy_stock()?;
-        let market_energy = if good.as_str() == ENERGY_ID {
-            initial_market_energy
-                .checked_sub(Energy(i64::from(quantity)))?
-                .checked_add(total)?
-        } else {
-            initial_market_energy.checked_add(total)?
-        };
+        let market_energy = initial_market_energy.checked_add(total)?;
         if market_energy
             > self
                 .world
@@ -3898,12 +3888,6 @@ impl GameSession {
                 market.ledger.processor_output_revenue.checked_add(total)?;
         }
         market.energy_flow.tank_to_market = market.energy_flow.tank_to_market.checked_add(total)?;
-        if good.as_str() == ENERGY_ID {
-            market.energy_flow.market_to_energy_cargo = market
-                .energy_flow
-                .market_to_energy_cargo
-                .checked_add(Energy(i64::from(quantity)))?;
-        }
         trader.energy_tank = trader.energy_tank.checked_sub(total)?;
         trader.cargo.insert(good.clone(), cargo_next);
         trader
@@ -3938,6 +3922,9 @@ impl GameSession {
         requested: u32,
         liquidation: bool,
     ) -> Result<u32, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         if requested == 0 {
             return Err(CoreError::ZeroQuantity);
         }
@@ -4018,8 +4005,8 @@ impl GameSession {
         Ok(quantity)
     }
 
-    /// Shared validate-before-mutate settlement used by reservations, immediate
-    /// funded sales, energy cargo, and liquidation.
+    /// Shared validate-before-mutate settlement used by ordinary reservations,
+    /// immediate funded sales, and liquidation. Energy rejects at this boundary.
     fn execute_funded_sale(
         &mut self,
         trader_entity: Entity,
@@ -4028,6 +4015,9 @@ impl GameSession {
         quantity: u32,
         terms: SaleTerms,
     ) -> Result<(), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let total = terms.unit_price.checked_mul(u64::from(quantity))?;
         if total != terms.reserved_release && terms.reserved_release != Energy::ZERO {
             return Err(CoreError::InvalidPhysicalDefinition);
@@ -4049,28 +4039,20 @@ impl GameSession {
             return Err(CoreError::InsufficientTankCapacity);
         }
         let after_payment = market.energy_stock()?.checked_sub(total)?;
-        if good.as_str() == ENERGY_ID {
-            market.set_energy_stock(after_payment.checked_add(Energy(i64::from(quantity)))?)?;
-            market.energy_flow.energy_cargo_to_market = market
-                .energy_flow
-                .energy_cargo_to_market
-                .checked_add(Energy(i64::from(quantity)))?;
-        } else {
-            let next_stock = market
-                .inventory
-                .get(good)
-                .copied()
-                .unwrap_or(0)
-                .checked_add(u64::from(quantity))
-                .ok_or(CoreError::Overflow)?;
-            market.set_energy_stock(after_payment)?;
-            market.inventory.insert(good.clone(), next_stock);
-            market
-                .cost_basis
-                .entry(good.clone())
-                .or_default()
-                .add(u64::from(quantity), cargo_cost)?;
-        }
+        let next_stock = market
+            .inventory
+            .get(good)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(u64::from(quantity))
+            .ok_or(CoreError::Overflow)?;
+        market.set_energy_stock(after_payment)?;
+        market.inventory.insert(good.clone(), next_stock);
+        market
+            .cost_basis
+            .entry(good.clone())
+            .or_default()
+            .add(u64::from(quantity), cargo_cost)?;
         market.reserved_energy = market.reserved_energy.checked_sub(terms.reserved_release)?;
         market.ledger.energy_paid_to_traders =
             market.ledger.energy_paid_to_traders.checked_add(total)?;
@@ -4119,6 +4101,93 @@ impl GameSession {
                 total,
                 partial: terms.partial,
             });
+        Ok(())
+    }
+
+    fn preload_export_claims_for_source(&self, source: &ContentId) -> Result<Energy, CoreError> {
+        self.world
+            .resource::<EnergyContracts>()
+            .active
+            .values()
+            .filter(|contract| &contract.source == source)
+            .try_fold(Energy::ZERO, |claims, contract| match contract.state {
+                EnergyContractState::DeadheadingToSource { source_claim, .. } => {
+                    claims.checked_add(source_claim)
+                }
+                _ => Ok(claims),
+            })
+    }
+
+    fn market_exportable_energy(&self, market_entity: Entity) -> Result<Energy, CoreError> {
+        let market = self.world.get::<Market>(market_entity).unwrap();
+        let policy = self.world.get::<MarketPolicy>(market_entity).unwrap();
+        let source = &self.world.get::<StableId>(market_entity).unwrap().0;
+        let life = self
+            .world
+            .resource::<EconomyConfig>()
+            .life_support_burn_per_capita;
+        energy_logistics::exportable_energy(
+            market.energy_stock()?,
+            market.reserved_energy,
+            self.preload_export_claims_for_source(source)?,
+            market.operating_reserve(policy, life)?,
+            market.protected_liquidation_budget,
+            market.energy_logistics.export_reserve,
+        )
+    }
+
+    fn transfer_owned_bulk(
+        &mut self,
+        trader_entity: Entity,
+        amount: Energy,
+        to_market: bool,
+    ) -> Result<(), CoreError> {
+        if amount.0 <= 0 {
+            return Err(CoreError::ZeroQuantity);
+        }
+        let mut trader = self.world.get::<Trader>(trader_entity).unwrap().clone();
+        if trader.travel.is_some() {
+            return Err(CoreError::InTransit);
+        }
+        if trader.bulk_energy.owned < amount {
+            return Err(CoreError::InsufficientStock);
+        }
+        let trader_id = self.world.get::<StableId>(trader_entity).unwrap().0.clone();
+        let next_owned = trader.bulk_energy.owned.checked_sub(amount)?;
+        let event = if to_market {
+            let market_entity = self.market_entity(&trader.system)?;
+            let mut market = self.world.get::<Market>(market_entity).unwrap().clone();
+            let next_stock = market.energy_stock()?.checked_add(amount)?;
+            if next_stock > market.energy_storage_cap {
+                return Err(CoreError::InsufficientCapacity);
+            }
+            market.set_energy_stock(next_stock)?;
+            trader.bulk_energy.owned = next_owned;
+            let system = trader.system.clone();
+            *self.world.get_mut::<Market>(market_entity).unwrap() = market;
+            *self.world.get_mut::<Trader>(trader_entity).unwrap() = trader;
+            EnergyContractEvent::OwnedBulkDepositedToMarket {
+                trader: trader_id,
+                system,
+                amount,
+            }
+        } else {
+            let next_tank = trader.energy_tank.checked_add(amount)?;
+            if next_tank > trader.energy_tank_capacity {
+                return Err(CoreError::InsufficientTankCapacity);
+            }
+            trader.energy_tank = next_tank;
+            trader.bulk_energy.owned = next_owned;
+            *self.world.get_mut::<Trader>(trader_entity).unwrap() = trader;
+            EnergyContractEvent::OwnedBulkTransferredToTank {
+                trader: trader_id,
+                amount,
+            }
+        };
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::EnergyLogistics(event));
         Ok(())
     }
 
@@ -4171,13 +4240,7 @@ impl GameSession {
             }
             (next_stock, tank.checked_sub(amount)?)
         } else {
-            let life = self
-                .world
-                .resource::<EconomyConfig>()
-                .life_support_burn_per_capita;
-            let market = self.world.get::<Market>(market_entity).unwrap();
-            let policy = self.world.get::<MarketPolicy>(market_entity).unwrap();
-            if market.unreserved_energy_for_purchases(policy, life)? < amount {
+            if self.market_exportable_energy(market_entity)? < amount {
                 return Err(CoreError::InsufficientEnergy);
             }
             let next = tank.checked_add(amount)?;
@@ -4202,10 +4265,6 @@ impl GameSession {
         Ok(())
     }
     fn rebalance_idle_npc_tanks(&mut self) -> Result<(), CoreError> {
-        let life = self
-            .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
         let mut traders = self
             .world
             .query_filtered::<(Entity, &StableId, &Trader), Without<PlayerControlled>>()
@@ -4242,9 +4301,7 @@ impl GameSession {
                     self.transfer_tank(entity, amount, true)?;
                 }
             } else if tank < target {
-                let market = self.world.get::<Market>(market_entity).unwrap();
-                let policy = self.world.get::<MarketPolicy>(market_entity).unwrap();
-                let available = market.unreserved_energy_for_purchases(policy, life)?;
+                let available = self.market_exportable_energy(market_entity)?;
                 let amount = Energy((target.0 - tank.0).min(available.0));
                 if amount.0 > 0 {
                     self.transfer_tank(entity, amount, false)?;
@@ -4373,15 +4430,6 @@ impl GameSession {
             .keys()
             .any(|good| !self.world.resource::<Catalog>().goods.contains_key(good))
         {
-            return Err(CoreError::InvalidPolicy);
-        }
-        let market = self.world.get::<Market>(market_entity).unwrap();
-        let emergency_ceiling = self
-            .world
-            .resource::<EconomyConfig>()
-            .brownouts
-            .emergency_energy_bid_ceiling;
-        if self.maximum_normal_energy_bid(market, &policy)? > emergency_ceiling {
             return Err(CoreError::InvalidPolicy);
         }
         let bootstrap_costs = self
@@ -5275,6 +5323,9 @@ impl GameSession {
         good: &ContentId,
         requested: u32,
     ) -> Result<u32, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let market_entity = self.market_entity(destination)?;
         let life = self
             .world
@@ -5451,6 +5502,9 @@ impl GameSession {
         if r.status != ReservationStatus::Active {
             return Ok(());
         }
+        if r.good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let system = self.world.get::<Trader>(e).unwrap().system.clone();
         if system != r.destination {
             return Ok(());
@@ -5510,6 +5564,9 @@ impl GameSession {
         buy_at_origin: bool,
         command_driven: bool,
     ) -> Result<(), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         if quantity == 0 {
             return Err(CoreError::ZeroQuantity);
         }
@@ -5673,6 +5730,9 @@ impl GameSession {
         good: &ContentId,
         requested: u32,
     ) -> Result<PreparedTradeCommitment, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         if requested == 0 {
             return Err(CoreError::ZeroQuantity);
         }
@@ -5794,13 +5854,7 @@ impl GameSession {
             .unwrap_or_default()
             .removal_cost(quantity_u64)?;
         let initial_market_energy = origin_market.energy_stock()?;
-        let next_market_energy = if good.as_str() == ENERGY_ID {
-            initial_market_energy
-                .checked_sub(Energy(i64::from(quantity)))?
-                .checked_add(purchase_total)?
-        } else {
-            initial_market_energy.checked_add(purchase_total)?
-        };
+        let next_market_energy = initial_market_energy.checked_add(purchase_total)?;
         if next_market_energy > origin_market.energy_storage_cap {
             return Err(CoreError::InsufficientCapacity);
         }
@@ -5847,12 +5901,6 @@ impl GameSession {
             .energy_flow
             .tank_to_market
             .checked_add(purchase_total)?;
-        if good.as_str() == ENERGY_ID {
-            origin_market.energy_flow.market_to_energy_cargo = origin_market
-                .energy_flow
-                .market_to_energy_cargo
-                .checked_add(Energy(i64::from(quantity)))?;
-        }
         trader.energy_tank = tank.checked_sub(required_tank)?;
         trader.ledger.travel_cost = trader.ledger.travel_cost.checked_add(travel_burn)?;
         trader.cargo.insert(good.clone(), next_cargo);
@@ -5958,6 +6006,22 @@ impl GameSession {
             .collect::<Vec<_>>();
         traders.sort_by(|a, b| a.0.cmp(&b.0));
         for (_, e, reservation, player) in traders {
+            if self
+                .world
+                .get::<Trader>(e)
+                .unwrap()
+                .cargo
+                .keys()
+                .any(|good| good.as_str() == ENERGY_ID)
+            {
+                self.world
+                    .resource_mut::<EventBuffer>()
+                    .0
+                    .push(GameEvent::Rejected(
+                        CoreError::EnergyNotTradable.to_string(),
+                    ));
+                continue;
+            }
             if let Some(id) = reservation {
                 self.settle_reservation(e, id)?;
             }
@@ -6025,6 +6089,9 @@ impl GameSession {
         Ok(())
     }
     fn liquidate_for_jump(&mut self, e: Entity, good: &ContentId) -> Result<(), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let (system, tank, burn) = {
             let t = self.world.get::<Trader>(e).unwrap();
             (t.system.clone(), t.energy_tank, t.travel_burn_per_distance)
@@ -6066,6 +6133,9 @@ impl GameSession {
     /// destination can currently reserve it, keep the trader moving over the
     /// cheapest adjacent jump so every market gets another liquidation chance.
     fn reroute_laden(&mut self, e: Entity, good: &ContentId) -> Result<(), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let (origin, tank, capacity, burn_per_distance, cargo) = {
             let trader = self.world.get::<Trader>(e).unwrap();
             (
@@ -6304,7 +6374,18 @@ impl GameSession {
         let mut market_updates = BTreeMap::<ContentId, (Entity, Market)>::new();
         let mut retirements = Vec::new();
         for (id, entity, trader) in candidates {
-            if trader.reservation.is_some() || trader.travel.is_some() || !trader.cargo.is_empty() {
+            let active_contract = self
+                .world
+                .resource::<EnergyContracts>()
+                .active
+                .values()
+                .any(|contract| contract.carrier == id);
+            if trader.reservation.is_some()
+                || trader.travel.is_some()
+                || !trader.cargo.is_empty()
+                || trader.bulk_energy.used()?.0 > 0
+                || active_contract
+            {
                 continue;
             }
             let market_entity = self.market_entity(&trader.system)?;
@@ -6378,13 +6459,41 @@ impl GameSession {
                 *counts.entry(id).or_default() += 1;
                 counts
             });
+        let claims = self
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .values()
+            .try_fold(
+                BTreeMap::<ContentId, Energy>::new(),
+                |mut claims, contract| {
+                    if let EnergyContractState::DeadheadingToSource { source_claim, .. } =
+                        contract.state
+                    {
+                        let next = claims
+                            .get(&contract.source)
+                            .copied()
+                            .unwrap_or(Energy::ZERO)
+                            .checked_add(source_claim)?;
+                        claims.insert(contract.source.clone(), next);
+                    }
+                    Ok::<_, CoreError>(claims)
+                },
+            )?;
         let mut markets = self
             .world
             .query_filtered::<(Entity, &StableId, &Market, &MarketPolicy), With<SystemMarker>>()
             .iter(&self.world)
             .map(|(entity, id, market, policy)| {
                 Ok((
-                    market.unreserved_energy_for_purchases(policy, life)?,
+                    energy_logistics::exportable_energy(
+                        market.energy_stock()?,
+                        market.reserved_energy,
+                        claims.get(&id.0).copied().unwrap_or(Energy::ZERO),
+                        market.operating_reserve(policy, life)?,
+                        market.protected_liquidation_budget,
+                        market.energy_logistics.export_reserve,
+                    )?,
                     id.0.clone(),
                     entity,
                 ))
@@ -6513,7 +6622,7 @@ impl GameSession {
                 .inventory
                 .iter()
             {
-                if *stock == 0 {
+                if good.as_str() == ENERGY_ID || *stock == 0 {
                     continue;
                 }
                 let origin = markets.iter().find(|(sid, _, _)| sid == &t.system).unwrap();
@@ -6605,7 +6714,7 @@ impl GameSession {
             if let Some(archetype) = archetype {
                 for (origin_id, origin, origin_policy) in &markets {
                     for (good, stock) in &origin.inventory {
-                        if *stock == 0 {
+                        if good.as_str() == ENERGY_ID || *stock == 0 {
                             continue;
                         }
                         let ask = self.ask_quote(origin, origin_policy, good)?;

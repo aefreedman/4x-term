@@ -221,4 +221,11 @@ Required metrics: gross/net delivery, loaded/deadhead/recovery burn, carrier fee
 - The 1,000-tick transitional gate passes with exact reconciliation: 47 stage transitions, 450,902 ordinary Energy units loaded, 449,452 delivered, 5,092 trades after tick 300, and 638 production operations after tick 300. These are pre-contract compatibility metrics, not final feature evidence.
 - Core now owns monotonic contract IDs, canonical active/pending resources, typed records/events/snapshots, checked bulk holds, effective policy, and stable archetype registry. Content compiles two archetypes and the selected system 14/15 tuning.
 
-Pending lifecycle/legacy-removal/frontend waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.
+#### Wave 2 legacy removal and exact transfers
+
+- Main rerun: all 84 game-core tests and the full workspace suite pass; workspace Clippy, format, and diff checks pass.
+- `EL-INV-LEGACY` executable coverage rejects Energy quotes, limits, local buy/sell, reservation commands, injected pending work, funded sale, liquidation, ordinary demand, and NPC opportunity collection without physical mutation. Repository content rejects Energy import priorities and no longer contains the emergency quote ceiling.
+- Player and automated tank withdrawals use D1 exportable stock including canonical pre-load claims. Exact owned-bulk transfers are docked, checked, independent of refuel policy, and never consume locked Energy. `RecordExternalDelivery` remains the external inflow boundary.
+- The ignored 1,000-tick acceptance still contains obsolete Energy-cargo activity assertions and is intentionally deferred until Wave 3 supplies replacement contract metrics.
+
+Pending lifecycle/frontend waves. Do not mark an invariant complete solely from a worker report; record the main-agent rerun here.

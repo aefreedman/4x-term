@@ -5621,6 +5621,12 @@ mod tests {
         handle_key(KeyCode::F(2), &mut ui, &view, &app)
             .await
             .unwrap();
+        ui.market_index = view
+            .inspection
+            .market
+            .iter()
+            .position(|row| row.good_id == id("core:ore"))
+            .unwrap();
         handle_key(KeyCode::Char('n'), &mut ui, &view, &app)
             .await
             .unwrap();

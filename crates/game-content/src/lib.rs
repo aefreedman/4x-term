@@ -186,7 +186,6 @@ struct BrownoutConfigSource {
     throttled_throughput_percent: u32,
     emergency_throughput_percent: u32,
     starvation_throughput_percent: u32,
-    emergency_energy_bid_ceiling: i64,
     survival_goods: Vec<String>,
 }
 
@@ -1075,6 +1074,12 @@ fn compile_priorities(
         if !goods.contains(&good) {
             errors.push(format!("{context}: unknown priority good {good}"));
         }
+        if good.as_str() == ENERGY_ID {
+            errors.push(format!(
+                "{context}: core:energy import priority is obsolete because Energy is not ordinarily tradable"
+            ));
+            continue;
+        }
         if value.percent == 0 || value.percent > 10_000 {
             errors.push(format!("{context}: priority percent must be 1..=10000"));
         }
@@ -1178,11 +1183,10 @@ fn compile_brownouts(
         throttled_throughput_percent: source.throttled_throughput_percent,
         emergency_throughput_percent: source.emergency_throughput_percent,
         starvation_throughput_percent: source.starvation_throughput_percent,
-        emergency_energy_bid_ceiling: Energy(source.emergency_energy_bid_ceiling),
         survival_goods,
     };
     if config.validate().is_err() {
-        errors.push("economy_config.ron:brownouts: invalid threshold ordering, throughput, ceiling, or survival goods".into());
+        errors.push("economy_config.ron:brownouts: invalid threshold ordering, throughput, or survival goods".into());
     }
     config
 }
@@ -1794,48 +1798,6 @@ fn compute_protected_budgets(
     }
 }
 
-fn bootstrap_energy_ask(system: &SystemDefinition) -> Option<Energy> {
-    let energy = ContentId::new(ENERGY_ID).ok()?;
-    let target = u64::from(
-        system
-            .targets
-            .get(&energy)
-            .copied()
-            .unwrap_or(system.policy.default_target),
-    );
-    if target == 0 {
-        return None;
-    }
-    let stock = system.inventory.get(&energy).copied().unwrap_or(0);
-    let shortage = target.saturating_sub(stock).min(target);
-    let scarcity =
-        1_000_u64.checked_add(500_u64.checked_mul(shortage)?.checked_add(target - 1)? / target)?;
-    let sustainable = (100_u64
-        .checked_add(u64::from(system.policy.producer_margin_percent))?
-        .checked_add(99)?)
-        / 100;
-    let quote = sustainable.checked_mul(scarcity)?.checked_add(999)? / 1_000;
-    Some(Energy(i64::try_from(quote.max(1)).ok()?))
-}
-
-fn bootstrap_energy_bid(system: &SystemDefinition) -> Option<Energy> {
-    let energy = ContentId::new(ENERGY_ID).ok()?;
-    let ask = bootstrap_energy_ask(system)?;
-    let priority = u64::from(
-        system
-            .policy
-            .import_priorities
-            .get(&energy)
-            .copied()
-            .unwrap_or(100),
-    );
-    let quote = i128::from(ask.0)
-        .checked_mul(i128::from(priority))?
-        .checked_add(99)?
-        / 100;
-    Some(Energy(i64::try_from(quote.max(1)).ok()?))
-}
-
 fn validate_bootstrap(
     systems: &[SystemDefinition],
     recipes: &[RecipeDefinition],
@@ -1879,49 +1841,39 @@ fn validate_bootstrap(
                         graph.shortest_path(&trader.system, &exporter.id)?;
                     let (delivery_route, delivery) =
                         graph.shortest_path(&exporter.id, &importer.id)?;
-                    let route_burn = route_travel_energy(
+                    let deadhead_burn = route_travel_energy(
                         graph,
                         &approach_route,
                         trader.travel_burn_per_distance,
                     )
-                    .ok()?
-                    .checked_add(
-                        route_travel_energy(
-                            graph,
-                            &delivery_route,
-                            trader.travel_burn_per_distance,
-                        )
-                        .ok()?,
+                    .ok()?;
+                    let loaded_burn = route_travel_energy(
+                        graph,
+                        &delivery_route,
+                        trader.travel_burn_per_distance,
                     )
                     .ok()?;
+                    let (recovery_route, _) = graph.shortest_path(&importer.id, &exporter.id)?;
+                    let recovery_burn = route_travel_energy(
+                        graph,
+                        &recovery_route,
+                        trader.travel_burn_per_distance,
+                    )
+                    .ok()?;
+                    let required_tank = deadhead_burn.checked_add(loaded_burn).ok()?;
                     let exporter_burn = *burn.get(&exporter.id)?;
                     let exporter_stock = exporter.inventory.get(energy_id).copied().unwrap_or(0);
                     let exporter_operating = exporter_burn
                         .checked_mul(i64::from(exporter.policy.operating_reserve_ticks))?;
-                    let exporter_available = exporter_stock.saturating_sub(
-                        u64::try_from(
-                            exporter_operating
-                                .checked_add(exporter.protected_liquidation_budget.0)?,
-                        )
-                        .ok()?,
-                    );
-                    let energy_ask = bootstrap_energy_ask(exporter)?;
-                    let purchase_cost = energy_ask.checked_mul(delivery_quantity).ok()?;
-                    let required_tank = purchase_cost.checked_add(route_burn).ok()?;
-                    let arrival_tank = trader.energy_tank.checked_sub(required_tank).ok()?;
-                    let importer_bid = bootstrap_energy_bid(importer)?;
-                    let payout = importer_bid.checked_mul(delivery_quantity).ok()?;
-                    let tank_headroom =
-                        trader.energy_tank_capacity.checked_sub(arrival_tank).ok()?;
-                    let exporter_final_stock = i64::try_from(exporter_stock)
-                        .ok()?
-                        .checked_sub(i64::try_from(delivery_quantity).ok()?)?
-                        .checked_add(purchase_cost.0)?;
+                    let protected = exporter_operating
+                        .checked_add(exporter.protected_liquidation_budget.0)?
+                        .checked_add(exporter.energy_logistics.export_reserve.0)?;
+                    let exporter_available =
+                        exporter_stock.saturating_sub(u64::try_from(protected).ok()?);
                     if exporter_available < delivery_quantity
-                        || u64::from(trader.cargo_capacity) < delivery_quantity
+                        || trader.bulk_energy_capacity.0 < i64::try_from(delivery_quantity).ok()?
                         || required_tank > trader.energy_tank
-                        || payout > tank_headroom
-                        || exporter_final_stock > exporter.energy_storage_cap.0
+                        || recovery_burn > trader.energy_tank_capacity
                     {
                         return None;
                     }
@@ -1937,7 +1889,7 @@ fn validate_bootstrap(
                     .then_with(|| a.2.cmp(&b.2))
             });
         let Some((required_ticks, exporter, trader)) = best else {
-            let detail = "no exporter/trader pair has surplus stock, cargo capacity, purchase affordability, route burn, arrival tank headroom, exporter storage headroom, and one-tick delivery capacity".to_string();
+            let detail = "no exporter/trader pair has protected surplus, bulk capacity, loaded/deadhead fuel, recovery capacity, and one-tick delivery capacity".to_string();
             if importer.bootstrap_risk_acknowledged {
                 warnings.push(ContentWarning::BootstrapDeliveryAcknowledged {
                     source: "economy.ron",
@@ -1998,6 +1950,7 @@ mod tests {
             system.inventory.contains_key(&energy.id)
                 && system.protected_liquidation_budget.0 > 0
                 && system.policy.pricing_mode == PricingMode::CostAware
+                && !system.policy.import_priorities.contains_key(&energy.id)
         }));
         assert!(
             loaded
@@ -2160,6 +2113,47 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn removed_energy_import_priorities_report_exact_source_contexts() {
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let economy = load(root().join("economy.ron")).unwrap();
+        let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+        config.import_priorities.push(PrioritySource {
+            good: ENERGY_ID.into(),
+            percent: 200,
+        });
+        let traders = load(root().join("traders.ron")).unwrap();
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(
+                "economy_config.ron:import_priorities: core:energy import priority is obsolete"
+            ),
+            "{error}"
+        );
+
+        let systems = load(root().join("systems.ron")).unwrap();
+        let goods = load(root().join("goods.ron")).unwrap();
+        let recipes = load(root().join("recipes.ron")).unwrap();
+        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
+        economy.markets[0].policy.import_priorities = Some(vec![PrioritySource {
+            good: ENERGY_ID.into(),
+            percent: 130,
+        }]);
+        let config = load(root().join("economy_config.ron")).unwrap();
+        let traders = load(root().join("traders.ron")).unwrap();
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("economy.ron:frontier:system_01:policy:import_priorities: core:energy import priority is obsolete"),
+            "{error}"
+        );
     }
 
     #[test]

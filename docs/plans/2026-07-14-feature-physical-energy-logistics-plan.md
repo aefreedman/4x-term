@@ -917,7 +917,7 @@ Delegate Wave 1A and 1B only after the main agent's Phase 0 gate. Core and conte
 - [x] Extend trader/core definitions with bulk capacity and archetype identity.
 - [x] Compile global/per-market logistics policy and NPC archetype registry in `game-content`.
 - [x] Add semantic validations from D15 and repository content validation tests.
-- [ ] Update physical-stock test helpers to count tank + owned bulk + locked bulk, not generic Energy cargo.
+- [x] Update physical-stock test helpers to count tank + owned bulk + locked bulk, not generic Energy cargo.
 
 Files: `crates/game-core/src/energy_logistics/mod.rs`, limited root wiring in `crates/game-core/src/lib.rs`, `crates/game-content/src/energy_logistics.rs`, limited root compiler wiring in `crates/game-content/src/lib.rs`, and content RON files.
 
@@ -925,13 +925,13 @@ Files: `crates/game-core/src/energy_logistics/mod.rs`, limited root wiring in `c
 
 Before delegation, the main agent authors the complete `EL-INV-LEGACY` executable rejection matrix and exact transfer pre/post fixtures. One core worker implements this phase serially.
 
-- [ ] Reject `core:energy` from quotes, local buy/sell, trade limits, reservations, automated ordinary opportunity collection, liquidation, and reroute paths.
-- [ ] Remove Energy quote-only config and tests.
-- [ ] Replace generic cargo Energy paths and ledger dimensions with tank/bulk/contract transfer dimensions.
-- [ ] Bound market-to-tank withdrawal by D1 exportable Energy including active source claims/export reserve. This bound applies to every withdrawal path, including the automated NPC tank-balancing pass in D13 phase 8; list that path explicitly in the `EL-INV-LEGACY` rejection/bounding matrix.
-- [ ] Add exact owned-bulk-to-tank and owned-bulk-to-market commands.
-- [ ] Preserve `RecordExternalDelivery` as an explicitly external diagnostic boundary.
-- [ ] Prove every removed entry point rejects Energy without mutation while ordinary-goods behavior remains unchanged.
+- [x] Reject `core:energy` from quotes, local buy/sell, trade limits, reservations, automated ordinary opportunity collection, liquidation, and reroute paths.
+- [x] Remove Energy quote-only config and tests.
+- [x] Replace generic cargo Energy paths and ledger dimensions with tank/bulk/contract transfer dimensions.
+- [x] Bound market-to-tank withdrawal by D1 exportable Energy including active source claims/export reserve. This bound applies to every withdrawal path, including the automated NPC tank-balancing pass in D13 phase 8; list that path explicitly in the `EL-INV-LEGACY` rejection/bounding matrix.
+- [x] Add exact owned-bulk-to-tank and owned-bulk-to-market commands.
+- [x] Preserve `RecordExternalDelivery` as an explicitly external diagnostic boundary.
+- [x] Prove every removed entry point rejects Energy without mutation while ordinary-goods behavior remains unchanged.
 
 Files: `crates/game-core/src/lib.rs`, `crates/game-content/src/lib.rs`, `content/economy_config.ron`, `content/economy.ron`.
 
