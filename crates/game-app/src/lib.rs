@@ -1,12 +1,14 @@
 //! Async owner and immutable view boundary for the headless simulation.
 
 use game_core::{
-    BrownoutStage, CoreError, ENERGY_ID, GameCommand, GameEvent, GameSession,
-    LocalTradeLimitReason, MarketAuthority, ReservationStatus, SeasonalTrend, investment_cost,
-    route_travel_energy, ticks_for_distance, travel_energy,
+    BrownoutStage, CoreError, ENERGY_ID, EnergyContractBlocker, EnergyContractEvent,
+    EnergyContractState, EnergyContractTerminalOutcome, EnergyLogisticsDiagnostics,
+    EnergyStarvationCause, GameCommand, GameEvent, GameSession, LocalTradeLimitReason,
+    MarketAuthority, ReservationStatus, SeasonalTrend, investment_cost, route_travel_energy,
+    ticks_for_distance, travel_energy,
 };
 pub use game_core::{
-    ContentId, Energy, GovernorInvestmentPolicy, GovernorMarketPolicy, InvestmentKind,
+    ContentId, ContractId, Energy, GovernorInvestmentPolicy, GovernorMarketPolicy, InvestmentKind,
     InvestmentStatus, PopulationTrend, TradeNetworkAccess,
 };
 use std::collections::{BTreeMap, VecDeque};
@@ -97,6 +99,20 @@ pub enum AppRequest {
         amount: Energy,
     },
     WithdrawTank {
+        amount: Energy,
+    },
+    AcceptEnergyContract {
+        source: ContentId,
+        destination: ContentId,
+        gross_payload: Energy,
+    },
+    CancelEnergyContract {
+        contract_id: ContractId,
+    },
+    TransferOwnedBulkToTank {
+        amount: Energy,
+    },
+    DepositOwnedBulkEnergy {
         amount: Energy,
     },
     SetMarketPolicy {
@@ -298,7 +314,6 @@ pub struct PlayerStatusView {
     pub location_name: String,
     pub tank_energy: Energy,
     pub tank_capacity: Energy,
-    pub bay_energy: u64,
     pub cargo: Vec<CargoItemView>,
     pub cargo_used: u64,
     pub cargo_capacity: u32,
@@ -428,6 +443,99 @@ pub struct FleetView {
     pub total_retirements: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnergyRouteFactsView {
+    pub systems: Vec<SystemIdentityView>,
+    pub burn: Energy,
+    pub ticks: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnergyMarketLogisticsView {
+    pub system: SystemIdentityView,
+    pub stock: Energy,
+    pub capacity: Energy,
+    pub target: Energy,
+    pub offered: Energy,
+    pub requested: Energy,
+    pub inbound: Energy,
+    pub runway: u64,
+    pub stage: BrownoutStage,
+    pub cause: Option<EnergyStarvationCause>,
+    pub blocker: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnergyContractOpportunityView {
+    pub source: SystemIdentityView,
+    pub destination: SystemIdentityView,
+    pub maximum_gross_payload: Energy,
+    pub deadhead: EnergyRouteFactsView,
+    pub loaded: EnergyRouteFactsView,
+    pub recovery: EnergyRouteFactsView,
+    pub carrier_fee: Energy,
+    pub carrier_allocation: Energy,
+    pub net_delivery: Energy,
+    pub freight_rate_bps: u32,
+    pub expected_net_profit: Energy,
+    pub score: i128,
+    pub destination_runway_before: u64,
+    pub destination_runway_after: u64,
+    pub blocker: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActiveEnergyContractView {
+    pub id: ContractId,
+    pub state: EnergyContractState,
+    pub source: SystemIdentityView,
+    pub destination: SystemIdentityView,
+    pub carrier_id: ContentId,
+    pub carrier_name: String,
+    pub player_owned: bool,
+    pub gross_payload: Energy,
+    pub deadhead: EnergyRouteFactsView,
+    pub loaded: EnergyRouteFactsView,
+    pub recovery: EnergyRouteFactsView,
+    pub carrier_fee: Energy,
+    pub carrier_allocation: Energy,
+    pub net_delivery: Energy,
+    pub freight_rate_bps: u32,
+    pub expected_net_profit: Energy,
+    pub current_leg: Option<usize>,
+    pub remaining_ticks: Option<u32>,
+    pub locked_amount: Energy,
+    pub cumulative_settled: Energy,
+    pub converted_reimbursement: Energy,
+    pub converted_fee: Energy,
+    pub deadline: Option<u64>,
+    pub recovery_reserve: Energy,
+    pub latest_blocker: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PlayerEnergyStorageView {
+    pub tank: Energy,
+    pub tank_capacity: Energy,
+    pub owned_bulk: Energy,
+    pub locked_bulk: Energy,
+    pub locked_contract: Option<ContractId>,
+    pub bulk_used: Energy,
+    pub bulk_capacity: Energy,
+    pub owned_to_tank_maximum: Energy,
+    pub owned_to_market_maximum: Energy,
+    pub transfer_blocker: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EnergyLogisticsView {
+    pub markets: Vec<EnergyMarketLogisticsView>,
+    pub opportunities: Vec<EnergyContractOpportunityView>,
+    pub contracts: Vec<ActiveEnergyContractView>,
+    pub storage: PlayerEnergyStorageView,
+    pub diagnostics: EnergyLogisticsDiagnostics,
+}
+
 #[derive(Clone, Debug)]
 pub struct ApplicationView {
     pub tick: u64,
@@ -444,6 +552,7 @@ pub struct ApplicationView {
     pub dynamics: AggregateDynamicsView,
     pub player: PlayerStatusView,
     pub fleet: FleetView,
+    pub energy_logistics: EnergyLogisticsView,
     pub events: Vec<PresentationEvent>,
 }
 
@@ -506,7 +615,8 @@ pub fn spawn_with_encyclopedia(
         TickRate::Normal,
         &VecDeque::new(),
         &encyclopedia,
-    );
+    )
+    .expect("a validated initial session must produce an application view");
     let (request_tx, request_rx) = mpsc::channel(REQUEST_CAPACITY);
     let (view_tx, view_rx) = watch::channel(initial);
     let task = tokio::spawn(run_owner(
@@ -541,7 +651,7 @@ async fn run_owner(
             envelope = requests.recv() => {
                 let Some(envelope) = envelope else { break; };
                 let mut publish = true;
-                let result = match envelope.request {
+                let mut result = match envelope.request {
                     AppRequest::SetRunState(next) => {
                         state = match next {
                             RunControl::Paused => RunState::Paused,
@@ -559,7 +669,7 @@ async fn run_owner(
                     AppRequest::BeginTravel { destination } => session.submit(GameCommand::BeginTravel { destination }),
                     AppRequest::TravelUntilArrival { destination } => {
                         let player = session
-                            .snapshot()
+                            .try_snapshot()?
                             .traders
                             .into_iter()
                             .find(|trader| trader.player)
@@ -577,6 +687,10 @@ async fn run_owner(
                     AppRequest::CommitTrade { origin, destination, good, quantity } => session.submit(GameCommand::CommitTrade { origin, destination, good, quantity }),
                     AppRequest::DepositTank { amount } => session.submit(GameCommand::DepositTank { amount }),
                     AppRequest::WithdrawTank { amount } => session.submit(GameCommand::WithdrawTank { amount }),
+                    AppRequest::AcceptEnergyContract { source, destination, gross_payload } => session.submit(GameCommand::AcceptEnergyContract { source, destination, gross_payload }),
+                    AppRequest::CancelEnergyContract { contract_id } => session.submit(GameCommand::CancelEnergyContract { contract_id }),
+                    AppRequest::TransferOwnedBulkToTank { amount } => session.submit(GameCommand::TransferOwnedBulkToTank { amount }),
+                    AppRequest::DepositOwnedBulkEnergy { amount } => session.submit(GameCommand::DepositOwnedBulkEnergy { amount }),
                     AppRequest::SetMarketPolicy { system, policy } => session.submit(GameCommand::SetGovernorMarketPolicy { system, policy }),
                     AppRequest::SetInvestmentPolicy { system, policy } => session.submit(GameCommand::SetGovernorInvestmentPolicy { system, policy }),
                     AppRequest::SetMarketTarget { system, good, target } => session.submit(GameCommand::SetGovernorMarketTarget { system, good, target }),
@@ -584,18 +698,28 @@ async fn run_owner(
                     AppRequest::Shutdown => { let _ = envelope.reply.send(Ok(())); break; }
                 };
                 if result.is_err() { publish = true; }
-                collect_events(&mut session, &mut history, &mut next_event_sequence);
-                if publish { views.send_replace(build_view(&mut session, selected.clone(), state, rate, &history, &encyclopedia)); }
+                if let Err(error) = collect_events(&mut session, &mut history, &mut next_event_sequence)
+                    && result.is_ok()
+                {
+                    result = Err(error);
+                }
+                if publish {
+                    match build_view(&mut session, selected.clone(), state, rate, &history, &encyclopedia) {
+                        Ok(view) => { views.send_replace(view); }
+                        Err(error) if result.is_ok() => result = Err(error),
+                        Err(_) => {}
+                    }
+                }
                 let _ = envelope.reply.send(result);
             }
             _ = interval.tick(), if state != RunState::Paused => {
                 session.step()?;
-                collect_events(&mut session, &mut history, &mut next_event_sequence);
+                collect_events(&mut session, &mut history, &mut next_event_sequence)?;
                 if state == RunState::RunningUntilArrival
                     && let Some(target) = &arrival_target
                 {
                     let player = session
-                        .snapshot()
+                        .try_snapshot()?
                         .traders
                         .into_iter()
                         .find(|trader| trader.player)
@@ -605,7 +729,7 @@ async fn run_owner(
                         arrival_target = None;
                     }
                 }
-                views.send_replace(build_view(&mut session, selected.clone(), state, rate, &history, &encyclopedia));
+                views.send_replace(build_view(&mut session, selected.clone(), state, rate, &history, &encyclopedia)?);
             }
         }
     }
@@ -623,18 +747,40 @@ fn collect_events(
     session: &mut GameSession,
     history: &mut VecDeque<PresentationEvent>,
     next_sequence: &mut u64,
-) {
+) -> Result<(), CoreError> {
     let events = session.drain_events();
     if events.is_empty() {
-        return;
+        return Ok(());
     }
-    let snapshot = session.snapshot();
+    let snapshot = session.try_snapshot()?;
+    let systems = snapshot
+        .markets
+        .iter()
+        .map(|market| (market.system_id.clone(), market.name.clone()))
+        .collect::<BTreeMap<_, _>>();
     let labels = EventLabels {
-        systems: snapshot
-            .markets
-            .into_iter()
-            .map(|market| (market.system_id, market.name))
+        contracts: snapshot
+            .energy_contracts
+            .iter()
+            .map(|snapshot| {
+                let contract = &snapshot.contract;
+                (
+                    contract.id,
+                    EnergyContractEventLabels {
+                        source: systems
+                            .get(&contract.source)
+                            .cloned()
+                            .unwrap_or_else(|| "Unknown system".into()),
+                        destination: systems
+                            .get(&contract.destination)
+                            .cloned()
+                            .unwrap_or_else(|| "Unknown system".into()),
+                        state: contract.state,
+                    },
+                )
+            })
             .collect(),
+        systems,
         traders: snapshot
             .traders
             .into_iter()
@@ -666,6 +812,7 @@ fn collect_events(
             text: format_event(&event, &labels),
         });
     }
+    Ok(())
 }
 
 fn build_view(
@@ -675,8 +822,8 @@ fn build_view(
     tick_rate: TickRate,
     events: &VecDeque<PresentationEvent>,
     encyclopedia: &EncyclopediaView,
-) -> ApplicationView {
-    let snapshot = session.snapshot();
+) -> Result<ApplicationView, CoreError> {
+    let snapshot = session.try_snapshot()?;
     let player = snapshot
         .traders
         .iter()
@@ -1042,7 +1189,8 @@ fn build_view(
             name: market.name.clone(),
         },
     );
-    ApplicationView {
+    let energy_logistics = build_energy_logistics_view(&snapshot, &system_names, &player);
+    Ok(ApplicationView {
         tick: snapshot.tick,
         run_state,
         tick_rate,
@@ -1126,11 +1274,6 @@ fn build_view(
             location: player.system,
             tank_energy: player.energy_tank,
             tank_capacity: player.energy_tank_capacity,
-            bay_energy: player
-                .cargo
-                .get(&ContentId::new(ENERGY_ID).expect("constant energy id"))
-                .copied()
-                .unwrap_or(0),
             cargo: player
                 .cargo
                 .iter()
@@ -1176,6 +1319,7 @@ fn build_view(
             runway_jumps,
             traveling: player.travel.is_some(),
         },
+        energy_logistics,
         fleet: FleetView {
             active_npcs: snapshot
                 .traders
@@ -1188,7 +1332,199 @@ fn build_view(
             total_retirements: snapshot.dynamics_history.fleet_retirements,
         },
         events: events.iter().cloned().collect(),
+    })
+}
+
+fn build_energy_logistics_view(
+    snapshot: &game_core::CoreSnapshot,
+    system_names: &BTreeMap<ContentId, String>,
+    player: &game_core::TraderSnapshot,
+) -> EnergyLogisticsView {
+    let traders = snapshot
+        .traders
+        .iter()
+        .map(|trader| (trader.id.clone(), trader))
+        .collect::<BTreeMap<_, _>>();
+    let trader_names = snapshot
+        .traders
+        .iter()
+        .map(|trader| (trader.id.clone(), trader.name.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let identity = |id: &ContentId| SystemIdentityView {
+        id: id.clone(),
+        name: system_names
+            .get(id)
+            .cloned()
+            .expect("Energy logistics systems exist in the snapshot name map"),
+    };
+    let route = |route: &game_core::ContractRoute| EnergyRouteFactsView {
+        systems: route.systems.iter().map(&identity).collect(),
+        burn: route.burn,
+        ticks: route.ticks,
+    };
+
+    let markets = snapshot
+        .energy_markets
+        .iter()
+        .map(|market| EnergyMarketLogisticsView {
+            system: identity(&market.system),
+            stock: market.stock,
+            capacity: market.storage_cap,
+            target: market.target,
+            offered: market.offered,
+            requested: market.requested,
+            inbound: market.inbound,
+            runway: market.runway,
+            stage: market.stage,
+            cause: snapshot.energy_starvation.get(&market.system).copied(),
+            blocker: market.blocker.map(energy_contract_blocker_label),
+        })
+        .collect();
+    let opportunities = snapshot
+        .energy_opportunities
+        .iter()
+        .map(|opportunity| EnergyContractOpportunityView {
+            source: identity(&opportunity.source),
+            destination: identity(&opportunity.destination),
+            maximum_gross_payload: opportunity.maximum_gross_payload,
+            deadhead: route(&opportunity.deadhead_route),
+            loaded: route(&opportunity.loaded_route),
+            recovery: route(&opportunity.recovery_route),
+            // Core has already performed the fee arithmetic. Do not derive this
+            // presentation value again from basis points.
+            carrier_fee: opportunity.carrier_profit,
+            carrier_allocation: opportunity.carrier_allocation,
+            net_delivery: opportunity.net_delivery,
+            freight_rate_bps: opportunity.freight_rate_bps,
+            expected_net_profit: opportunity.expected_net_profit,
+            score: opportunity.score,
+            destination_runway_before: opportunity.destination_runway_before,
+            destination_runway_after: opportunity.destination_runway_after,
+            blocker: opportunity.blocker.map(energy_contract_blocker_label),
+        })
+        .collect();
+    let contracts: Vec<ActiveEnergyContractView> = snapshot
+        .energy_contracts
+        .iter()
+        .map(|contract_snapshot| {
+            let contract = &contract_snapshot.contract;
+            ActiveEnergyContractView {
+                id: contract.id,
+                state: contract.state,
+                source: identity(&contract.source),
+                destination: identity(&contract.destination),
+                carrier_id: contract.carrier.clone(),
+                carrier_name: trader_names
+                    .get(&contract.carrier)
+                    .cloned()
+                    .expect("Energy contract carriers exist in the snapshot name map"),
+                player_owned: contract.carrier == player.id,
+                gross_payload: contract.gross_payload,
+                deadhead: route(&contract.deadhead_route),
+                loaded: route(&contract.loaded_route),
+                recovery: route(&contract.recovery_route),
+                carrier_fee: contract.carrier_profit,
+                carrier_allocation: contract_snapshot.carrier_allocation,
+                net_delivery: contract.net_delivery,
+                freight_rate_bps: contract_snapshot.freight_rate_bps,
+                expected_net_profit: contract_snapshot.expected_net_profit,
+                current_leg: traders
+                    .get(&contract.carrier)
+                    .and_then(|trader| trader.travel.as_ref())
+                    .map(|travel| travel.next_leg),
+                remaining_ticks: traders
+                    .get(&contract.carrier)
+                    .and_then(|trader| trader.travel.as_ref())
+                    .map(|travel| travel.remaining_ticks),
+                locked_amount: contract_snapshot.locked_amount,
+                cumulative_settled: contract.cumulative_settled,
+                converted_reimbursement: contract_snapshot.converted_reimbursement,
+                converted_fee: contract_snapshot.converted_fee,
+                deadline: match contract.state {
+                    EnergyContractState::Arrived {
+                        settlement_deadline,
+                        ..
+                    } => Some(settlement_deadline),
+                    _ => None,
+                },
+                recovery_reserve: contract.recovery_route.burn,
+                latest_blocker: contract.latest_blocker.map(energy_contract_blocker_label),
+            }
+        })
+        .collect();
+    let locked = player.bulk_energy.locked;
+    let bulk_used = player
+        .bulk_energy
+        .used()
+        .expect("Core-valid player bulk Energy quantities remain reportable");
+    let active_contract = contracts.iter().any(|contract| contract.player_owned);
+    let transfer_blocker = if active_contract {
+        Some("active Energy contract".to_owned())
+    } else if player.travel.is_some() {
+        Some("trader is in transit".to_owned())
+    } else {
+        None
+    };
+    let tank_headroom = player
+        .energy_tank_capacity
+        .checked_sub(player.energy_tank)
+        .expect("Core-valid tank capacity remains reportable");
+    let owned_to_tank_maximum = if transfer_blocker.is_some() {
+        Energy::ZERO
+    } else {
+        Energy(player.bulk_energy.owned.0.min(tank_headroom.0))
+    };
+    let owned_to_market_maximum = if transfer_blocker.is_some() {
+        Energy::ZERO
+    } else {
+        snapshot
+            .markets
+            .iter()
+            .find(|market| market.system_id == player.system)
+            .map(|market| {
+                let headroom = market
+                    .energy_storage_cap
+                    .checked_sub(market.energy_stock)
+                    .expect("Core-valid market capacity remains reportable");
+                Energy(player.bulk_energy.owned.0.min(headroom.0))
+            })
+            .unwrap_or(Energy::ZERO)
+    };
+
+    EnergyLogisticsView {
+        markets,
+        opportunities,
+        contracts,
+        storage: PlayerEnergyStorageView {
+            tank: player.energy_tank,
+            tank_capacity: player.energy_tank_capacity,
+            owned_bulk: player.bulk_energy.owned,
+            locked_bulk: locked.map_or(Energy::ZERO, |lot| lot.amount),
+            locked_contract: locked.map(|lot| lot.contract_id),
+            bulk_used,
+            bulk_capacity: player.bulk_energy_capacity,
+            owned_to_tank_maximum,
+            owned_to_market_maximum,
+            transfer_blocker,
+        },
+        diagnostics: snapshot.energy_logistics.clone(),
     }
+}
+
+fn energy_contract_blocker_label(blocker: EnergyContractBlocker) -> String {
+    match blocker {
+        EnergyContractBlocker::NoReachableSurplus => "no reachable Energy surplus",
+        EnergyContractBlocker::NoViableCandidate => "no viable Energy delivery",
+        EnergyContractBlocker::ViableButUnaccepted => "viable delivery not accepted",
+        EnergyContractBlocker::ArrivedSettlementBlocked => "destination settlement blocked",
+        EnergyContractBlocker::AcceptedDeliveryPending => "accepted delivery pending",
+        EnergyContractBlocker::StaleMaximum => "requested payload exceeds the current maximum",
+        EnergyContractBlocker::SourceClaimRevoked => "source claim revoked",
+        EnergyContractBlocker::StorageHeadroom => "insufficient bulk storage headroom",
+        EnergyContractBlocker::RecoveryReserve => "insufficient recovery reserve",
+        EnergyContractBlocker::Integrity => "contract integrity check failed",
+    }
+    .into()
 }
 
 fn build_production_capabilities(
@@ -1240,6 +1576,7 @@ fn build_market_rows(
         .catalog()
         .goods
         .values()
+        .filter(|good| good.id.as_str() != ENERGY_ID)
         .map(|good| (good.id.clone(), good.name.clone()))
         .collect::<Vec<_>>();
     goods
@@ -1387,11 +1724,18 @@ fn build_route_view(
     }
 }
 
+struct EnergyContractEventLabels {
+    source: String,
+    destination: String,
+    state: EnergyContractState,
+}
+
 struct EventLabels {
     systems: BTreeMap<ContentId, String>,
     traders: BTreeMap<ContentId, String>,
     goods: BTreeMap<ContentId, String>,
     recipes: BTreeMap<ContentId, String>,
+    contracts: BTreeMap<ContractId, EnergyContractEventLabels>,
 }
 
 impl EventLabels {
@@ -1421,7 +1765,7 @@ impl EventLabels {
 fn format_event(event: &GameEvent, labels: &EventLabels) -> String {
     match event {
         GameEvent::TickAdvanced(tick) => format!("Tick {tick}"),
-        GameEvent::EnergyLogistics(event) => format!("Energy logistics: {event:?}"),
+        GameEvent::EnergyLogistics(event) => format_energy_contract_event(event, labels),
         GameEvent::EnergyGenerated {
             system,
             amount,
@@ -1616,6 +1960,145 @@ fn format_event(event: &GameEvent, labels: &EventLabels) -> String {
     }
 }
 
+fn format_energy_contract_event(event: &EnergyContractEvent, labels: &EventLabels) -> String {
+    match event {
+        EnergyContractEvent::Accepted { contract_id } => {
+            labels.contracts.get(contract_id).map_or_else(
+                || format!("Energy contract {} accepted", contract_id.get()),
+                |contract| {
+                    format!(
+                        "Energy contract {} accepted from {} to {}",
+                        contract_id.get(),
+                        contract.source,
+                        contract.destination
+                    )
+                },
+            )
+        }
+        EnergyContractEvent::Loaded { contract_id } => {
+            labels.contracts.get(contract_id).map_or_else(
+                || format!("Energy contract {} loaded", contract_id.get()),
+                |contract| {
+                    format!(
+                        "Energy contract {} loaded at {} for delivery to {}",
+                        contract_id.get(),
+                        contract.source,
+                        contract.destination
+                    )
+                },
+            )
+        }
+        EnergyContractEvent::Departed { contract_id } => {
+            labels.contracts.get(contract_id).map_or_else(
+                || format!("Energy contract {} departed", contract_id.get()),
+                |contract| match contract.state {
+                    EnergyContractState::DeadheadingToSource { .. } => format!(
+                        "Energy contract {} departed for pickup at {} before delivery to {}",
+                        contract_id.get(),
+                        contract.source,
+                        contract.destination
+                    ),
+                    EnergyContractState::InTransit { .. } | EnergyContractState::Arrived { .. } => {
+                        format!(
+                            "Energy contract {} departed {} for {}",
+                            contract_id.get(),
+                            contract.source,
+                            contract.destination
+                        )
+                    }
+                    EnergyContractState::Recovering { .. } => format!(
+                        "Energy contract {} departed {} for recovery at {}",
+                        contract_id.get(),
+                        contract.destination,
+                        contract.source
+                    ),
+                },
+            )
+        }
+        EnergyContractEvent::Settled {
+            contract_id,
+            amount,
+        } => labels.contracts.get(contract_id).map_or_else(
+            || {
+                format!(
+                    "Energy contract {} settled {} Energy",
+                    contract_id.get(),
+                    amount.0
+                )
+            },
+            |contract| {
+                format!(
+                    "Energy contract {} settled {} Energy at {}",
+                    contract_id.get(),
+                    amount.0,
+                    contract.destination
+                )
+            },
+        ),
+        EnergyContractEvent::RecoveryCurtailed {
+            contract_id,
+            source,
+            amount,
+        } => format!(
+            "Energy contract {} recovery curtailed {} Energy at {}",
+            contract_id.get(),
+            amount.0,
+            labels.system(source)
+        ),
+        EnergyContractEvent::Terminal {
+            contract_id,
+            outcome,
+        } => format!(
+            "Energy contract {} {}",
+            contract_id.get(),
+            energy_contract_outcome_label(*outcome)
+        ),
+        EnergyContractEvent::Rejected {
+            blocker,
+            current_maximum,
+        } => current_maximum.map_or_else(
+            || {
+                format!(
+                    "Energy contract rejected: {}",
+                    energy_contract_blocker_label(*blocker)
+                )
+            },
+            |maximum| {
+                format!(
+                    "Energy contract rejected: {} (current maximum {} Energy)",
+                    energy_contract_blocker_label(*blocker),
+                    maximum.0
+                )
+            },
+        ),
+        EnergyContractEvent::OwnedBulkTransferredToTank { trader, amount } => format!(
+            "{} transferred {} owned bulk Energy to the tank",
+            labels.trader(trader),
+            amount.0
+        ),
+        EnergyContractEvent::OwnedBulkDepositedToMarket {
+            trader,
+            system,
+            amount,
+        } => format!(
+            "{} deposited {} owned bulk Energy at {}",
+            labels.trader(trader),
+            amount.0,
+            labels.system(system)
+        ),
+    }
+}
+
+fn energy_contract_outcome_label(outcome: EnergyContractTerminalOutcome) -> &'static str {
+    match outcome {
+        EnergyContractTerminalOutcome::Completed => "completed",
+        EnergyContractTerminalOutcome::CancelledBeforeLoad => "cancelled before loading",
+        EnergyContractTerminalOutcome::RevokedBeforeLoad => "revoked before loading",
+        EnergyContractTerminalOutcome::RejectedBeforeLoad => "rejected before loading",
+        EnergyContractTerminalOutcome::RecoveredAfterFailure => "recovered after failed delivery",
+    }
+}
+
 fn reservation_status(status: ReservationStatus) -> &'static str {
     match status {
         ReservationStatus::Active => "active",
@@ -1729,6 +2212,7 @@ mod tests {
     fn event_formatter_resolves_all_player_facing_labels() {
         let labels = EventLabels {
             systems: BTreeMap::from([(id("core:s0"), "Aster Reach".into())]),
+            contracts: BTreeMap::new(),
             traders: BTreeMap::from([(id("core:player"), "Free Trader".into())]),
             goods: BTreeMap::from([(id("core:ore"), "Ferrite Ore".into())]),
             recipes: BTreeMap::from([(id("core:smelt"), "Alloy Smelting".into())]),
@@ -1897,7 +2381,14 @@ mod tests {
         let initial = handle.views.borrow().clone();
         assert_eq!(initial.systems.len(), 2);
         assert_eq!(initial.systems[0].connections[0].system_name, "S1");
-        assert_eq!(initial.inspection.market.len(), 2);
+        assert_eq!(initial.inspection.market.len(), 1);
+        assert!(
+            initial
+                .inspection
+                .market
+                .iter()
+                .all(|row| row.good_id.as_str() != ENERGY_ID)
+        );
         assert_eq!(initial.player.energy_value_rank, 1);
         assert_eq!(initial.player.energy_value_share_percent, 100.0);
         assert_eq!(
@@ -2432,6 +2923,105 @@ mod tests {
                 .collect::<Vec<_>>(),
             before_quotes
         );
+        handle.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn energy_contract_requests_publish_resolved_immutable_views() {
+        let mut configured = definition();
+        configured.systems[0].inventory.insert(id(ENERGY_ID), 5_000);
+        configured.systems[0].energy_storage_cap = Energy(5_000);
+        configured.systems[0].energy_logistics.authored_export_base = Energy(500);
+        configured.systems[1].inventory.insert(id(ENERGY_ID), 100);
+        configured.systems[1].energy_storage_cap = Energy(5_000);
+        configured.systems[1].targets.insert(id(ENERGY_ID), 1_000);
+        configured.systems[1].energy_logistics.carrier_fee_bps = game_core::CarrierFeeSchedule {
+            normal: 1_000,
+            throttled: 1_100,
+            emergency: 1_200,
+            starvation: 1_300,
+        };
+        configured.systems[1].energy_logistics.max_allocation_bps = 2_000;
+        configured.traders[0].energy_tank = Energy(1_000);
+        configured.traders[0].energy_tank_capacity = Energy(1_000);
+        configured.traders[0].bulk_energy_capacity = Energy(1_000);
+        let handle = spawn(GameSession::new(configured).unwrap());
+
+        let initial = handle.views.borrow().clone();
+        assert_eq!(initial.energy_logistics.markets.len(), 2);
+        let opportunity = initial
+            .energy_logistics
+            .opportunities
+            .iter()
+            .find(|opportunity| {
+                opportunity.source.id == id("core:s0")
+                    && opportunity.destination.id == id("core:s1")
+            })
+            .unwrap();
+        assert_eq!(opportunity.source.name, "S0");
+        assert_eq!(opportunity.destination.name, "S1");
+        assert_eq!(opportunity.maximum_gross_payload, Energy(681));
+        assert_eq!(initial.energy_logistics.storage.tank, Energy(1_000));
+        assert_eq!(initial.energy_logistics.storage.owned_bulk, Energy::ZERO);
+
+        handle
+            .request(AppRequest::AcceptEnergyContract {
+                source: id("core:s0"),
+                destination: id("core:s1"),
+                gross_payload: Energy(300),
+            })
+            .await
+            .unwrap();
+        handle.request(AppRequest::Step).await.unwrap();
+        let accepted = handle.views.borrow().clone();
+        assert_eq!(accepted.energy_logistics.contracts.len(), 1);
+        let contract = &accepted.energy_logistics.contracts[0];
+        assert_eq!(contract.source.name, "S0");
+        assert_eq!(contract.destination.name, "S1");
+        assert_eq!(contract.locked_amount, Energy(300));
+        assert_eq!(accepted.energy_logistics.storage.locked_bulk, Energy(300));
+        assert_eq!(
+            accepted.energy_logistics.storage.locked_contract,
+            Some(contract.id)
+        );
+        assert!(
+            accepted
+                .events
+                .iter()
+                .any(|event| event.contains("Energy contract") && event.contains("S1"))
+        );
+
+        handle.request(AppRequest::Step).await.unwrap();
+        let completed = handle.views.borrow().clone();
+        assert_eq!(completed.energy_logistics.storage.owned_bulk, Energy(30));
+        assert_eq!(
+            completed.energy_logistics.storage.owned_to_market_maximum,
+            Energy(30)
+        );
+        assert_eq!(
+            completed.energy_logistics.storage.owned_to_tank_maximum,
+            Energy::ZERO
+        );
+        handle
+            .request(AppRequest::DepositOwnedBulkEnergy { amount: Energy(10) })
+            .await
+            .unwrap();
+        assert_eq!(
+            handle.views.borrow().energy_logistics.storage.owned_bulk,
+            Energy(20)
+        );
+        handle
+            .request(AppRequest::DepositTank { amount: Energy(1) })
+            .await
+            .unwrap();
+        handle
+            .request(AppRequest::TransferOwnedBulkToTank { amount: Energy(1) })
+            .await
+            .unwrap();
+        let transferred = handle.views.borrow().clone();
+        assert_eq!(transferred.energy_logistics.storage.tank, Energy(1_000));
+        assert_eq!(transferred.energy_logistics.storage.owned_bulk, Energy(19));
+
         handle.shutdown().await.unwrap();
     }
 
