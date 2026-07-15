@@ -19,7 +19,10 @@ The accepted foundation is unchanged: Energy is physical. The game does not add 
 
 Ordinary Energy-for-Energy market trading is removed and replaced with **bulk Energy delivery contracts**. A source system consigns surplus Energy to a carrier; the carrier transports it; the destination receives the payload minus a small **carrier allocation** (route-burn reimbursement plus a profit fee). No Energy is ever bought with Energy.
 
-The single legible number in the system is the **freight rate**: the carrier allocation as a fraction of payload, displayed in percent or basis points. It is the tuning knob, the UI headline, and the urgency signal.
+Two related percentages exist and must never be conflated in code, content, or UI:
+
+- **Carrier fee** — the authored, urgency-scaled profit percentage (`carrier_fee_bps`). This is the tuning knob.
+- **Freight rate** — the all-in displayed number: total carrier allocation (fee + burn reimbursement) as a fraction of payload. This is the UI headline and diagnostic value.
 
 The player-facing story, to be used consistently in UI, encyclopedia, and docs:
 
@@ -77,7 +80,7 @@ projected_glut  = max(0, stock + (generation − burn) × W − energy_storage_c
 offered_payload = min(exportable, projected_glut + authored_export_base)
 ```
 
-  where `W` is an authored `curtailment_projection_window` in ticks, `export_reserve` and `authored_export_base` are authored per-system with global defaults, and all arithmetic is checked integer math.
+  where `W` is an authored `curtailment_projection_window` in ticks, `export_reserve` and `authored_export_base` are authored per-system with global defaults, and all arithmetic is checked integer math. `burn` means the system's deterministic per-tick sinks only — life support plus source/recipe operating burn — not speculative outflows such as pending trades or contracts (those are already excluded via `active_claims`).
 - A system far from its cap with no authored export base offers nothing. Energy supply is therefore **supply-driven**: a needy destination can escalate its request, but nothing flows unless surplus exists somewhere. This is intended behavior for this slice; systems dying for lack of surplus are handled later by service fleets.
 - The vague "authored willingness to support a connected destination" clause from the first draft is replaced by the concrete `authored_export_base` knob (default 0).
 
@@ -85,8 +88,8 @@ offered_payload = min(exportable, projected_glut + authored_export_base)
 
 There is no per-contract negotiation. The carrier's profit fee is set deterministically from the destination's current brownout stage via an authored schedule:
 
-- `freight_profit_bps`: authored per brownout stage (Nominal, Throttled, Emergency, Starvation), global defaults with optional per-system override. Illustrative only: 50 / 100 / 200 / 300 bps.
-- `carrier_profit = floor(payload × freight_profit_bps / 10,000)`
+- `carrier_fee_bps`: authored per brownout stage, global defaults with optional per-system override. Illustrative only: 50 / 100 / 200 / 300 bps for healthy / Throttled / Emergency / Starvation. The schedule schema must use whatever representation `game-core` actually has for the healthy (non-brownout) state rather than inventing a new "Nominal" stage name.
+- `carrier_profit = floor(payload × carrier_fee_bps / 10,000)`
 - `carrier_allocation = planned_route_burn + carrier_profit`
 - `net_destination_delivery = payload − carrier_allocation`
 
@@ -128,17 +131,26 @@ Matching uses the destination's *projected* headroom (current headroom plus proj
 
 ### D7. Carrier allocation settles from cargo already aboard
 
-The allocation units are physically part of the payload in the bulk hold, so settlement cannot lose them:
+The allocation units are physically part of the payload in the bulk hold, so settlement cannot lose them. On a full settlement the carrier receives the entire allocation. On a partial settlement the allocation converts **proportionally to the settled quantity**, in this order:
 
-1. Transfer `min(payload − carrier_allocation, actual destination headroom)` from the `ContractLocked` lot into destination storage.
-2. Convert `carrier_allocation` units from `ContractLocked` to trader property: into the tank up to tank headroom (a docked bulk→tank move), remainder becomes an `Owned` bulk lot.
-3. Any undelivered remainder (destination headroom shortfall) stays `ContractLocked` and follows D8.
+1. Transfer `min(net_destination_delivery, actual destination headroom)` from the `ContractLocked` lot into destination storage; call the amount actually transferred `settled`.
+2. Convert allocation units from `ContractLocked` to trader property, burn reimbursement first, then fee pro-rata:
+   - Reimbursement converts in full on the first settlement event, whatever `settled` is — the carrier genuinely spent that fuel.
+   - Fee converts as `floor(carrier_profit × cumulative_settled / net_destination_delivery)`, minus fee already converted on earlier retries.
+   - Converted units go to the tank up to tank headroom (a docked bulk→tank move); the remainder becomes an `Owned` bulk lot.
+3. Any undelivered remainder stays `ContractLocked` and follows D8. Unconverted fee travels with the recovery consignment back to the source; the carrier is never paid profit for Energy it did not deliver.
 
-No step can create or destroy Energy; each claim releases exactly once.
+No step can create or destroy Energy; each claim releases exactly once; retries (D8) use `cumulative_settled` so repeated partial settlements never double-pay the fee.
 
 ### D8. Settlement shortfall and stranded-cargo recovery
 
-If actual destination headroom cannot absorb the full net delivery at arrival, the carrier remains docked and the contract remains `Arrived`; settlement retries each tick as the destination burns down its stock. If the contract is not fully settled within an authored `settlement_timeout_ticks`, it transitions to `Failed`, and the remaining `ContractLocked` lot converts to a zero-profit **recovery consignment** back to the source (reimbursed planned burn only). This is the only path by which locked cargo changes destination, and it never becomes trader-owned.
+If actual destination headroom cannot absorb the full net delivery at arrival, the carrier remains docked and the contract remains `Arrived`; settlement retries each tick as the destination burns down its stock. If the contract is not fully settled within an authored `settlement_timeout_ticks`, it transitions to `Failed`, and the remaining `ContractLocked` lot converts to a zero-fee **recovery consignment** back to the source. Three rules make recovery safe:
+
+1. **Recovery fuel is pre-paid.** At recovery initiation, the planned return burn converts from the locked lot into the carrier's tank immediately (bounded by tank headroom, remainder as an `Owned` lot). The carrier may otherwise be unable to fly: it can have burned its tank down waiting, and a deficient destination's exportable surplus — the only pool withdrawals may draw from under D5 — is zero by definition.
+2. **Recovery terminates.** A recovery consignment's settlement at the source may overflow into curtailment: whatever the source's storage cannot absorb is ledgered as curtailed waste, exactly like generation overflow. This deliberately bends "insufficient capacity never deletes" — curtailment-at-cap is already an accepted, reconciled loss channel in the foundation design — and it guarantees every contract reaches `Completed` or a fully unwound `Failed` state. Recovery consignments never spawn further recovery consignments.
+3. **Anti-strand still covers contract carriers.** The foundation slice's anti-strand guarantee must be restated to include carriers whose only cargo is `ContractLocked`: locked lots are not liquidatable, so the "sell a sub-quantity to fund a jump" escape does not apply to a pure hauler with an empty general hold. Rules 1 and 2, plus departure validation (a carrier may not accept a contract it cannot fuel round-trip to the nearest refuel-eligible system), are the mechanisms that satisfy the guarantee; the implementing agent must verify no remaining path leaves a contract carrier with an empty tank, no exportable surplus, and no pre-paid recovery fuel.
+
+Recovery is the only path by which locked cargo changes destination, and locked cargo never becomes trader-owned except through the D7 allocation conversion.
 
 ### D9. No trust or reputation modeling for player carriers
 
@@ -151,6 +163,17 @@ Long-run diagnostics must separately report, per deficient destination: (a) tick
 ### D11. Presentation commits to the unit-of-account story
 
 The Energy market row stops showing bid/ask and shows logistics state: stock, cap, runway, brownout stage, open request, open offer. Encyclopedia, help, and README adopt the sentence in the Summary. There must not be two live explanations of Energy trade.
+
+### D12. Matching order is fully specified
+
+Same-tick contract matching resolves in one deterministic total order. Candidate (request, offer, carrier) triples that pass D3 viability are sorted by:
+
+1. Destination brownout stage, most severe first.
+2. Destination projected runway, ascending.
+3. Payload, descending.
+4. Destination stable ID, then source stable ID, then carrier stable ID, ascending.
+
+After each acceptance, the source's protections (D1) and the carrier's availability are re-checked before the next candidate is considered. The specific key order above is tunable content-facing policy; that a documented, tested total order exists is not. The implementing agent must not substitute a different order without updating this decision.
 
 ## Proposed Model
 
@@ -170,14 +193,14 @@ Diplomacy, taxation, factions, and alliance obligations remain outside this plan
 
 ### 3. Contract record
 
-A contract records at least: source, destination, carrier; gross payload; planned route and `planned_route_burn` (D4); `freight_profit_bps` captured at acceptance (D2); `carrier_allocation` and `net_destination_delivery`; the source claim; lifecycle state and timestamps; and the `ContractLocked` lot reference once loaded.
+A contract records at least: source, destination, carrier; gross payload; planned route and `planned_route_burn` (D4); `carrier_fee_bps` captured at acceptance (D2); `carrier_allocation` and `net_destination_delivery`; the source claim; lifecycle state and timestamps; and the `ContractLocked` lot reference once loaded.
 
 Worked example:
 
 ```text
 payload:                  10,000 Energy
 planned route burn:           20 Energy
-freight_profit_bps:          100 (1%)
+carrier_fee_bps:          100 (1%)
 carrier profit:              100 Energy
 carrier allocation:          120 Energy
 net destination delivery:  9,880 Energy
@@ -215,7 +238,7 @@ Ship roles are content-defined configurations, not behavioral subclasses. Trader
 | Energy hauler | Medium | Low | Very high | Low-margin bulk contracts |
 | Long-range hauler | High | Low/medium | High | Expensive remote logistics |
 
-No ship-selection or construction UI is required in this slice. The content model must simply stop assuming every trader has the same capacity profile. NPC opportunity scoring must evaluate Energy contracts and ordinary goods trades on a comparable basis (expected profit per tick) so haulers emerge from configuration rather than special-cased AI.
+No ship-selection or construction UI is required in this slice. The content model must simply stop assuming every trader has the same capacity profile. NPC opportunity scoring must evaluate Energy contracts and ordinary goods trades on a comparable basis (expected profit per tick) so haulers emerge from configuration rather than special-cased AI. That scoring must include the **deadhead leg**: travel burn from the carrier's current position to the source is real, unreimbursed tank cost (D4 reimburses the loaded leg only), and omitting it would make NPCs systematically overvalue distant contracts.
 
 ### 6. System storage
 
@@ -270,6 +293,7 @@ Full replacement of ordinary inter-system Energy trading:
 - Ordinary Energy-denominated trade for non-Energy goods is unchanged.
 - Direct transfers adapt to D5 semantics.
 - Documentation and encyclopedia are updated in the same change (D11); no parallel explanations.
+- Remove config that only made sense in the bid/ask Energy world rather than leaving it as zombie policy. Known instances in `content/economy_config.ron`: the `core:energy` entry in `import_priorities`, and `emergency_energy_bid_ceiling` in `brownouts`. The implementing agent should sweep for any other Energy-quote-specific knobs during Phase 2.
 - No save migration; persistence does not exist.
 
 The existing RouteSubsidy investment may later influence the fee schedule but is not assumed here. It must never make a deficient destination pay more Energy from existing stock to receive Energy.
@@ -278,10 +302,10 @@ The existing RouteSubsidy investment may later influence the fee schedule but is
 
 ### Commercial delivery, happy path
 
-1. A destination in deficit publishes a request; its brownout stage selects `freight_profit_bps` (D2).
+1. A destination in deficit publishes a request; its brownout stage selects `carrier_fee_bps` (D2).
 2. A source near curtailment publishes `offered_payload` (D1).
 3. A carrier with bulk capacity and tank fuel evaluates payload, planned burn, profit, and timing; D3 viability passes.
-4. Acceptance claims source Energy in stable order (score, then stable IDs — same contention discipline as existing reservations).
+4. Acceptance claims source Energy in the D12 total order — same contention discipline as existing reservations.
 5. Loading and departure execute atomically; the payload becomes a `ContractLocked` lot.
 6. Travel burns only tank Energy.
 7. Arrival settles per D7; shortfall follows D8.
@@ -294,7 +318,7 @@ The existing RouteSubsidy investment may later influence the fee schedule but is
 - **Source distress before loading:** revoke per lifecycle rules; loaded cargo is never revoked.
 - **Destination fills during transit:** partial settlement, retry, then recovery (D6, D8).
 - **Allocation exceeds tank headroom:** remainder becomes an `Owned` bulk lot (D7); nothing is lost.
-- **Several contracts compete for one source:** stable-order resolution; the source's protections are re-checked after each acceptance.
+- **Several contracts compete for one source:** D12 total order; the source's protections are re-checked after each acceptance.
 - **Player cancels after loading:** cancellation is not available after loading; the contract must be delivered or fail into D8 recovery.
 
 ## Remaining Open Questions
@@ -329,7 +353,8 @@ Implementation must not begin until Phase 0 confirms the arithmetic and the stor
 
 - [ ] Remove `core:energy` from ordinary bid/ask route planning, quoting, and settlement; bound refuel withdrawals by exportable surplus (D5).
 - [ ] Implement request/offer computation, matching, loading, transit, settlement, retry, and recovery.
-- [ ] Integrate contract opportunities into NPC opportunity scoring on a profit-per-tick basis.
+- [ ] Integrate contract opportunities into NPC opportunity scoring on a profit-per-tick basis, including the deadhead leg.
+- [ ] Ensure contract profits feed the dynamic-NPC spawn/retirement signal (`opportunity_threshold` and friends in `content/traders.ron`); otherwise sustained hauling demand will never spawn haulers.
 - [ ] Preserve ordinary-goods pricing and funded settlement unchanged.
 
 ### Phase 3: Views, diagnostics, and tuning
@@ -347,6 +372,7 @@ Implementation must not begin until Phase 0 confirms the arithmetic and the stor
 - [ ] Contract cargo cannot be spent, burned, redirected, transferred to tank, or cancelled into trader-owned Energy (D5).
 - [ ] No proceeds or cargo disappear under any capacity shortfall (D7, D8).
 - [ ] Source protections, claims, and locked lots release exactly once per contract, on every lifecycle path.
+- [ ] A carrier is never paid fee for Energy it did not deliver (D7), and every contract terminates — no recovery loops and no stranded contract carriers (D8).
 - [ ] A higher brownout stage yields a higher carrier fee for otherwise identical contracts (D2), and diagnostics show carriers preferentially serving urgent destinations.
 - [ ] Diagnostics separate no-surplus starvation from no-viable-carrier starvation (D10).
 - [ ] Ordinary-goods trade remains active and unchanged.
@@ -374,15 +400,16 @@ The desired result is not that every request is served. It is that accepted Ener
 - Fee, allocation, and net-delivery arithmetic (D2), including overflow boundaries and floor rounding at small and large payloads.
 - D3 viability rejection when allocation exceeds `max_allocation_bps`, including the burn-dominated small-payload case.
 - Offered-payload protection under every reserve and claim (D1), including zero and negative projected glut.
-- Settlement split and allocation conversion (D7) at every combination of destination headroom, tank headroom, and bulk state.
-- Stable ordering of competing contracts.
+- Settlement split and proportional allocation conversion (D7) at every combination of destination headroom, tank headroom, and bulk state, including multi-retry sequences that must never double-pay reimbursement or fee.
+- D12 total order, including ties at every key level.
 
 ### Integration tests
 
 - Full source → carrier → destination contract with exact ledger reconciliation.
 - Zero-stock destination receives positive Energy.
 - Source revocation before loading; impossibility of revocation after loading.
-- Destination fills during transit → partial settlement → retry → timeout → recovery consignment (D8), conserving Energy throughout.
+- Destination fills during transit → partial settlement → retry → timeout → recovery consignment (D8), conserving Energy throughout; verify pre-paid recovery fuel, pro-rata fee return, and source-side curtailment overflow when the source is at cap.
+- A contract carrier waiting at a zero-surplus destination is never left unable to move (D8 rule 3).
 - ContractLocked cargo rejected from spending, travel burn, tank transfer, and cancellation paths (D5).
 - Refuel withdrawal bounded by exportable surplus (D5).
 - Ordinary goods continue trading while Energy contracts operate.
