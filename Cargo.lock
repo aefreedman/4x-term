@@ -744,7 +744,7 @@ dependencies = [
 
 [[package]]
 name = "game-app"
-version = "0.1.0"
+version = "0.7.0"
 dependencies = [
  "game-core",
  "thiserror 2.0.18",
@@ -753,7 +753,7 @@ dependencies = [
 
 [[package]]
 name = "game-cli"
-version = "0.1.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "game-app",
@@ -767,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "game-content"
-version = "0.1.0"
+version = "0.7.0"
 dependencies = [
  "game-core",
  "ron",
@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "game-core"
-version = "0.1.0"
+version = "0.7.0"
 dependencies = [
  "bevy_ecs",
  "thiserror 2.0.18",
@@ -785,7 +785,7 @@ dependencies = [
 
 [[package]]
 name = "game-tui"
-version = "0.1.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "crossterm",
