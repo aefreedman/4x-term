@@ -5,8 +5,9 @@ pub mod state;
 
 pub use input::{InputAction, route_key};
 pub use state::{
-    Activity, InputLayer, LayoutClass, SortDirection, SystemDetailKind, SystemOrderItem,
-    SystemSortKey, TradeOrderSide, TradeRegion, UiState, classify_layout, order_systems,
+    Activity, AmountAction, InputLayer, LayoutClass, LogisticsRegion, SortDirection,
+    SystemDetailKind, SystemOrderItem, SystemSortKey, TradeRegion, UiState, classify_layout,
+    order_systems,
 };
 
 use anyhow::Result;
@@ -179,110 +180,113 @@ async fn handle_key_for_layout(
         InputAction::None => return Ok(false),
         InputAction::Quit => return Ok(true),
         InputAction::CloseLayer => {
-            match ui.input_layer {
-                InputLayer::Quantity => {
-                    ui.quantity_input = None;
-                    ui.message = "Preset quantity unchanged".into();
-                }
-                InputLayer::Order => {
-                    ui.quantity_input = None;
-                    ui.trade_order_side = None;
-                    ui.trade_order_good = None;
-                    ui.message = "Trade order cancelled".into();
-                }
-                InputLayer::Help | InputLayer::Detail | InputLayer::Root => {}
+            if ui.input_layer == InputLayer::Amount {
+                ui.amount_input = None;
+                ui.amount_action = None;
+                ui.message = "Amount entry cancelled".into();
             }
             ui.input_layer = InputLayer::Root;
         }
-        InputAction::QuantityDigit(digit) => {
-            if let Some(input) = &mut ui.quantity_input
-                && input.len() < 10
+        InputAction::AmountDigit(digit) => {
+            if let Some(input) = &mut ui.amount_input
+                && input.len() < 19
             {
                 input.push(digit);
             }
         }
-        InputAction::QuantityBackspace => {
-            if let Some(input) = &mut ui.quantity_input {
+        InputAction::AmountBackspace => {
+            if let Some(input) = &mut ui.amount_input {
                 input.pop();
             }
         }
-        InputAction::ConfirmQuantity => {
-            let quantity = ui
-                .quantity_input
-                .as_deref()
-                .unwrap_or_default()
-                .parse::<u32>()
-                .unwrap_or(1)
-                .max(1);
-            ui.trade_quantity = quantity;
-            ui.quantity_input = None;
-            ui.input_layer = InputLayer::Root;
-            ui.message = format!("Preset quantity set to {quantity}");
-        }
-        InputAction::UseOrderMaximum => {
-            if let (Some(side), Some(row)) = (ui.trade_order_side, trade_order_row(view, ui)) {
-                let limit = trade_order_limit(view, row, side);
+        InputAction::UseAmountMaximum => {
+            if let Some(action) = ui.amount_action.as_ref() {
+                let limit = amount_action_limit(view, action);
                 if limit.maximum > 0 {
-                    ui.quantity_input = Some(limit.maximum.to_string());
+                    ui.amount_input = Some(limit.maximum.to_string());
                 } else {
                     ui.message = limit.reason;
                 }
             }
         }
-        InputAction::ConfirmOrder => {
-            let input = ui.quantity_input.as_deref().unwrap_or_default();
-            let Ok(requested) = input.parse::<u32>() else {
+        InputAction::ConfirmAmount => {
+            let input = ui.amount_input.as_deref().unwrap_or_default();
+            let Ok(requested) = input.parse::<u64>() else {
                 ui.message = if input.is_empty() {
-                    "Enter a quantity greater than zero".into()
+                    "Enter an amount greater than zero".into()
                 } else {
-                    "Quantity is outside the supported range".into()
+                    "Amount is outside the supported range".into()
                 };
                 return Ok(false);
             };
-            let Some(side) = ui.trade_order_side else {
+            let Some(action) = ui.amount_action.clone() else {
                 ui.input_layer = InputLayer::Root;
                 return Ok(false);
             };
-            let Some(row) = trade_order_row(view, ui) else {
-                ui.message = "The selected order good is no longer available".into();
-                return Ok(false);
-            };
-            let limit = trade_order_limit(view, row, side);
+            let limit = amount_action_limit(view, &action);
             if requested == 0 {
-                ui.message = "Enter a quantity greater than zero".into();
-            } else if requested > limit.maximum {
+                ui.message = "Enter an amount greater than zero".into();
+                return Ok(false);
+            }
+            if requested > limit.maximum {
                 ui.message = format!(
                     "Requested {requested}; maximum is {} ({})",
                     limit.maximum, limit.reason
                 );
-            } else {
-                let request = match side {
-                    TradeOrderSide::Buy => AppRequest::Buy {
-                        good: row.good_id.clone(),
-                        quantity: requested,
-                    },
-                    TradeOrderSide::Sell => AppRequest::Sell {
-                        good: row.good_id.clone(),
-                        quantity: requested,
-                    },
-                };
-                match app.request(request).await {
-                    Ok(()) => {
-                        ui.message = format!(
-                            "{} {} ×{requested}",
-                            match side {
-                                TradeOrderSide::Buy => "Bought",
-                                TradeOrderSide::Sell => "Sold",
-                            },
-                            row.name
-                        );
-                        ui.quantity_input = None;
-                        ui.trade_order_side = None;
-                        ui.trade_order_good = None;
-                        ui.input_layer = InputLayer::Root;
-                    }
-                    Err(error) => ui.message = error.to_string(),
+                return Ok(false);
+            }
+            let (request, success) = match action {
+                AmountAction::Buy { good } => {
+                    let Some(row) = ordinary_market_row_by_good(view, &good) else {
+                        ui.message = "The selected good is no longer available".into();
+                        return Ok(false);
+                    };
+                    let quantity =
+                        u32::try_from(requested).expect("buy maximum is bounded by a u32 quantity");
+                    (
+                        AppRequest::Buy { good, quantity },
+                        format!("Bought {} ×{quantity}", row.name),
+                    )
                 }
+                AmountAction::Sell { good } => {
+                    let Some(row) = ordinary_market_row_by_good(view, &good) else {
+                        ui.message = "The selected good is no longer available".into();
+                        return Ok(false);
+                    };
+                    let quantity = u32::try_from(requested)
+                        .expect("sell maximum is bounded by a u32 quantity");
+                    (
+                        AppRequest::Sell { good, quantity },
+                        format!("Sold {} ×{quantity}", row.name),
+                    )
+                }
+                AmountAction::OwnedBulkToTank => {
+                    let amount = game_app::Energy(
+                        i64::try_from(requested).expect("transfer maximum is bounded by Energy"),
+                    );
+                    (
+                        AppRequest::TransferOwnedBulkToTank { amount },
+                        format!("Transferred {} E from owned bulk to tank", amount.0),
+                    )
+                }
+                AmountAction::OwnedBulkToMarket => {
+                    let amount = game_app::Energy(
+                        i64::try_from(requested).expect("deposit maximum is bounded by Energy"),
+                    );
+                    (
+                        AppRequest::DepositOwnedBulkEnergy { amount },
+                        format!("Deposited {} E into the current market", amount.0),
+                    )
+                }
+            };
+            match app.request(request).await {
+                Ok(()) => {
+                    ui.message = success;
+                    ui.amount_input = None;
+                    ui.amount_action = None;
+                    ui.input_layer = InputLayer::Root;
+                }
+                Err(error) => ui.message = error.to_string(),
             }
         }
         InputAction::Switch(Activity::Systems) => ui.activity = Activity::Systems,
@@ -316,6 +320,10 @@ async fn handle_key_for_layout(
             }
             let destinations = trade_destination_ids(view, ui);
             ui.reconcile_trade_destination(&destinations);
+        }
+        InputAction::Switch(Activity::Logistics) => {
+            ui.activity = Activity::Logistics;
+            clamp_logistics_selection(ui, view);
         }
         InputAction::Switch(Activity::Governance) => {
             ui.activity = Activity::Governance;
@@ -413,79 +421,91 @@ async fn handle_key_for_layout(
                         activate_trade_destination(ui, view, app).await;
                     }
                 }
+                Activity::Logistics => {
+                    ui.logistics_region = if delta > 0 {
+                        ui.logistics_region.next()
+                    } else {
+                        ui.logistics_region.previous()
+                    };
+                }
                 Activity::Encyclopedia => jump_encyclopedia_section(ui, view, delta),
                 Activity::Systems | Activity::Intelligence => {}
             }
         }
-        InputAction::OpenQuantity => {
-            if view.local_trade.market.is_empty() {
-                ui.message = "No local market goods are available".into();
+        InputAction::OpenBuyAmount | InputAction::OpenSellAmount => {
+            if let Some(row) = selected_ordinary_market_row(view, ui) {
+                ui.amount_action = Some(if action == InputAction::OpenBuyAmount {
+                    AmountAction::Buy {
+                        good: row.good_id.clone(),
+                    }
+                } else {
+                    AmountAction::Sell {
+                        good: row.good_id.clone(),
+                    }
+                });
+                ui.amount_input = Some(String::new());
+                ui.input_layer = InputLayer::Amount;
+                ui.message.clear();
             } else {
-                ui.quantity_input = Some(String::new());
-                ui.input_layer = InputLayer::Quantity;
+                ui.message = "No ordinary local market goods are available".into();
             }
         }
-        InputAction::OpenBuyOrder | InputAction::OpenSellOrder => {
-            if view.local_trade.market.get(ui.market_index).is_none() {
-                ui.message = "No local market goods are available".into();
-            } else {
-                ui.trade_order_side = Some(if action == InputAction::OpenBuyOrder {
-                    TradeOrderSide::Buy
+        InputAction::ActivateLogistics => match ui.logistics_region {
+            LogisticsRegion::Opportunities => {
+                let Some(opportunity) = focused_energy_opportunity(view, ui) else {
+                    ui.message = "No Energy delivery opportunity is available".into();
+                    return Ok(false);
+                };
+                if let Some(blocker) = &opportunity.blocker {
+                    ui.message = format!("Contract unavailable: {blocker}");
+                    return Ok(false);
+                }
+                match app
+                    .request(AppRequest::AcceptEnergyContract {
+                        source: opportunity.source.id.clone(),
+                        destination: opportunity.destination.id.clone(),
+                        gross_payload: opportunity.maximum_gross_payload,
+                    })
+                    .await
+                {
+                    Ok(()) => {
+                        ui.message = format!(
+                            "Submitted {} E delivery to {}; step to resolve",
+                            format_energy(opportunity.maximum_gross_payload),
+                            opportunity.destination.name
+                        );
+                    }
+                    Err(error) => ui.message = error.to_string(),
+                }
+            }
+            LogisticsRegion::ActiveContract => {
+                let Some(contract) = player_energy_contract(view) else {
+                    ui.message = "No player Energy delivery is active".into();
+                    return Ok(false);
+                };
+                match app
+                    .request(AppRequest::CancelEnergyContract {
+                        contract_id: contract.id,
+                    })
+                    .await
+                {
+                    Ok(()) => {
+                        ui.message = format!("Cancelled Energy contract #{}", contract.id.get());
+                    }
+                    Err(error) => ui.message = error.to_string(),
+                }
+            }
+            LogisticsRegion::Storage => {
+                ui.amount_action = Some(if ui.logistics_storage_index == 0 {
+                    AmountAction::OwnedBulkToTank
                 } else {
-                    TradeOrderSide::Sell
+                    AmountAction::OwnedBulkToMarket
                 });
-                ui.trade_order_good = view
-                    .local_trade
-                    .market
-                    .get(ui.market_index)
-                    .map(|row| row.good_id.clone());
-                ui.quantity_input = Some(String::new());
-                ui.input_layer = InputLayer::Order;
+                ui.amount_input = Some(String::new());
+                ui.input_layer = InputLayer::Amount;
                 ui.message.clear();
             }
-        }
-        InputAction::Buy => {
-            if let Some(row) = view.local_trade.market.get(ui.market_index) {
-                if let Some(reason) = buy_unavailable_reason(view, row, ui.trade_quantity) {
-                    ui.message = reason;
-                } else {
-                    match app
-                        .request(AppRequest::Buy {
-                            good: row.good_id.clone(),
-                            quantity: ui.trade_quantity,
-                        })
-                        .await
-                    {
-                        Ok(()) => {
-                            ui.message = format!("Bought {} ×{}", row.name, ui.trade_quantity)
-                        }
-                        Err(error) => ui.message = error.to_string(),
-                    }
-                }
-            } else {
-                ui.message = "No local market goods are available".into();
-            }
-        }
-        InputAction::Sell => {
-            if let Some(row) = view.local_trade.market.get(ui.market_index) {
-                if let Some(reason) = sell_unavailable_reason(view, row, ui.trade_quantity) {
-                    ui.message = reason;
-                } else {
-                    match app
-                        .request(AppRequest::Sell {
-                            good: row.good_id.clone(),
-                            quantity: ui.trade_quantity,
-                        })
-                        .await
-                    {
-                        Ok(()) => ui.message = format!("Sold {} ×{}", row.name, ui.trade_quantity),
-                        Err(error) => ui.message = error.to_string(),
-                    }
-                }
-            } else {
-                ui.message = "No local market goods are available".into();
-            }
-        }
+        },
         InputAction::BeginTravel => {
             if view.player.traveling {
                 ui.message =
@@ -757,9 +777,7 @@ fn move_selection(ui: &mut UiState, view: &ApplicationView, delta: isize) {
             }
         }
         Activity::Trade => match ui.trade_region {
-            TradeRegion::Goods => {
-                ui.market_index = shifted(ui.market_index, view.local_trade.market.len(), delta);
-            }
+            TradeRegion::Goods => move_ordinary_market_selection(ui, view, delta),
             TradeRegion::Destinations => {
                 let destinations = trade_destination_ids(view, ui);
                 ui.reconcile_trade_destination(&destinations);
@@ -767,6 +785,27 @@ fn move_selection(ui: &mut UiState, view: &ApplicationView, delta: isize) {
                     shifted(ui.trade_destination_index, destinations.len(), delta);
                 ui.selected_trade_destination =
                     destinations.get(ui.trade_destination_index).cloned();
+            }
+        },
+        Activity::Logistics => match ui.logistics_region {
+            LogisticsRegion::Opportunities => {
+                ui.logistics_opportunity_index = shifted(
+                    ui.logistics_opportunity_index,
+                    view.energy_logistics.opportunities.len(),
+                    delta,
+                );
+                if let Some(opportunity) = view
+                    .energy_logistics
+                    .opportunities
+                    .get(ui.logistics_opportunity_index)
+                {
+                    ui.selected_logistics_source = Some(opportunity.source.id.clone());
+                    ui.selected_logistics_destination = Some(opportunity.destination.id.clone());
+                }
+            }
+            LogisticsRegion::ActiveContract => {}
+            LogisticsRegion::Storage => {
+                ui.logistics_storage_index = wrapped_shifted(ui.logistics_storage_index, 2, delta);
             }
         },
         Activity::Intelligence => ui.scroll_events(&view.events, delta),
@@ -827,7 +866,7 @@ async fn activate_trade_destination(ui: &mut UiState, view: &ApplicationView, ap
 }
 
 fn trade_destination_ids(view: &ApplicationView, ui: &UiState) -> Vec<game_app::ContentId> {
-    if view.local_trade.market.get(ui.market_index).is_none() {
+    if selected_ordinary_market_row(view, ui).is_none() {
         return Vec::new();
     }
     view.trade_markets
@@ -931,14 +970,45 @@ fn sync_system_row(ui: &mut UiState, view: &ApplicationView) {
     ui.selected_system = selected;
 }
 
+fn clamp_logistics_selection(ui: &mut UiState, view: &ApplicationView) {
+    let opportunities = &view.energy_logistics.opportunities;
+    let retained = ui
+        .selected_logistics_source
+        .as_ref()
+        .zip(ui.selected_logistics_destination.as_ref())
+        .and_then(|(source, destination)| {
+            opportunities.iter().position(|opportunity| {
+                &opportunity.source.id == source && &opportunity.destination.id == destination
+            })
+        });
+    ui.logistics_opportunity_index = retained.unwrap_or_else(|| {
+        ui.logistics_opportunity_index
+            .min(opportunities.len().saturating_sub(1))
+    });
+    if let Some(opportunity) = opportunities.get(ui.logistics_opportunity_index) {
+        ui.selected_logistics_source = Some(opportunity.source.id.clone());
+        ui.selected_logistics_destination = Some(opportunity.destination.id.clone());
+    } else {
+        ui.selected_logistics_source = None;
+        ui.selected_logistics_destination = None;
+    }
+    ui.logistics_storage_index = ui.logistics_storage_index.min(1);
+}
+
 fn clamp_selection(ui: &mut UiState, view: &ApplicationView) {
     sync_system_row(ui, view);
-    ui.market_index = ui
-        .market_index
-        .min(view.local_trade.market.len().saturating_sub(1));
+    if view
+        .local_trade
+        .market
+        .get(ui.market_index)
+        .is_none_or(|row| row.good_id.as_str() == ENERGY_GOOD_ID)
+    {
+        ui.market_index = ordinary_market_indices(view).first().copied().unwrap_or(0);
+    }
     let destinations = trade_destination_ids(view, ui);
     ui.reconcile_trade_destination(&destinations);
     clamp_encyclopedia_selection(ui, view);
+    clamp_logistics_selection(ui, view);
     let governance_rows = 2
         + view.inspection.market.len().saturating_mul(2)
         + view.inspection.governor.investments.len();
@@ -973,7 +1043,7 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(1),
-            Constraint::Length(2),
+            Constraint::Length(3),
         ])
         .split(area);
     render_activity_bar(frame, shell[0], ui.activity);
@@ -982,6 +1052,9 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
         Activity::Systems => render_systems_activity(frame, shell[2], view, ui, layout_class),
         Activity::Trade => {
             render_trade_activity(frame, shell[2], view, ui, layout_class);
+        }
+        Activity::Logistics => {
+            render_logistics_activity(frame, shell[2], view, ui, layout_class);
         }
         Activity::Governance => {
             render_governance_activity(frame, shell[2], view, ui, layout_class);
@@ -995,135 +1068,33 @@ pub fn render(frame: &mut Frame<'_>, view: &ApplicationView, ui: &UiState) {
     }
     render_footer(frame, shell[3], view, ui);
 
-    if ui.input_layer == InputLayer::Quantity {
-        let input = ui.quantity_input.as_deref().unwrap_or_default();
-        let popup = centered_rect(54, 8, area);
-        let (good, buy_total, sell_total) =
-            view.local_trade.market.get(ui.market_index).map_or_else(
-                || ("No good selected".into(), "—".into(), "—".into()),
-                |row| {
-                    let quantity = input.parse::<u32>().unwrap_or(1).max(1);
-                    (
-                        row.name.clone(),
-                        total_label(row.sell_quote, quantity),
-                        total_label(row.buy_quote, quantity),
-                    )
-                },
-            );
-        frame.render_widget(Clear, popup);
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(format!("Good: {good}")),
-                Line::from(format!("Quantity: {input}_")),
-                Line::from(format!("Buy total: {buy_total} · Sell total: {sell_total}")),
-                Line::from(vec![
-                    shortcut_span("Enter"),
-                    Span::raw(" confirm · "),
-                    shortcut_span("Esc"),
-                    Span::raw(" cancel"),
-                ]),
-            ])
-            .block(Block::bordered().title("Reusable Trade Quantity")),
-            popup,
-        );
-    } else if ui.input_layer == InputLayer::Order {
+    if ui.input_layer == InputLayer::Amount {
         let popup = centered_rect(72, 12, area);
-        let order_input = ui.quantity_input.as_deref().unwrap_or_default();
-        let parsed_request = order_input.parse::<u32>().ok();
-        let requested = parsed_request.unwrap_or(0);
-        let side = ui.trade_order_side.unwrap_or(TradeOrderSide::Buy);
-        let lines = trade_order_row(view, ui).map_or_else(
+        let input = ui.amount_input.as_deref().unwrap_or_default();
+        let requested = input.parse::<u64>().ok();
+        let (title, mut lines) = ui.amount_action.as_ref().map_or_else(
             || {
-                vec![Line::from(
-                    "The selected order good is no longer available.",
-                )]
+                (
+                    "Exact Amount",
+                    vec![Line::from("No transaction is selected.")],
+                )
             },
-            |row| {
-                let limit = trade_order_limit(view, row, side);
-                let projected = requested.min(limit.maximum);
-                let (unit_price, total, projected_total, tank_after, cargo_after) = match side {
-                    TradeOrderSide::Buy => (
-                        row.sell_quote,
-                        total_label(row.sell_quote, requested),
-                        total_label(row.sell_quote, projected),
-                        view.player.tank_energy.0.saturating_sub(
-                            quote_total(row.sell_quote, projected).map_or(0, |value| value.0),
-                        ),
-                        view.player.cargo_used.saturating_add(u64::from(projected)),
-                    ),
-                    TradeOrderSide::Sell => (
-                        row.buy_quote,
-                        total_label(row.buy_quote, requested),
-                        total_label(row.buy_quote, projected),
-                        view.player.tank_energy.0.saturating_add(
-                            quote_total(row.buy_quote, projected).map_or(0, |value| value.0),
-                        ),
-                        view.player.cargo_used.saturating_sub(u64::from(projected)),
-                    ),
-                };
-                let status = if parsed_request.is_none() && !order_input.is_empty() {
-                    "Quantity is outside the supported range.".into()
-                } else if requested == 0 {
-                    "Enter a quantity, or press M to use the maximum.".into()
-                } else if requested <= limit.maximum {
-                    "Ready to confirm this one-transaction order.".into()
-                } else {
-                    format!(
-                        "Requested {requested} exceeds the maximum by {}.",
-                        requested.saturating_sub(limit.maximum)
-                    )
-                };
-                vec![
-                    Line::from(format!(
-                        "{} · {} price {} E/unit",
-                        row.name,
-                        match side {
-                            TradeOrderSide::Buy => "Buy",
-                            TradeOrderSide::Sell => "Sell",
-                        },
-                        unit_price.0
-                    )),
-                    Line::from(format!(
-                        "Requested: {}_ · Reusable preset: {}",
-                        ui.quantity_input.as_deref().unwrap_or_default(),
-                        ui.trade_quantity
-                    )),
-                    Line::from(format!("Maximum now: {} ({})", limit.maximum, limit.reason)),
-                    Line::from(format!("Order total: {total}")),
-                    Line::from(format!(
-                        "{}: {projected_total} · Tank {}→{} E · Cargo {}→{}/{}",
-                        if requested <= limit.maximum {
-                            "After order"
-                        } else {
-                            "At maximum"
-                        },
-                        view.player.tank_energy.0,
-                        tank_after,
-                        view.player.cargo_used,
-                        cargo_after,
-                        view.player.cargo_capacity
-                    )),
-                    Line::from(status),
-                    Line::from(vec![
-                        Span::raw("("),
-                        shortcut_span("M"),
-                        Span::raw(") use maximum · "),
-                        shortcut_span("Enter"),
-                        Span::raw(" confirm · "),
-                        shortcut_span("Esc"),
-                        Span::raw(" cancel"),
-                    ]),
-                ]
-            },
+            |action| amount_dialog(view, action, input, requested),
         );
+        lines.push(Line::from(vec![
+            Span::raw("("),
+            shortcut_span("M"),
+            Span::raw(") use maximum · "),
+            shortcut_span("Enter"),
+            Span::raw(" confirm · "),
+            shortcut_span("Esc"),
+            Span::raw(" cancel"),
+        ]));
         frame.render_widget(Clear, popup);
         frame.render_widget(
             Paragraph::new(lines)
                 .wrap(Wrap { trim: true })
-                .block(Block::bordered().title(match side {
-                    TradeOrderSide::Buy => "One-Transaction Buy Order",
-                    TradeOrderSide::Sell => "One-Transaction Sell Order",
-                })),
+                .block(Block::bordered().title(title)),
             popup,
         );
     } else if ui.input_layer == InputLayer::Help {
@@ -1144,18 +1115,23 @@ fn render_activity_bar(frame: &mut Frame<'_>, area: Rect, active: Activity) {
         (Activity::Systems, "F1", "Systems"),
         (Activity::Trade, "F2", "Trade"),
         (
-            Activity::Governance,
+            Activity::Logistics,
             "F3",
+            if compact { "Log" } else { "Logistics" },
+        ),
+        (
+            Activity::Governance,
+            "F4",
             if compact { "Gov" } else { "Governance" },
         ),
         (
             Activity::Intelligence,
-            "F4",
+            "F5",
             if compact { "Intel" } else { "Intelligence" },
         ),
         (
             Activity::Encyclopedia,
-            "F5",
+            "F6",
             if compact { "Encycl." } else { "Encyclopedia" },
         ),
     ];
@@ -1204,167 +1180,32 @@ fn render_global_status(frame: &mut Frame<'_>, area: Rect, view: &ApplicationVie
 }
 
 fn render_footer(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: &UiState) {
-    let mut spans = Vec::new();
-    match ui.activity {
-        Activity::Systems => {
-            if ui.input_layer == InputLayer::Detail {
-                spans.push(Span::raw(match ui.system_detail {
-                    SystemDetailKind::Overview => "System overview · ",
-                    SystemDetailKind::Market => "Market inspection · ",
-                }));
-                spans.push(shortcut_span("Esc"));
-                spans.push(Span::raw(" return"));
-            } else {
-                spans.push(shortcut_span("↑/↓"));
-                spans.push(Span::raw(" Select · "));
-                spans.push(shortcut_span("Enter"));
-                spans.push(Span::raw(" overview · ("));
-                spans.push(shortcut_span("M"));
-                spans.push(Span::raw(")arket · S("));
-                spans.push(shortcut_span("o"));
-                spans.push(Span::raw(format!(")rt {} · (", ui.system_sort.label())));
-                spans.push(shortcut_span("D"));
-                spans.push(Span::raw(format!(
-                    ")irection {} · ",
-                    ui.sort_direction.symbol()
-                )));
-                let selected = ui.selected_system.as_ref().unwrap_or(&view.selected_system);
-                let route_available = view.systems.iter().any(|system| {
-                    &system.id == selected
-                        && system.id != view.player.location
-                        && system.route_ticks_from_player.is_some()
-                });
-                spans.push(shortcut_span("F2"));
-                if view.player.traveling {
-                    spans.push(Span::raw(" route disabled: in transit"));
-                } else if route_available {
-                    spans.push(Span::raw(" propose selected route"));
-                } else {
-                    spans.push(Span::raw(" route disabled: unreachable/already here"));
-                }
-            }
-        }
-        Activity::Trade => {
-            spans.push(shortcut_span("Tab/Shift-Tab"));
-            spans.push(Span::raw(" Region · "));
-            spans.push(shortcut_span("↑/↓"));
-            spans.push(Span::raw(match ui.trade_region {
-                TradeRegion::Goods => " Good · (",
-                TradeRegion::Destinations => " Destination · (",
-            }));
-            spans.push(shortcut_span("N"));
-            spans.push(Span::raw(format!(") Qty {} · ", ui.trade_quantity)));
-            if let Some(row) = view.local_trade.market.get(ui.market_index) {
-                let buy_reason = buy_unavailable_reason(view, row, ui.trade_quantity);
-                let sell_reason = sell_unavailable_reason(view, row, ui.trade_quantity);
-                spans.push(Span::raw("("));
-                spans.push(shortcut_span("b"));
-                spans.push(Span::raw(buy_reason.map_or_else(
-                    || ") quick buy · ".into(),
-                    |reason| format!(") buy disabled: {} · ", action_reason(&reason)),
-                )));
-                spans.push(shortcut_span("Shift-B"));
-                spans.push(Span::raw(" buy order · ("));
-                spans.push(shortcut_span("s"));
-                spans.push(Span::raw(sell_reason.map_or_else(
-                    || ") quick sell · ".into(),
-                    |reason| format!(") sell disabled: {} · ", action_reason(&reason)),
-                )));
-                spans.push(shortcut_span("Shift-S"));
-                spans.push(Span::raw(" sell order · "));
-            } else {
-                spans.push(Span::raw("("));
-                spans.push(shortcut_span("B"));
-                spans.push(Span::raw(")uy / ("));
-                spans.push(shortcut_span("S"));
-                spans.push(Span::raw(")ell disabled: no good · "));
-            }
-            spans.push(Span::raw("("));
-            spans.push(shortcut_span("T"));
-            let matching_route = ui.route_proposal.as_ref().and_then(|proposal| {
-                view.selected_route
-                    .as_ref()
-                    .filter(|route| &route.destination_id == proposal)
-            });
-            if view.player.traveling {
-                spans.push(Span::raw(")ravel disabled: in transit"));
-            } else if ui.route_proposal.is_none() {
-                spans.push(Span::raw(")ravel disabled: no route"));
-            } else if let Some(route) = matching_route {
-                if route.required_energy > view.player.tank_energy {
-                    spans.push(Span::raw(format!(
-                        ")ravel disabled: needs {} E",
-                        route.required_energy.0
-                    )));
-                } else {
-                    spans.push(Span::raw(")ravel · "));
-                    spans.push(shortcut_span("Esc"));
-                    spans.push(Span::raw(" clear route"));
-                }
-            } else {
-                spans.push(Span::raw(")ravel disabled: route details unavailable"));
-            }
-            spans.push(Span::raw(" · ("));
-            spans.push(shortcut_span("g"));
-            if view.player.traveling || matching_route.is_some() {
-                spans.push(Span::raw(") run to arrival"));
-            } else {
-                spans.push(Span::raw(") run to arrival disabled"));
-            }
-        }
-        Activity::Governance => {
-            spans.push(shortcut_span("↑/↓"));
-            spans.push(Span::raw(" Row · "));
-            spans.push(shortcut_span("Tab/Shift-Tab"));
-            spans.push(Span::raw(" Section · "));
-            if view.inspection.governor.governed && ui.governance_inspection.is_none() {
-                spans.push(shortcut_span("←/→"));
-                spans.push(Span::raw(" Edit · "));
-            } else {
-                spans.push(Span::raw("Edit disabled: read-only · "));
-            }
-            spans.push(Span::raw("("));
-            spans.push(shortcut_span("I"));
-            spans.push(Span::raw(")nspect Systems selection · "));
-            spans.push(shortcut_span("Esc"));
-            spans.push(Span::raw(" governed target"));
-        }
-        Activity::Intelligence => {
-            spans.push(shortcut_span("↑/↓"));
-            spans.push(Span::raw(" Scroll events · newest resumes tail-follow"));
-        }
-        Activity::Encyclopedia => {
-            spans.push(shortcut_span("Tab/Shift-Tab"));
-            spans.push(Span::raw(" Section · "));
-            spans.push(shortcut_span("↑/↓"));
-            spans.push(Span::raw(" Article · "));
-            spans.push(shortcut_span("PgUp/PgDn"));
-            spans.push(Span::raw(" Scroll article"));
-        }
-    }
-    spans.push(Span::raw(" · "));
-    spans.push(shortcut_span("Space"));
-    spans.push(Span::raw(match view.run_state {
-        RunState::Paused => " run · ",
-        RunState::Running => " pause · ",
-        RunState::RunningUntilArrival => " pause/cancel auto-arrival · ",
-    }));
-    spans.push(shortcut_span("."));
-    spans.push(Span::raw(" step (paused) · "));
-    spans.push(shortcut_span("r"));
-    spans.push(Span::raw(" rate · "));
-    spans.push(shortcut_span("?"));
-    spans.push(Span::raw(" help · "));
-    spans.push(shortcut_span("q"));
-    spans.push(Span::raw(format!(
-        " quit · fleet {}",
-        view.fleet.active_npcs
-    )));
-    if !ui.message.is_empty() {
-        spans.push(Span::raw(format!(" · {}", ui.message)));
-    }
+    let spans = vec![
+        shortcut_span("Space"),
+        Span::raw(match view.run_state {
+            RunState::Paused => " run · ",
+            RunState::Running => " pause · ",
+            RunState::RunningUntilArrival => " pause/cancel auto-arrival · ",
+        }),
+        shortcut_span("."),
+        Span::raw(" step · "),
+        shortcut_span("R"),
+        Span::raw(" rate · "),
+        shortcut_span("?"),
+        Span::raw(" help · "),
+        shortcut_span("Q"),
+        Span::raw(format!(" quit · fleet {}", view.fleet.active_npcs)),
+    ];
+    let lines = vec![
+        Line::from(spans),
+        Line::from(if ui.message.is_empty() {
+            "Ready".to_string()
+        } else {
+            ui.message.clone()
+        }),
+    ];
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::TOP)),
+        Paragraph::new(lines).block(Block::default().borders(Borders::TOP)),
         area,
     );
 }
@@ -1376,34 +1217,6 @@ fn shortcut_span(label: &'static str) -> Span<'static> {
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
     )
-}
-
-fn action_reason(reason: &str) -> &str {
-    reason
-        .strip_prefix("Buy unavailable: ")
-        .or_else(|| reason.strip_prefix("Sell unavailable: "))
-        .unwrap_or(reason)
-}
-
-fn quick_action_status(reason: Option<&str>) -> String {
-    let Some(reason) = reason else {
-        return "ready".into();
-    };
-    let detail = [
-        "market stock",
-        "tank Energy",
-        "cargo capacity",
-        "units held",
-        "market quote",
-        "market funding",
-        "tank capacity",
-        "market Energy storage",
-        "transaction quantity limit",
-    ]
-    .into_iter()
-    .find(|label| reason.contains(label))
-    .unwrap_or("trading unavailable");
-    format!("blocked: {detail}")
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -1843,6 +1656,7 @@ fn render_system_market(frame: &mut Frame<'_>, area: Rect, view: &ApplicationVie
         .inspection
         .market
         .iter()
+        .filter(|row| row.good_id.as_str() != ENERGY_GOOD_ID)
         .map(|row| {
             Row::new(vec![
                 Cell::from(row.name.clone()),
@@ -2308,27 +2122,7 @@ fn render_trade_activity(
     layout_class: LayoutClass,
 ) {
     if layout_class == LayoutClass::Regular {
-        let columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-            .split(area);
-        let left = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(10), Constraint::Length(7)])
-            .split(columns[0]);
-        let right = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(10),
-                Constraint::Length(7),
-                Constraint::Length(5),
-            ])
-            .split(columns[1]);
-        render_local_market(frame, left[0], view, ui, layout_class);
-        render_trade_action(frame, left[1], view, ui, layout_class);
-        render_trade_destinations(frame, right[0], view, ui, layout_class);
-        render_trade_route(frame, right[1], view, ui, layout_class);
-        render_trade_player(frame, right[2], view, ui);
+        render_regular_trade_core(frame, area, view, ui);
     } else {
         let panes = Layout::default()
             .direction(Direction::Vertical)
@@ -2346,6 +2140,351 @@ fn render_trade_activity(
     }
 }
 
+fn render_regular_trade_core(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(area);
+    let left = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(10), Constraint::Length(7)])
+        .split(columns[0]);
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(10),
+            Constraint::Length(7),
+            Constraint::Length(5),
+        ])
+        .split(columns[1]);
+    render_local_market(frame, left[0], view, ui, LayoutClass::Regular);
+    render_trade_action(frame, left[1], view, ui, LayoutClass::Regular);
+    render_trade_destinations(frame, right[0], view, ui, LayoutClass::Regular);
+    render_trade_route(frame, right[1], view, ui, LayoutClass::Regular);
+    render_trade_player(frame, right[2], view, ui);
+}
+
+fn focused_energy_opportunity<'a>(
+    view: &'a ApplicationView,
+    ui: &UiState,
+) -> Option<&'a game_app::EnergyContractOpportunityView> {
+    ui.selected_logistics_source
+        .as_ref()
+        .zip(ui.selected_logistics_destination.as_ref())
+        .and_then(|(source, destination)| {
+            view.energy_logistics
+                .opportunities
+                .iter()
+                .find(|opportunity| {
+                    &opportunity.source.id == source && &opportunity.destination.id == destination
+                })
+        })
+        .or_else(|| {
+            let last = view.energy_logistics.opportunities.len().saturating_sub(1);
+            view.energy_logistics
+                .opportunities
+                .get(ui.logistics_opportunity_index.min(last))
+        })
+}
+
+fn player_energy_contract(view: &ApplicationView) -> Option<&game_app::ActiveEnergyContractView> {
+    view.energy_logistics
+        .contracts
+        .iter()
+        .find(|contract| contract.player_owned)
+}
+
+fn render_logistics_activity(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+    layout_class: LayoutClass,
+) {
+    let panes = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(if layout_class == LayoutClass::Regular {
+            [
+                Constraint::Min(14),
+                Constraint::Min(12),
+                Constraint::Length(9),
+            ]
+        } else {
+            [
+                Constraint::Min(9),
+                Constraint::Min(9),
+                Constraint::Length(7),
+            ]
+        })
+        .split(area);
+    render_logistics_opportunities(frame, panes[0], view, ui, layout_class);
+    render_logistics_contract(frame, panes[1], view, ui, layout_class);
+    render_logistics_storage(frame, panes[2], view, ui);
+}
+
+fn logistics_title(label: &str, focused: bool, action: &str) -> String {
+    if focused {
+        format!("{label} [FOCUSED] — {action}")
+    } else {
+        label.into()
+    }
+}
+
+fn render_logistics_opportunities(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+    layout_class: LayoutClass,
+) {
+    let focused = ui.logistics_region == LogisticsRegion::Opportunities;
+    let mut lines = vec![Line::from(
+        "Destinations request physical Energy. Accepting commits your carrier; loading, delivery, settlement, and recovery advance with simulation steps.",
+    )];
+    if view.energy_logistics.opportunities.is_empty() {
+        lines.push(Line::from(
+            "No viable delivery requests are currently available.",
+        ));
+        if let Some(market) = view
+            .energy_logistics
+            .markets
+            .iter()
+            .find(|market| market.requested.0 > 0 || market.blocker.is_some())
+        {
+            lines.push(Line::from(format!(
+                "{} requests {} E · runway {} · {}",
+                market.system.name,
+                format_energy(market.requested),
+                market.runway,
+                market
+                    .blocker
+                    .as_deref()
+                    .unwrap_or("waiting for a viable carrier/source")
+            )));
+        }
+    } else {
+        let selected = ui
+            .logistics_opportunity_index
+            .min(view.energy_logistics.opportunities.len().saturating_sub(1));
+        let list_capacity = if layout_class == LayoutClass::Regular {
+            4
+        } else {
+            2
+        };
+        let (start, end) = viewport(
+            view.energy_logistics.opportunities.len(),
+            selected,
+            list_capacity,
+        );
+        for (index, opportunity) in view.energy_logistics.opportunities[start..end]
+            .iter()
+            .enumerate()
+        {
+            let index = start + index;
+            lines.push(Line::styled(
+                format!(
+                    "{} {} → {} · max {} E · delivers {} E · runway {}→{}",
+                    if index == selected { ">" } else { " " },
+                    opportunity.source.name,
+                    opportunity.destination.name,
+                    format_energy(opportunity.maximum_gross_payload),
+                    format_energy(opportunity.net_delivery),
+                    opportunity.destination_runway_before,
+                    opportunity.destination_runway_after,
+                ),
+                selected_style(index == selected && focused),
+            ));
+        }
+        if let Some(opportunity) = focused_energy_opportunity(view, ui) {
+            lines.push(Line::from(format!(
+                "Travel: empty {} E/{}t · loaded {} E/{}t · recovery reserve {} E/{}t",
+                format_energy(opportunity.deadhead.burn),
+                opportunity.deadhead.ticks,
+                format_energy(opportunity.loaded.burn),
+                opportunity.loaded.ticks,
+                format_energy(opportunity.recovery.burn),
+                opportunity.recovery.ticks,
+            )));
+            lines.push(Line::from(format!(
+                "Carrier receives {} E allocation including {} E fee · expected profit {} E · freight {}",
+                format_energy(opportunity.carrier_allocation),
+                format_energy(opportunity.carrier_fee),
+                format_energy(opportunity.expected_net_profit),
+                format_bps(opportunity.freight_rate_bps),
+            )));
+            if let Some(blocker) = &opportunity.blocker {
+                lines.push(Line::from(format!("Unavailable: {blocker}")));
+            }
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(Block::bordered().title(logistics_title(
+                "1 Opportunities",
+                focused,
+                "↑/↓ select · Enter accept displayed maximum",
+            ))),
+        area,
+    );
+}
+
+fn render_logistics_contract(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+    layout_class: LayoutClass,
+) {
+    let focused = ui.logistics_region == LogisticsRegion::ActiveContract;
+    let mut lines = if let Some(contract) = player_energy_contract(view) {
+        let mut lines = vec![
+            Line::from(format!(
+                "Contract #{} · {} · {} → {}",
+                contract.id.get(),
+                contract_state_label(&contract.state),
+                contract.source.name,
+                contract.destination.name,
+            )),
+            Line::from(format!(
+                "Gross payload {} E · locked {} E · net delivery {} E · deadline {}",
+                format_energy(contract.gross_payload),
+                format_energy(contract.locked_amount),
+                format_energy(contract.net_delivery),
+                contract.deadline.map_or_else(|| "—".into(), format_u64),
+            )),
+            Line::from(format!(
+                "Current route: leg {} · {} ticks remaining · loaded burn {} E · recovery reserve {} E",
+                contract
+                    .current_leg
+                    .map_or_else(|| "—".into(), |leg| (leg + 1).to_string()),
+                contract
+                    .remaining_ticks
+                    .map_or_else(|| "—".into(), |ticks| ticks.to_string()),
+                format_energy(contract.loaded.burn),
+                format_energy(contract.recovery_reserve),
+            )),
+            Line::from(format!(
+                "Settled {} E · carrier allocation {} E · fee {} E · expected profit {} E",
+                format_energy(contract.cumulative_settled),
+                format_energy(contract.carrier_allocation),
+                format_energy(contract.carrier_fee),
+                format_energy(contract.expected_net_profit),
+            )),
+        ];
+        if layout_class == LayoutClass::Regular {
+            lines.push(Line::from(format!(
+                "Converted: reimbursement {} E · fee {} E · freight {}",
+                format_energy(contract.converted_reimbursement),
+                format_energy(contract.converted_fee),
+                format_bps(contract.freight_rate_bps),
+            )));
+        }
+        lines.push(Line::from(format!(
+            "Status: {}",
+            contract.latest_blocker.as_deref().unwrap_or(
+                "the simulation automatically advances this contract; manual cargo/travel actions may be blocked"
+            )
+        )));
+        lines
+    } else {
+        vec![
+            Line::from("No player delivery contract is active."),
+            Line::from("Choose an opportunity above and accept it to commit your carrier."),
+        ]
+    };
+    if focused && player_energy_contract(view).is_some() {
+        lines.push(Line::from(
+            "Enter requests cancellation. Cancellation is allowed only before loading; otherwise the core explains why it is blocked.",
+        ));
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(Block::bordered().title(logistics_title(
+                "2 Active Contract",
+                focused,
+                if player_energy_contract(view).is_some() {
+                    "Enter cancel if still pre-load"
+                } else {
+                    "no action"
+                },
+            ))),
+        area,
+    );
+}
+
+fn render_logistics_storage(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+) {
+    let focused = ui.logistics_region == LogisticsRegion::Storage;
+    let storage = &view.energy_logistics.storage;
+    let actions = [
+        format!(
+            "Owned bulk → tank · maximum {} E",
+            format_energy(storage.owned_to_tank_maximum)
+        ),
+        format!(
+            "Owned bulk → current market · maximum {} E",
+            format_energy(storage.owned_to_market_maximum)
+        ),
+    ];
+    let mut lines = vec![
+        Line::from(format!(
+            "Tank {}/{} E · Owned bulk {} E · Locked contract bulk {} E{}",
+            format_energy(storage.tank),
+            format_energy(storage.tank_capacity),
+            format_energy(storage.owned_bulk),
+            format_energy(storage.locked_bulk),
+            storage
+                .locked_contract
+                .map_or_else(String::new, |id| format!(" (#{}; unavailable)", id.get())),
+        )),
+        Line::from(format!(
+            "Bulk hold {}/{} E · General cargo {}/{}: {}",
+            format_energy(storage.bulk_used),
+            format_energy(storage.bulk_capacity),
+            view.player.cargo_used,
+            view.player.cargo_capacity,
+            general_cargo_label(view),
+        )),
+    ];
+    for (index, action) in actions.into_iter().enumerate() {
+        lines.push(Line::styled(
+            format!(
+                "{} {action}",
+                if focused && index == ui.logistics_storage_index {
+                    ">"
+                } else {
+                    " "
+                }
+            ),
+            selected_style(focused && index == ui.logistics_storage_index),
+        ));
+    }
+    if let Some(blocker) = &storage.transfer_blocker {
+        lines.push(Line::from(format!("Transfer status: {blocker}")));
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(Block::bordered().title(logistics_title(
+                "3 Storage",
+                focused,
+                "↑/↓ choose transfer · Enter set exact amount",
+            ))),
+        area,
+    );
+}
+
 fn render_local_market(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -2354,16 +2493,20 @@ fn render_local_market(
     layout_class: LayoutClass,
 ) {
     let capacity = usize::from(area.height.saturating_sub(3)).max(1);
-    let selected_index = ui
-        .market_index
-        .min(view.local_trade.market.len().saturating_sub(1));
-    let (start, end) = viewport(view.local_trade.market.len(), selected_index, capacity);
-    let mut rows = view.local_trade.market[start..end]
+    let ordinary_rows = ordinary_market_rows(view);
+    let ordinary_indices = ordinary_market_indices(view);
+    let selected_index = ordinary_indices
         .iter()
+        .position(|index| *index == ui.market_index)
+        .unwrap_or(0);
+    let (start, end) = viewport(ordinary_rows.len(), selected_index, capacity);
+    let mut rows = ordinary_rows[start..end]
+        .iter()
+        .copied()
         .enumerate()
         .map(|(offset, row)| {
             let index = start + offset;
-            let selected = index == ui.market_index && ui.trade_region == TradeRegion::Goods;
+            let selected = index == selected_index && ui.trade_region == TradeRegion::Goods;
             let common = vec![
                 Cell::from(if selected { ">" } else { " " }),
                 Cell::from(row.name.clone()),
@@ -2402,7 +2545,7 @@ fn render_local_market(
         } else {
             " — UNAVAILABLE"
         },
-        viewport_label(start, end, view.local_trade.market.len())
+        viewport_label(start, end, ordinary_rows.len())
     );
     if layout_class == LayoutClass::Regular {
         frame.render_widget(
@@ -2466,137 +2609,42 @@ fn render_trade_action(
     area: Rect,
     view: &ApplicationView,
     ui: &UiState,
-    layout_class: LayoutClass,
+    _layout_class: LayoutClass,
 ) {
-    let lines = view.local_trade.market.get(ui.market_index).map_or_else(
-        || {
+    let lines = selected_ordinary_market_row(view, ui).map_or_else(
+        || vec![Line::from("No ordinary good is selected.")],
+        |row| {
+            let buy = trade_amount_limit(view, row, TradeSide::Buy);
+            let sell = trade_amount_limit(view, row, TradeSide::Sell);
             vec![
-                Line::from("No goods are listed at the local market."),
+                Line::from(format!(
+                    "{} · Held {} · Market stock {}",
+                    row.name,
+                    held_quantity(view, row),
+                    row.inventory
+                )),
+                Line::from(format!(
+                    "Buy {} E/unit · maximum {} ({})",
+                    row.sell_quote.0, buy.maximum, buy.reason
+                )),
+                Line::from(format!(
+                    "Sell {} E/unit · maximum {} ({})",
+                    row.buy_quote.0, sell.maximum, sell.reason
+                )),
                 Line::from(vec![
                     Span::raw("("),
                     shortcut_span("B"),
-                    Span::raw(")uy unavailable · ("),
+                    Span::raw(") enter buy amount · ("),
                     shortcut_span("S"),
-                    Span::raw(")ell unavailable"),
+                    Span::raw(") enter sell amount"),
                 ]),
             ]
-        },
-        |row| {
-            let held = held_quantity(view, row);
-            let buy_total = quote_total(row.sell_quote, ui.trade_quantity);
-            let sell_total = quote_total(row.buy_quote, ui.trade_quantity);
-            let buy_reason = buy_unavailable_reason(view, row, ui.trade_quantity);
-            let sell_reason = sell_unavailable_reason(view, row, ui.trade_quantity);
-            if layout_class == LayoutClass::Compact {
-                vec![
-                    Line::from(format!(
-                        "{} · Qty {} · Held {} · Stock {}",
-                        row.name, ui.trade_quantity, held, row.inventory
-                    )),
-                    Line::from(format!(
-                        "Buy total {} · Tank {}→{} E · Cargo {}→{}/{}",
-                        buy_total
-                            .map_or_else(|| "overflow".into(), |total| format!("{} E", total.0)),
-                        view.player.tank_energy.0,
-                        buy_total.map_or(view.player.tank_energy.0, |total| {
-                            view.player.tank_energy.0.saturating_sub(total.0)
-                        }),
-                        view.player.cargo_used,
-                        view.player
-                            .cargo_used
-                            .saturating_add(u64::from(ui.trade_quantity)),
-                        view.player.cargo_capacity,
-                    )),
-                    Line::from(format!(
-                        "Sell total {} · Tank {}→{} E · Cargo {}→{}/{}",
-                        sell_total
-                            .map_or_else(|| "overflow".into(), |total| format!("{} E", total.0)),
-                        view.player.tank_energy.0,
-                        sell_total.map_or(view.player.tank_energy.0, |total| {
-                            view.player.tank_energy.0.saturating_add(total.0)
-                        }),
-                        view.player.cargo_used,
-                        view.player
-                            .cargo_used
-                            .saturating_sub(u64::from(ui.trade_quantity)),
-                        view.player.cargo_capacity,
-                    )),
-                    Line::from(vec![
-                        Span::raw("("),
-                        shortcut_span("b"),
-                        Span::raw(format!(
-                            ")uy {} · ",
-                            quick_action_status(buy_reason.as_deref())
-                        )),
-                        shortcut_span("B"),
-                        Span::raw(" order · ("),
-                        shortcut_span("s"),
-                        Span::raw(format!(
-                            ")ell {} · ",
-                            quick_action_status(sell_reason.as_deref())
-                        )),
-                        shortcut_span("S"),
-                        Span::raw(" order"),
-                    ]),
-                ]
-            } else {
-                vec![
-                    Line::from(format!(
-                        "{} · Qty {} · Held {} · Market stock {}",
-                        row.name, ui.trade_quantity, held, row.inventory
-                    )),
-                    Line::from(format!(
-                        "Buy {} E/unit · Total {} · Tank {}→{} E · Cargo {}→{}/{}",
-                        row.sell_quote.0,
-                        buy_total
-                            .map_or_else(|| "overflow".into(), |total| format!("{} E", total.0)),
-                        view.player.tank_energy.0,
-                        buy_total.map_or(view.player.tank_energy.0, |total| {
-                            view.player.tank_energy.0.saturating_sub(total.0)
-                        }),
-                        view.player.cargo_used,
-                        view.player
-                            .cargo_used
-                            .saturating_add(u64::from(ui.trade_quantity)),
-                        view.player.cargo_capacity,
-                    )),
-                    Line::from(format!(
-                        "Sell {} E/unit · Total {} · Tank after {} E",
-                        row.buy_quote.0,
-                        sell_total
-                            .map_or_else(|| "overflow".into(), |total| format!("{} E", total.0)),
-                        sell_total.map_or(view.player.tank_energy.0, |total| {
-                            view.player.tank_energy.0.saturating_add(total.0)
-                        }),
-                    )),
-                    Line::from(vec![
-                        Span::raw("("),
-                        shortcut_span("b"),
-                        Span::raw(format!(
-                            ")uy {} · ",
-                            quick_action_status(buy_reason.as_deref())
-                        )),
-                        shortcut_span("Shift-B"),
-                        Span::raw(" one-transaction order"),
-                    ]),
-                    Line::from(vec![
-                        Span::raw("("),
-                        shortcut_span("s"),
-                        Span::raw(format!(
-                            ")ell {} · ",
-                            quick_action_status(sell_reason.as_deref())
-                        )),
-                        shortcut_span("Shift-S"),
-                        Span::raw(" one-transaction order"),
-                    ]),
-                ]
-            }
         },
     );
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
-            .block(Block::bordered().title("Selected Good / Action Preview")),
+            .block(Block::bordered().title("Selected Good — exact amount required")),
         area,
     );
 }
@@ -2786,15 +2834,7 @@ fn render_trade_route(
 
 fn render_trade_player(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView, ui: &UiState) {
     let p = &view.player;
-    let cargo = if p.cargo.is_empty() {
-        "empty".into()
-    } else {
-        p.cargo
-            .iter()
-            .map(|item| format!("{} x{}", item.good_name, item.quantity))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+    let cargo = general_cargo_label(view);
     let lines = vec![
         Line::from(format!(
             "Location {}{} · Tank {}/{} E · Value {} E · Rank #{}",
@@ -2806,8 +2846,8 @@ fn render_trade_player(frame: &mut Frame<'_>, area: Rect, view: &ApplicationView
             p.energy_value_rank
         )),
         Line::from(format!(
-            "Cargo bay {}/{} · bay energy {} · value {} E: {}",
-            p.cargo_used, p.cargo_capacity, p.bay_energy, p.cargo_energy_value.0, cargo
+            "General cargo {}/{} · value {} E: {}",
+            p.cargo_used, p.cargo_capacity, p.cargo_energy_value.0, cargo
         )),
         Line::from(format!(
             "Sales {} E · Gain {} E · Trades {} · Runway {}",
@@ -2835,7 +2875,7 @@ fn render_trade_destinations(
     ui: &UiState,
     layout_class: LayoutClass,
 ) {
-    let Some(good) = view.local_trade.market.get(ui.market_index) else {
+    let Some(good) = selected_ordinary_market_row(view, ui) else {
         frame.render_widget(
             Paragraph::new("No selected local good; destination comparison is empty")
                 .block(Block::bordered().title("Destination Comparison — read-only")),
@@ -3369,6 +3409,111 @@ fn render_fleet_world_summary(frame: &mut Frame<'_>, area: Rect, view: &Applicat
     );
 }
 
+const ENERGY_GOOD_ID: &str = "core:energy";
+
+fn ordinary_market_rows(view: &ApplicationView) -> Vec<&game_app::MarketRow> {
+    view.local_trade
+        .market
+        .iter()
+        .filter(|row| row.good_id.as_str() != ENERGY_GOOD_ID)
+        .collect()
+}
+
+fn ordinary_market_indices(view: &ApplicationView) -> Vec<usize> {
+    view.local_trade
+        .market
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| (row.good_id.as_str() != ENERGY_GOOD_ID).then_some(index))
+        .collect()
+}
+
+fn selected_ordinary_market_row<'a>(
+    view: &'a ApplicationView,
+    ui: &UiState,
+) -> Option<&'a game_app::MarketRow> {
+    view.local_trade
+        .market
+        .get(ui.market_index)
+        .filter(|row| row.good_id.as_str() != ENERGY_GOOD_ID)
+        .or_else(|| ordinary_market_rows(view).first().copied())
+}
+
+fn move_ordinary_market_selection(ui: &mut UiState, view: &ApplicationView, delta: isize) {
+    let indices = ordinary_market_indices(view);
+    let current = indices
+        .iter()
+        .position(|index| *index == ui.market_index)
+        .unwrap_or(0);
+    let next = shifted(current, indices.len(), delta);
+    ui.market_index = indices.get(next).copied().unwrap_or(0);
+}
+
+fn format_energy(value: game_app::Energy) -> String {
+    format_i128(i128::from(value.0))
+}
+
+fn format_u64(value: u64) -> String {
+    format_i128(i128::from(value))
+}
+
+fn format_i128(value: i128) -> String {
+    let negative = value < 0;
+    let digits = value.unsigned_abs().to_string();
+    let mut grouped =
+        String::with_capacity(digits.len() + digits.len() / 3 + usize::from(negative));
+    if negative {
+        grouped.push('-');
+    }
+    for (index, character) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(character);
+    }
+    grouped
+}
+
+fn format_bps(bps: u32) -> String {
+    let whole = bps / 100;
+    let fraction = bps % 100;
+    if fraction == 0 {
+        format!("{whole}%")
+    } else if fraction.is_multiple_of(10) {
+        format!("{whole}.{}%", fraction / 10)
+    } else {
+        format!("{whole}.{fraction:02}%")
+    }
+}
+
+fn contract_state_label(state: &impl std::fmt::Debug) -> &'static str {
+    let state = format!("{state:?}");
+    if state.starts_with("DeadheadingToSource") {
+        "Deadheading"
+    } else if state.starts_with("InTransit") {
+        "In Transit"
+    } else if state.starts_with("Arrived") {
+        "Arrived"
+    } else if state.starts_with("Recovering") {
+        "Recovering"
+    } else {
+        "Unknown"
+    }
+}
+
+fn general_cargo_label(view: &ApplicationView) -> String {
+    if view.player.cargo.is_empty() {
+        "empty".into()
+    } else {
+        view.player
+            .cargo
+            .iter()
+            .map(|item| format!("{} x{}", item.good_name, item.quantity))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 fn quote_total(quote: game_app::Energy, quantity: u32) -> Option<game_app::Energy> {
     quote
         .0
@@ -3380,8 +3525,10 @@ fn total_label(quote: game_app::Energy, quantity: u32) -> String {
     quote_total(quote, quantity).map_or_else(|| "overflow".into(), |total| format!("{} E", total.0))
 }
 
-fn trade_order_row<'a>(view: &'a ApplicationView, ui: &UiState) -> Option<&'a game_app::MarketRow> {
-    let good = ui.trade_order_good.as_ref()?;
+fn ordinary_market_row_by_good<'a>(
+    view: &'a ApplicationView,
+    good: &game_app::ContentId,
+) -> Option<&'a game_app::MarketRow> {
     view.local_trade
         .market
         .iter()
@@ -3396,18 +3543,24 @@ fn held_quantity(view: &ApplicationView, row: &game_app::MarketRow) -> u64 {
         .map_or(0, |cargo| cargo.quantity)
 }
 
-struct TradeOrderLimit {
-    maximum: u32,
+#[derive(Clone, Copy)]
+enum TradeSide {
+    Buy,
+    Sell,
+}
+
+struct AmountLimit {
+    maximum: u64,
     reason: String,
 }
 
-fn trade_order_limit(
+fn trade_amount_limit(
     view: &ApplicationView,
     row: &game_app::MarketRow,
-    side: TradeOrderSide,
-) -> TradeOrderLimit {
+    side: TradeSide,
+) -> AmountLimit {
     if !view.local_trade.available {
-        return TradeOrderLimit {
+        return AmountLimit {
             maximum: 0,
             reason: view
                 .local_trade
@@ -3417,56 +3570,154 @@ fn trade_order_limit(
         };
     }
     let Some(limits) = &row.local_trade_limits else {
-        return TradeOrderLimit {
+        return AmountLimit {
             maximum: 0,
             reason: "trade limit unavailable".into(),
         };
     };
     let limit = match side {
-        TradeOrderSide::Buy => &limits.buy,
-        TradeOrderSide::Sell => &limits.sell,
+        TradeSide::Buy => &limits.buy,
+        TradeSide::Sell => &limits.sell,
     };
-    TradeOrderLimit {
-        maximum: limit.maximum,
+    AmountLimit {
+        maximum: u64::from(limit.maximum),
         reason: limit.reason.clone(),
     }
 }
 
-fn buy_unavailable_reason(
-    view: &ApplicationView,
-    row: &game_app::MarketRow,
-    quantity: u32,
-) -> Option<String> {
-    local_trade_unavailable_reason(view, row, TradeOrderSide::Buy, quantity)
-        .map(|reason| format!("Buy unavailable: {reason}"))
-}
-
-fn sell_unavailable_reason(
-    view: &ApplicationView,
-    row: &game_app::MarketRow,
-    quantity: u32,
-) -> Option<String> {
-    local_trade_unavailable_reason(view, row, TradeOrderSide::Sell, quantity)
-        .map(|reason| format!("Sell unavailable: {reason}"))
-}
-
-fn local_trade_unavailable_reason(
-    view: &ApplicationView,
-    row: &game_app::MarketRow,
-    side: TradeOrderSide,
-    quantity: u32,
-) -> Option<String> {
-    if !view.local_trade.available {
-        return Some(
-            view.local_trade
-                .unavailable_reason
+fn amount_action_limit(view: &ApplicationView, action: &AmountAction) -> AmountLimit {
+    match action {
+        AmountAction::Buy { good } | AmountAction::Sell { good } => {
+            let Some(row) = ordinary_market_row_by_good(view, good) else {
+                return AmountLimit {
+                    maximum: 0,
+                    reason: "selected good is no longer available".into(),
+                };
+            };
+            trade_amount_limit(
+                view,
+                row,
+                if matches!(action, AmountAction::Buy { .. }) {
+                    TradeSide::Buy
+                } else {
+                    TradeSide::Sell
+                },
+            )
+        }
+        AmountAction::OwnedBulkToTank => AmountLimit {
+            maximum: u64::try_from(view.energy_logistics.storage.owned_to_tank_maximum.0.max(0))
+                .unwrap_or(0),
+            reason: view
+                .energy_logistics
+                .storage
+                .transfer_blocker
                 .clone()
-                .unwrap_or_else(|| "local trading is unavailable".into()),
-        );
+                .unwrap_or_else(|| "tank headroom or owned bulk".into()),
+        },
+        AmountAction::OwnedBulkToMarket => AmountLimit {
+            maximum: u64::try_from(
+                view.energy_logistics
+                    .storage
+                    .owned_to_market_maximum
+                    .0
+                    .max(0),
+            )
+            .unwrap_or(0),
+            reason: view
+                .energy_logistics
+                .storage
+                .transfer_blocker
+                .clone()
+                .unwrap_or_else(|| "market headroom or owned bulk".into()),
+        },
     }
-    let limit = trade_order_limit(view, row, side);
-    (quantity > limit.maximum)
-        .then(|| format!("maximum is {} because of {}", limit.maximum, limit.reason))
+}
+
+fn amount_dialog(
+    view: &ApplicationView,
+    action: &AmountAction,
+    input: &str,
+    requested: Option<u64>,
+) -> (&'static str, Vec<Line<'static>>) {
+    let limit = amount_action_limit(view, action);
+    let status = match requested {
+        None if !input.is_empty() => "Amount is outside the supported range.".into(),
+        None | Some(0) => "Enter an amount, or press M to use the maximum.".into(),
+        Some(amount) if amount > limit.maximum => format!(
+            "Requested {amount} exceeds the maximum by {}.",
+            amount.saturating_sub(limit.maximum)
+        ),
+        Some(_) => "Ready to confirm this transaction.".into(),
+    };
+    match action {
+        AmountAction::Buy { good } | AmountAction::Sell { good } => {
+            let title = if matches!(action, AmountAction::Buy { .. }) {
+                "Buy Ordinary Goods"
+            } else {
+                "Sell Ordinary Goods"
+            };
+            let Some(row) = ordinary_market_row_by_good(view, good) else {
+                return (
+                    title,
+                    vec![Line::from("The selected good is no longer available.")],
+                );
+            };
+            let buying = matches!(action, AmountAction::Buy { .. });
+            let unit_price = if buying {
+                row.sell_quote
+            } else {
+                row.buy_quote
+            };
+            let requested_u32 = requested.and_then(|amount| u32::try_from(amount).ok());
+            let total = requested_u32
+                .map(|amount| total_label(unit_price, amount))
+                .unwrap_or_else(|| "—".into());
+            (
+                title,
+                vec![
+                    Line::from(format!(
+                        "{} · {} price {} E/unit",
+                        row.name,
+                        if buying { "Buy" } else { "Sell" },
+                        unit_price.0
+                    )),
+                    Line::from(format!("Amount: {input}_")),
+                    Line::from(format!("Maximum now: {} ({})", limit.maximum, limit.reason)),
+                    Line::from(format!("Transaction total: {total}")),
+                    Line::from(status),
+                ],
+            )
+        }
+        AmountAction::OwnedBulkToTank | AmountAction::OwnedBulkToMarket => {
+            let to_tank = matches!(action, AmountAction::OwnedBulkToTank);
+            (
+                if to_tank {
+                    "Transfer Owned Energy to Tank"
+                } else {
+                    "Deposit Owned Energy at Market"
+                },
+                vec![
+                    Line::from(if to_tank {
+                        "Move carrier-owned bulk Energy into the fuel tank."
+                    } else {
+                        "Deposit carrier-owned bulk Energy into the current market."
+                    }),
+                    Line::from(format!("Amount: {input}_ E")),
+                    Line::from(format!(
+                        "Maximum now: {} E ({})",
+                        limit.maximum, limit.reason
+                    )),
+                    Line::from(format!(
+                        "Owned bulk: {} E · Tank: {}/{} E",
+                        view.energy_logistics.storage.owned_bulk.0,
+                        view.energy_logistics.storage.tank.0,
+                        view.energy_logistics.storage.tank_capacity.0
+                    )),
+                    Line::from(status),
+                ],
+            )
+        }
+    }
 }
 
 fn system_name(view: &ApplicationView, id: &game_app::ContentId) -> String {
@@ -3546,20 +3797,27 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
             Span::raw(" goods/destinations · "),
             shortcut_span("↑/↓"),
             Span::raw(" row · ("),
-            shortcut_span("N"),
-            Span::raw(") reusable quantity · "),
-            shortcut_span("b/s"),
-            Span::raw(" quick trade · "),
-            shortcut_span("Shift-B/Shift-S"),
-            Span::raw(" one-transaction order · ("),
+            shortcut_span("B/S"),
+            Span::raw(") enter an exact buy/sell amount · ("),
             shortcut_span("T"),
             Span::raw(")ravel/"),
             shortcut_span("Enter"),
             Span::raw(" · ("),
-            shortcut_span("g"),
+            shortcut_span("G"),
             Span::raw(") run to arrival · "),
             shortcut_span("Esc"),
             Span::raw(" clear route"),
+        ]),
+        Activity::Logistics => Line::from(vec![
+            Span::raw("Logistics: "),
+            shortcut_span("Tab/Shift-Tab"),
+            Span::raw(" opportunities/contract/storage · "),
+            shortcut_span("↑/↓"),
+            Span::raw(" select · "),
+            shortcut_span("Enter"),
+            Span::raw(
+                " perform the action named in the focused panel. Energy deliveries advance with simulation steps; they are not ordinary buy/sell trades.",
+            ),
         ]),
         Activity::Governance => Line::from(vec![
             Span::raw("Governance: "),
@@ -3599,10 +3857,12 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
             shortcut_span("F2"),
             Span::raw(" Trade · "),
             shortcut_span("F3"),
-            Span::raw(" Governance · "),
+            Span::raw(" Logistics · "),
             shortcut_span("F4"),
-            Span::raw(" Intelligence · "),
+            Span::raw(" Governance · "),
             shortcut_span("F5"),
+            Span::raw(" Intelligence · "),
+            shortcut_span("F6"),
             Span::raw(" Encyclopedia"),
         ]),
         Line::from(vec![
@@ -3733,6 +3993,7 @@ mod tests {
                     Governance::default()
                 },
                 policy: MarketPolicy::default(),
+                energy_logistics: Default::default(),
                 protected_liquidation_budget: Energy(10),
                 bootstrap_risk_acknowledged: false,
             })
@@ -3758,8 +4019,10 @@ mod tests {
                 id: id("core:player"),
                 name: "Player".into(),
                 system: id("core:s0"),
+                archetype: None,
                 energy_tank: Energy(100),
                 energy_tank_capacity: Energy(1_000),
+                bulk_energy_capacity: Energy::ZERO,
                 cargo_capacity: 10,
                 speed: 1.0,
                 travel_burn_per_distance: Energy(1),
@@ -4026,7 +4289,6 @@ mod tests {
                 location_name: "Aster Reach".into(),
                 tank_energy: Energy(100),
                 tank_capacity: Energy(250),
-                bay_energy: 0,
                 cargo: vec![CargoItemView {
                     good_id: id("core:ore"),
                     good_name: "Ferrite Ore".into(),
@@ -4048,6 +4310,7 @@ mod tests {
                 traveling: false,
             },
             fleet: game_app::FleetView::default(),
+            energy_logistics: game_app::EnergyLogisticsView::default(),
             events: vec![],
         }
     }
@@ -4129,6 +4392,179 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    #[test]
+    fn energy_logistics_render_all_required_contract_facts_in_both_layouts() {
+        let mut view = test_view();
+        let mut ids = game_core::EnergyContracts::default();
+        let contract_id = ids.allocate_id().unwrap();
+        let source = SystemIdentityView {
+            id: id("core:s0"),
+            name: "Aster Reach".into(),
+        };
+        let destination = SystemIdentityView {
+            id: id("core:s1"),
+            name: "Brasshaven".into(),
+        };
+        let route = |burn, ticks| game_app::EnergyRouteFactsView {
+            systems: vec![source.clone(), destination.clone()],
+            burn: Energy(burn),
+            ticks,
+        };
+        view.energy_logistics = game_app::EnergyLogisticsView {
+            markets: vec![game_app::EnergyMarketLogisticsView {
+                system: destination.clone(),
+                stock: Energy(30),
+                capacity: Energy(5_000),
+                target: Energy(5_000),
+                offered: Energy::ZERO,
+                requested: Energy(3_940),
+                inbound: Energy(3_940),
+                runway: 3,
+                stage: BrownoutStage::Emergency,
+                cause: Some(game_core::EnergyStarvationCause::AcceptedDeliveryPending),
+                blocker: Some("accepted delivery pending".into()),
+            }],
+            opportunities: vec![game_app::EnergyContractOpportunityView {
+                source: source.clone(),
+                destination: destination.clone(),
+                maximum_gross_payload: Energy(4_000),
+                deadhead: route(10, 1),
+                loaded: route(20, 2),
+                recovery: route(20, 2),
+                carrier_fee: Energy(40),
+                carrier_allocation: Energy(60),
+                net_delivery: Energy(3_940),
+                freight_rate_bps: 150,
+                expected_net_profit: Energy(30),
+                score: 10_000_000,
+                destination_runway_before: 3,
+                destination_runway_after: 42,
+                blocker: None,
+            }],
+            contracts: vec![game_app::ActiveEnergyContractView {
+                id: contract_id,
+                state: game_core::EnergyContractState::Arrived {
+                    arrived_tick: 7,
+                    settlement_deadline: 27,
+                },
+                source: source.clone(),
+                destination: destination.clone(),
+                carrier_id: id("core:player"),
+                carrier_name: "Free Trader".into(),
+                player_owned: true,
+                gross_payload: Energy(4_000),
+                deadhead: route(10, 1),
+                loaded: route(20, 2),
+                recovery: route(20, 2),
+                carrier_fee: Energy(40),
+                carrier_allocation: Energy(60),
+                net_delivery: Energy(3_940),
+                freight_rate_bps: 150,
+                expected_net_profit: Energy(30),
+                current_leg: None,
+                remaining_ticks: None,
+                locked_amount: Energy(1_940),
+                cumulative_settled: Energy(2_000),
+                converted_reimbursement: Energy(20),
+                converted_fee: Energy(20),
+                deadline: Some(27),
+                recovery_reserve: Energy(20),
+                latest_blocker: Some("storage headroom".into()),
+            }],
+            storage: game_app::PlayerEnergyStorageView {
+                tank: Energy(100),
+                tank_capacity: Energy(250),
+                owned_bulk: Energy(60),
+                locked_bulk: Energy(1_940),
+                locked_contract: Some(contract_id),
+                bulk_used: Energy(2_000),
+                bulk_capacity: Energy(4_000),
+                owned_to_tank_maximum: Energy::ZERO,
+                owned_to_market_maximum: Energy::ZERO,
+                transfer_blocker: Some("active Energy contract".into()),
+            },
+            diagnostics: game_core::EnergyLogisticsDiagnostics::default(),
+        };
+        let ui = UiState {
+            activity: Activity::Logistics,
+            ..UiState::default()
+        };
+
+        let regular = rendered_at(160, 45, &view, &ui);
+        for fact in [
+            "1 Opportunities",
+            "max 4,000 E",
+            "empty 10 E/1t",
+            "loaded 20 E/2t",
+            "fee 40 E",
+            "expected profit 30 E",
+            "delivers 3,940 E",
+            "freight 1.5%",
+            "recovery reserve 20 E",
+            "runway 3→42",
+            "locked 1,940 E",
+            "deadline 27",
+        ] {
+            assert!(regular.contains(fact), "missing {fact:?} in:\n{regular}");
+        }
+        let trade = rendered_at(
+            160,
+            45,
+            &view,
+            &UiState {
+                activity: Activity::Trade,
+                ..UiState::default()
+            },
+        );
+        assert!(!trade.contains("1 Opportunities"));
+        assert!(!trade.contains("Active Contract"));
+
+        let compact = rendered_at(80, 30, &view, &ui);
+        for fact in [
+            "1 Opportunities",
+            "2 Active Contract",
+            "3 Storage",
+            "Tank 100/250 E",
+            "Locked contract bulk 1,940 E",
+        ] {
+            assert!(compact.contains(fact), "missing {fact:?} in:\n{compact}");
+        }
+    }
+
+    #[tokio::test]
+    async fn logistics_focus_opens_explicit_storage_amount_entry() {
+        let app = game_app::spawn(test_session());
+        let view = app.views.borrow().clone();
+        let mut ui = UiState {
+            activity: Activity::Logistics,
+            ..UiState::default()
+        };
+
+        handle_key(KeyCode::Tab, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.logistics_region, LogisticsRegion::ActiveContract);
+        handle_key(KeyCode::Tab, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.logistics_region, LogisticsRegion::Storage);
+        handle_key(KeyCode::Down, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.logistics_storage_index, 1);
+        handle_key(KeyCode::Enter, &mut ui, &view, &app)
+            .await
+            .unwrap();
+        assert_eq!(ui.input_layer, InputLayer::Amount);
+        assert_eq!(ui.amount_action, Some(AmountAction::OwnedBulkToMarket));
+
+        let rendered = rendered_at(160, 45, &view, &ui);
+        assert!(rendered.contains("Deposit Owned Energy at Market"));
+        assert!(!rendered.contains("Energy accept"));
+        assert!(!rendered.contains("bulk→tank"));
+        app.shutdown().await.unwrap();
     }
 
     #[test]
@@ -4327,12 +4763,15 @@ mod tests {
             ..UiState::default()
         };
         assert!(rendered_at(100, 35, &edge, &help).contains("Help"));
-        let quantity = UiState {
-            input_layer: InputLayer::Quantity,
-            quantity_input: Some("123".into()),
+        let amount = UiState {
+            input_layer: InputLayer::Amount,
+            amount_input: Some("123".into()),
+            amount_action: Some(AmountAction::Buy {
+                good: id("core:ore"),
+            }),
             ..UiState::default()
         };
-        assert!(rendered_at(100, 35, &edge, &quantity).contains("Trade Quantity"));
+        assert!(rendered_at(100, 35, &edge, &amount).contains("Buy Ordinary Goods"));
     }
 
     #[tokio::test]
@@ -4382,7 +4821,7 @@ mod tests {
             .governor
             .policy
             .import_priorities
-            .insert(invalid.inspection.market[0].good_id.clone(), 10_000);
+            .insert(id(ENERGY_ID), 100);
         ui.governance_index = 2 + invalid.inspection.market.len();
         handle_key(KeyCode::Right, &mut ui, &invalid, &app)
             .await
@@ -4544,8 +4983,8 @@ mod tests {
         assert!(rendered.contains(">"), "selection needs a textual marker");
         assert!(rendered.contains("WARN"), "warning needs a textual label");
         assert!(rendered.contains("Emergency"), "severity must be named");
-        assert!(rendered.contains("S(o)rt"));
-        assert!(rendered.contains("(D)irection"));
+        assert!(rendered.contains("Space run"));
+        assert!(rendered.contains("? help"));
         assert!(!rendered.contains("core:"));
         let footer_has_accent = (43..45).any(|y| {
             (0..160).any(|x| {
@@ -4633,7 +5072,7 @@ mod tests {
         view = app.views.borrow().clone();
         assert_eq!(view.selected_system, id("core:s0"));
 
-        handle_key(KeyCode::F(3), &mut ui, &view, &app)
+        handle_key(KeyCode::F(4), &mut ui, &view, &app)
             .await
             .unwrap();
         view = app.views.borrow().clone();
@@ -4696,8 +5135,8 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
         assert!(text_is_color(buffer, 0..1, "F1", Color::Yellow));
-        for key in ["↑/↓", "Enter", "F2", "Space"] {
-            assert!(text_is_color(buffer, 43..45, key, Color::Yellow), "{key}");
+        for key in ["Space", "?", "Q"] {
+            assert!(text_is_color(buffer, 42..45, key, Color::Yellow), "{key}");
         }
 
         let backend = TestBackend::new(80, 30);
@@ -4734,7 +5173,12 @@ mod tests {
         view.player.cargo_used = u64::MAX;
         view.player.cargo_capacity = u32::MAX;
         for (width, height) in [(80, 30), (160, 45)] {
-            for activity in [Activity::Systems, Activity::Trade, Activity::Intelligence] {
+            for activity in [
+                Activity::Systems,
+                Activity::Trade,
+                Activity::Logistics,
+                Activity::Intelligence,
+            ] {
                 let rendered = rendered_at(
                     width,
                     height,
@@ -4768,7 +5212,8 @@ mod tests {
             assert!(trade.contains("Destinations"));
             assert!(trade.contains("Brasshaven"));
             assert!(trade.contains("Route — Brasshaven (read-only)"));
-            assert!(trade.contains("Qty 1"));
+            assert!(trade.contains("exact amount required"));
+            assert!(trade.contains("enter buy amount"));
             assert!(trade.contains(if width == 80 {
                 "Aster Reach → Brasshaven"
             } else {
@@ -4827,7 +5272,7 @@ mod tests {
         assert_eq!(ui.route_proposal, Some(id("core:s1")));
         assert!(!view.player.traveling, "preview must not mutate simulation");
 
-        handle_key(KeyCode::F(3), &mut ui, &view, &app)
+        handle_key(KeyCode::F(4), &mut ui, &view, &app)
             .await
             .unwrap();
         view = app.views.borrow().clone();
@@ -4898,7 +5343,7 @@ mod tests {
         view = app.views.borrow().clone();
         assert_eq!(ui.selected_system, Some(id("core:s1")));
 
-        handle_key(KeyCode::F(3), &mut ui, &view, &app)
+        handle_key(KeyCode::F(4), &mut ui, &view, &app)
             .await
             .unwrap();
         view = app.views.borrow().clone();
@@ -5085,15 +5530,13 @@ mod tests {
     }
 
     #[test]
-    fn one_transaction_order_focuses_limits_cost_and_capacity() {
+    fn exact_amount_dialog_focuses_current_limit_and_cost() {
         let mut view = test_view();
         view.local_trade.market[0].inventory = 100;
         view.local_trade.market[0].sell_quote = Energy(10);
         view.player.tank_energy = Energy(1_000);
-        view.player.tank_capacity = Energy(2_000);
         view.player.cargo_used = 340;
         view.player.cargo_capacity = 400;
-        view.systems[0].energy_capacity = Energy(10_000);
         view.local_trade.market[0]
             .local_trade_limits
             .as_mut()
@@ -5104,40 +5547,38 @@ mod tests {
         };
         let ui = UiState {
             activity: Activity::Trade,
-            input_layer: InputLayer::Order,
-            trade_order_side: Some(TradeOrderSide::Buy),
-            trade_order_good: Some(id("core:ore")),
-            quantity_input: Some("72".into()),
-            trade_quantity: 5,
+            input_layer: InputLayer::Amount,
+            amount_action: Some(AmountAction::Buy {
+                good: id("core:ore"),
+            }),
+            amount_input: Some("72".into()),
             ..UiState::default()
         };
 
         for (width, height) in [(80, 30), (160, 45)] {
             let rendered = rendered_at(width, height, &view, &ui);
             for fact in [
-                "One-Transaction Buy Order",
-                "Requested: 72_ · Reusable preset: 5",
+                "Buy Ordinary Goods",
+                "Amount: 72_",
                 "Maximum now: 60 (cargo capacity)",
-                "Order total: 720 E",
-                "At maximum: 600 E · Tank 1000→400 E · Cargo 340→400/400",
+                "Transaction total: 720 E",
                 "Requested 72 exceeds the maximum by 12",
                 "(M) use maximum",
             ] {
                 assert!(
                     rendered.contains(fact),
-                    "missing order fact at {width}x{height}: {fact}"
+                    "missing amount fact at {width}x{height}: {fact}"
                 );
             }
         }
 
-        let sell_limit =
-            trade_order_limit(&view, &view.local_trade.market[0], TradeOrderSide::Sell);
+        let sell_limit = trade_amount_limit(&view, &view.local_trade.market[0], TradeSide::Sell);
         assert_eq!(sell_limit.maximum, 2);
         assert_eq!(sell_limit.reason, "units held");
     }
 
     #[tokio::test]
-    async fn one_transaction_order_uses_maximum_without_changing_reusable_quantity() {
+    async fn every_buy_and_sell_uses_fresh_exact_amount_input() {
         let app = game_app::spawn(test_session());
         let mut view = app.views.borrow().clone();
         let ore_index = view
@@ -5155,11 +5596,10 @@ mod tests {
         let mut ui = UiState {
             activity: Activity::Trade,
             market_index: ore_index,
-            trade_quantity: 3,
             ..UiState::default()
         };
 
-        handle_key(KeyCode::Char('S'), &mut ui, &view, &app)
+        handle_key(KeyCode::Char('s'), &mut ui, &view, &app)
             .await
             .unwrap();
         handle_key(KeyCode::Char('7'), &mut ui, &view, &app)
@@ -5168,13 +5608,13 @@ mod tests {
         handle_key(KeyCode::Char('m'), &mut ui, &view, &app)
             .await
             .unwrap();
-        assert_eq!(ui.quantity_input.as_deref(), Some("7"));
+        assert_eq!(ui.amount_input.as_deref(), Some("7"));
         assert!(ui.message.contains("units held"));
         handle_key(KeyCode::Esc, &mut ui, &view, &app)
             .await
             .unwrap();
 
-        handle_key(KeyCode::Char('B'), &mut ui, &view, &app)
+        handle_key(KeyCode::Char('b'), &mut ui, &view, &app)
             .await
             .unwrap();
         view.local_trade.market.reverse();
@@ -5187,24 +5627,20 @@ mod tests {
         handle_key(KeyCode::Enter, &mut ui, &view, &app)
             .await
             .unwrap();
-        assert_eq!(ui.input_layer, InputLayer::Order);
+        assert_eq!(ui.input_layer, InputLayer::Amount);
         assert_eq!(app.views.borrow().player.cargo_used, 0);
         assert!(ui.message.contains("maximum"));
 
         handle_key(KeyCode::Char('m'), &mut ui, &view, &app)
             .await
             .unwrap();
-        let maximum = ui.quantity_input.clone().unwrap().parse::<u32>().unwrap();
+        let maximum = ui.amount_input.clone().unwrap().parse::<u32>().unwrap();
         assert_eq!(maximum, expected_maximum);
         handle_key(KeyCode::Enter, &mut ui, &view, &app)
             .await
             .unwrap();
         assert_eq!(ui.input_layer, InputLayer::Root);
-        assert_eq!(ui.trade_order_side, None);
-        assert_eq!(
-            ui.trade_quantity, 3,
-            "one-off orders must not change preset"
-        );
+        assert_eq!(ui.amount_action, None);
         assert_eq!(app.views.borrow().player.cargo_used, u64::from(maximum));
 
         let view_after_buy = app.views.borrow().clone();
@@ -5214,7 +5650,7 @@ mod tests {
             .iter()
             .position(|row| row.name == "Ore")
             .unwrap();
-        handle_key(KeyCode::Char('S'), &mut ui, &view_after_buy, &app)
+        handle_key(KeyCode::Char('s'), &mut ui, &view_after_buy, &app)
             .await
             .unwrap();
         handle_key(KeyCode::Char('m'), &mut ui, &view_after_buy, &app)
@@ -5224,11 +5660,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ui.input_layer, InputLayer::Root);
-        assert_eq!(ui.trade_quantity, 3);
         assert_eq!(app.views.borrow().player.cargo_used, 0);
 
         let view_after_sell = app.views.borrow().clone();
-        handle_key(KeyCode::Char('B'), &mut ui, &view_after_sell, &app)
+        handle_key(KeyCode::Char('b'), &mut ui, &view_after_sell, &app)
             .await
             .unwrap();
         handle_key(KeyCode::Char('7'), &mut ui, &view_after_sell, &app)
@@ -5238,8 +5673,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ui.input_layer, InputLayer::Root);
-        assert_eq!(ui.trade_order_good, None);
-        assert_eq!(ui.trade_quantity, 3);
+        assert_eq!(ui.amount_action, None);
         assert_eq!(app.views.borrow().player.cargo_used, 0);
         app.shutdown().await.unwrap();
     }
@@ -5263,8 +5697,9 @@ mod tests {
         );
 
         for fact in [
-            "Buy total 11 E · Tank 100→89 E · Cargo 2→3/10",
-            "Sell total 9 E · Tank 100→109 E · Cargo 2→1/10",
+            "Buy 11 E/unit · maximum 8 (cargo capacity)",
+            "Sell 9 E/unit · maximum 2 (units held)",
+            "exact amount required",
             "Aster Reach → Brasshaven",
             "1 jumps · 3.5 distance · 4 ticks",
             "Requires 4 E · after arrival 96 E",
@@ -5312,9 +5747,9 @@ mod tests {
                 ..UiState::default()
             },
         );
-        assert!(compact.contains("1-5/35"));
-        assert!(compact.contains("1-4/30"));
-        assert!(compact.contains("Buy total"));
+        assert!(compact.contains("/35"));
+        assert!(compact.contains("/30"));
+        assert!(compact.contains("enter buy amount"));
         assert!(compact.contains("Aster Reach → Brasshaven"));
 
         let regular = rendered_at(
@@ -5329,8 +5764,8 @@ mod tests {
                 ..UiState::default()
             },
         );
-        assert!(regular.contains("1-31/35"));
-        assert!(regular.contains("1-26/30"));
+        assert!(regular.contains("/35"));
+        assert!(regular.contains("/30"));
         assert!(regular.contains("Player / Trade"));
         assert!(regular.contains("Route Proposal"));
     }
@@ -5518,11 +5953,11 @@ mod tests {
         let app = game_app::spawn(test_session());
         let mut ui = UiState {
             activity: Activity::Trade,
-            market_index: 1,
+            market_index: 0,
             ..UiState::default()
         };
         let mut view = app.views.borrow().clone();
-        let local_good = view.local_trade.market[1].good_id.clone();
+        let local_good = view.local_trade.market[0].good_id.clone();
 
         handle_key(KeyCode::Tab, &mut ui, &view, &app)
             .await
@@ -5539,8 +5974,8 @@ mod tests {
             Some(&id("core:s1"))
         );
         assert!(!view.player.traveling);
-        assert_eq!(ui.market_index, 1);
-        assert_eq!(view.local_trade.market[1].good_id, local_good);
+        assert_eq!(ui.market_index, 0);
+        assert_eq!(view.local_trade.market[0].good_id, local_good);
 
         handle_key(KeyCode::Char('t'), &mut ui, &view, &app)
             .await
@@ -5586,7 +6021,7 @@ mod tests {
         view = app.views.borrow().clone();
         assert_eq!(view.tick, 1);
 
-        handle_key(KeyCode::F(5), &mut ui, &view, &app)
+        handle_key(KeyCode::F(6), &mut ui, &view, &app)
             .await
             .unwrap();
         assert_eq!(ui.activity, Activity::Encyclopedia);
@@ -5618,7 +6053,13 @@ mod tests {
         handle_key(KeyCode::F(2), &mut ui, &view, &app)
             .await
             .unwrap();
-        handle_key(KeyCode::Char('n'), &mut ui, &view, &app)
+        ui.market_index = view
+            .inspection
+            .market
+            .iter()
+            .position(|row| row.good_id == id("core:ore"))
+            .unwrap();
+        handle_key(KeyCode::Char('b'), &mut ui, &view, &app)
             .await
             .unwrap();
         handle_key(KeyCode::Char('2'), &mut ui, &view, &app)
@@ -5627,13 +6068,15 @@ mod tests {
         handle_key(KeyCode::Enter, &mut ui, &view, &app)
             .await
             .unwrap();
-        assert_eq!(ui.trade_quantity, 2);
-        handle_key(KeyCode::Char('b'), &mut ui, &view, &app)
-            .await
-            .unwrap();
         view = app.views.borrow().clone();
         assert_eq!(view.player.cargo_used, 2);
         handle_key(KeyCode::Char('s'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Char('2'), &mut ui, &view, &app)
+            .await
+            .unwrap();
+        handle_key(KeyCode::Enter, &mut ui, &view, &app)
             .await
             .unwrap();
         view = app.views.borrow().clone();
@@ -5665,7 +6108,7 @@ mod tests {
         view = app.views.borrow().clone();
         assert!(view.player.traveling);
 
-        handle_key(KeyCode::F(3), &mut ui, &view, &app)
+        handle_key(KeyCode::F(4), &mut ui, &view, &app)
             .await
             .unwrap();
         assert_eq!(ui.activity, Activity::Governance);

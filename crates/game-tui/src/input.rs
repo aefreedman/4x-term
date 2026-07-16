@@ -10,11 +10,10 @@ pub enum InputAction {
     None,
     Quit,
     CloseLayer,
-    QuantityDigit(char),
-    QuantityBackspace,
-    ConfirmQuantity,
-    ConfirmOrder,
-    UseOrderMaximum,
+    AmountDigit(char),
+    AmountBackspace,
+    ConfirmAmount,
+    UseAmountMaximum,
     Switch(Activity),
     ToggleRun,
     Step,
@@ -24,15 +23,13 @@ pub enum InputAction {
     MoveDown,
     PageUp,
     PageDown,
-    OpenQuantity,
-    OpenBuyOrder,
-    OpenSellOrder,
+    OpenBuyAmount,
+    OpenSellAmount,
+    ActivateLogistics,
     OpenDetail,
     OpenMarketDetail,
     NextSection,
     PreviousSection,
-    Buy,
-    Sell,
     BeginTravel,
     TravelUntilArrival,
     ClearContext,
@@ -56,17 +53,12 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
     }
 
     match ui.input_layer {
-        InputLayer::Quantity | InputLayer::Order => {
+        InputLayer::Amount => {
             return match code {
-                KeyCode::Char(digit) if digit.is_ascii_digit() => InputAction::QuantityDigit(digit),
-                KeyCode::Backspace => InputAction::QuantityBackspace,
-                KeyCode::Enter if ui.input_layer == InputLayer::Quantity => {
-                    InputAction::ConfirmQuantity
-                }
-                KeyCode::Enter => InputAction::ConfirmOrder,
-                KeyCode::Char('m') if ui.input_layer == InputLayer::Order => {
-                    InputAction::UseOrderMaximum
-                }
+                KeyCode::Char(digit) if digit.is_ascii_digit() => InputAction::AmountDigit(digit),
+                KeyCode::Backspace => InputAction::AmountBackspace,
+                KeyCode::Enter => InputAction::ConfirmAmount,
+                KeyCode::Char('m' | 'M') => InputAction::UseAmountMaximum,
                 KeyCode::Esc => InputAction::CloseLayer,
                 _ => InputAction::None,
             };
@@ -87,9 +79,10 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
     match code {
         KeyCode::F(1) => return InputAction::Switch(Activity::Systems),
         KeyCode::F(2) => return InputAction::Switch(Activity::Trade),
-        KeyCode::F(3) => return InputAction::Switch(Activity::Governance),
-        KeyCode::F(4) => return InputAction::Switch(Activity::Intelligence),
-        KeyCode::F(5) => return InputAction::Switch(Activity::Encyclopedia),
+        KeyCode::F(3) => return InputAction::Switch(Activity::Logistics),
+        KeyCode::F(4) => return InputAction::Switch(Activity::Governance),
+        KeyCode::F(5) => return InputAction::Switch(Activity::Intelligence),
+        KeyCode::F(6) => return InputAction::Switch(Activity::Encyclopedia),
         KeyCode::Char('q') => return InputAction::Quit,
         KeyCode::Char(' ') => return InputAction::ToggleRun,
         KeyCode::Char('.') => return InputAction::Step,
@@ -111,16 +104,21 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
         Activity::Trade => match code {
             KeyCode::Up | KeyCode::Char('k') => InputAction::MoveUp,
             KeyCode::Down | KeyCode::Char('j') => InputAction::MoveDown,
-            KeyCode::Char('n') => InputAction::OpenQuantity,
-            KeyCode::Char('b') => InputAction::Buy,
-            KeyCode::Char('s') => InputAction::Sell,
-            KeyCode::Char('B') => InputAction::OpenBuyOrder,
-            KeyCode::Char('S') => InputAction::OpenSellOrder,
+            KeyCode::Char('b' | 'B') => InputAction::OpenBuyAmount,
+            KeyCode::Char('s' | 'S') => InputAction::OpenSellAmount,
             KeyCode::Char('t') | KeyCode::Enter => InputAction::BeginTravel,
             KeyCode::Char('g') => InputAction::TravelUntilArrival,
             KeyCode::Tab => InputAction::NextSection,
             KeyCode::BackTab => InputAction::PreviousSection,
             KeyCode::Esc => InputAction::ClearContext,
+            _ => InputAction::None,
+        },
+        Activity::Logistics => match code {
+            KeyCode::Up | KeyCode::Char('k') => InputAction::MoveUp,
+            KeyCode::Down | KeyCode::Char('j') => InputAction::MoveDown,
+            KeyCode::Tab => InputAction::NextSection,
+            KeyCode::BackTab => InputAction::PreviousSection,
+            KeyCode::Enter => InputAction::ActivateLogistics,
             _ => InputAction::None,
         },
         Activity::Governance => match code {
@@ -156,51 +154,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn overlays_block_global_and_activity_actions() {
+    fn amount_entry_blocks_global_and_activity_actions() {
         let ui = UiState {
             activity: Activity::Trade,
-            input_layer: InputLayer::Quantity,
+            input_layer: InputLayer::Amount,
             ..UiState::default()
         };
         assert_eq!(route_key(KeyCode::F(2), &ui, true), InputAction::None);
         assert_eq!(route_key(KeyCode::Char('b'), &ui, true), InputAction::None);
+        for key in ['m', 'M'] {
+            assert_eq!(
+                route_key(KeyCode::Char(key), &ui, true),
+                InputAction::UseAmountMaximum
+            );
+        }
+        assert_eq!(
+            route_key(KeyCode::Enter, &ui, true),
+            InputAction::ConfirmAmount
+        );
         assert_eq!(route_key(KeyCode::Esc, &ui, true), InputAction::CloseLayer);
-
-        let order = UiState {
-            activity: Activity::Trade,
-            input_layer: InputLayer::Order,
-            ..UiState::default()
-        };
-        assert_eq!(
-            route_key(KeyCode::Char('m'), &order, true),
-            InputAction::UseOrderMaximum
-        );
-        assert_eq!(
-            route_key(KeyCode::Enter, &order, true),
-            InputAction::ConfirmOrder
-        );
-        assert_eq!(route_key(KeyCode::F(1), &order, true), InputAction::None);
     }
 
     #[test]
-    fn trade_distinguishes_quick_actions_from_one_transaction_orders() {
+    fn every_buy_and_sell_key_opens_exact_amount_entry() {
         let ui = UiState {
             activity: Activity::Trade,
             ..UiState::default()
         };
-        assert_eq!(route_key(KeyCode::Char('b'), &ui, true), InputAction::Buy);
-        assert_eq!(route_key(KeyCode::Char('s'), &ui, true), InputAction::Sell);
-        assert_eq!(
-            route_key(KeyCode::Char('B'), &ui, true),
-            InputAction::OpenBuyOrder
-        );
-        assert_eq!(
-            route_key(KeyCode::Char('S'), &ui, true),
-            InputAction::OpenSellOrder
-        );
+        for key in ['b', 'B'] {
+            assert_eq!(
+                route_key(KeyCode::Char(key), &ui, true),
+                InputAction::OpenBuyAmount
+            );
+        }
+        for key in ['s', 'S'] {
+            assert_eq!(
+                route_key(KeyCode::Char(key), &ui, true),
+                InputAction::OpenSellAmount
+            );
+        }
         assert_eq!(
             route_key(KeyCode::Char('g'), &ui, true),
             InputAction::TravelUntilArrival
+        );
+    }
+
+    #[test]
+    fn logistics_uses_focused_actions_instead_of_opaque_letter_shortcuts() {
+        let ui = UiState {
+            activity: Activity::Logistics,
+            ..UiState::default()
+        };
+        for key in ['e', 'x', 'f', 'p'] {
+            assert_eq!(route_key(KeyCode::Char(key), &ui, true), InputAction::None);
+        }
+        assert_eq!(
+            route_key(KeyCode::Enter, &ui, true),
+            InputAction::ActivateLogistics
+        );
+        assert_eq!(route_key(KeyCode::Tab, &ui, true), InputAction::NextSection);
+        assert_eq!(
+            route_key(KeyCode::F(3), &UiState::default(), true),
+            InputAction::Switch(Activity::Logistics)
         );
     }
 }

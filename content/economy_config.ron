@@ -3,7 +3,6 @@
   producer_margin_percent: 15,
   operating_reserve_ticks: 3,
   import_priorities: [
-    (good: "core:energy", percent: 200),
     (good: "frontier:habitat_modules", percent: 110),
   ],
   liquidation_threshold_percent: 100,
@@ -13,6 +12,14 @@
   life_support_burn_per_capita: 1,
   source_output_percent: 100,
   idle_trader_repositioning: true,
+  energy_logistics: (
+    carrier_fee_bps: [50, 100, 200, 300],
+    max_allocation_bps: 1000,
+    curtailment_projection_window: 20,
+    export_reserve: 0,
+    authored_export_base: 0,
+    settlement_timeout_ticks: 20,
+  ),
   brownouts: (
     throttled_entry_ticks: 12,
     emergency_entry_ticks: 6,
@@ -24,7 +31,6 @@
     throttled_throughput_percent: 50,
     emergency_throughput_percent: 0,
     starvation_throughput_percent: 0,
-    emergency_energy_bid_ceiling: 10,
     survival_goods: ["core:energy"],
   ),
   population: (

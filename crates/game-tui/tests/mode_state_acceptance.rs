@@ -139,7 +139,7 @@ fn input_precedence_is_unsupported_then_overlay_then_global_then_activity() {
     assert_eq!(route_key(KeyCode::F(1), &ui, false), InputAction::None);
     assert_eq!(route_key(KeyCode::Char('q'), &ui, false), InputAction::Quit);
 
-    ui.input_layer = InputLayer::Quantity;
+    ui.input_layer = InputLayer::Amount;
     assert_eq!(route_key(KeyCode::F(1), &ui, true), InputAction::None);
     assert_eq!(route_key(KeyCode::Esc, &ui, true), InputAction::CloseLayer);
 
@@ -148,11 +148,17 @@ fn input_precedence_is_unsupported_then_overlay_then_global_then_activity() {
         route_key(KeyCode::F(1), &ui, true),
         InputAction::Switch(Activity::Systems)
     );
-    assert_eq!(route_key(KeyCode::Char('b'), &ui, true), InputAction::Buy);
-    assert_eq!(route_key(KeyCode::Char('s'), &ui, true), InputAction::Sell);
+    assert_eq!(
+        route_key(KeyCode::Char('b'), &ui, true),
+        InputAction::OpenBuyAmount
+    );
+    assert_eq!(
+        route_key(KeyCode::Char('s'), &ui, true),
+        InputAction::OpenSellAmount
+    );
     assert_eq!(route_key(KeyCode::Char('.'), &ui, true), InputAction::Step);
     assert_eq!(
-        route_key(KeyCode::F(5), &ui, true),
+        route_key(KeyCode::F(6), &ui, true),
         InputAction::Switch(Activity::Encyclopedia)
     );
     ui.activity = Activity::Encyclopedia;
@@ -178,14 +184,18 @@ fn activity_switching_has_no_focus_cycle_or_tab_requirement() {
     );
     assert_eq!(
         route_key(KeyCode::F(3), &ui, true),
-        InputAction::Switch(Activity::Governance)
+        InputAction::Switch(Activity::Logistics)
     );
     assert_eq!(
         route_key(KeyCode::F(4), &ui, true),
-        InputAction::Switch(Activity::Intelligence)
+        InputAction::Switch(Activity::Governance)
     );
     assert_eq!(
         route_key(KeyCode::F(5), &ui, true),
+        InputAction::Switch(Activity::Intelligence)
+    );
+    assert_eq!(
+        route_key(KeyCode::F(6), &ui, true),
         InputAction::Switch(Activity::Encyclopedia)
     );
     assert_eq!(route_key(KeyCode::Tab, &ui, true), InputAction::None);

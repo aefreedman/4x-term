@@ -6,6 +6,17 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
 use std::fmt::{Display, Formatter};
 use thiserror::Error;
 
+mod energy_logistics;
+
+pub use energy_logistics::{
+    BulkEnergyHold, CarrierFeeSchedule, ContractId, ContractRoute, EnergyContract,
+    EnergyContractBlocker, EnergyContractEvent, EnergyContractIntent,
+    EnergyContractOpportunitySnapshot, EnergyContractSnapshot, EnergyContractState,
+    EnergyContractTerminalOutcome, EnergyContracts, EnergyLogisticsDiagnostics,
+    EnergyLogisticsPolicy, EnergyMarketLogisticsSnapshot, EnergyStarvationCause, LockedEnergyLot,
+    PendingEnergyContractIntents,
+};
+
 pub const ENERGY_ID: &str = "core:energy";
 /// Content-facing upper bound for population sufficiency history.
 ///
@@ -198,7 +209,6 @@ pub struct BrownoutConfig {
     pub throttled_throughput_percent: u32,
     pub emergency_throughput_percent: u32,
     pub starvation_throughput_percent: u32,
-    pub emergency_energy_bid_ceiling: Energy,
     pub survival_goods: BTreeSet<ContentId>,
 }
 
@@ -215,7 +225,6 @@ impl Default for BrownoutConfig {
             throttled_throughput_percent: 50,
             emergency_throughput_percent: 0,
             starvation_throughput_percent: 0,
-            emergency_energy_bid_ceiling: Energy(10),
             survival_goods: BTreeSet::from([ContentId::new(ENERGY_ID).expect("constant id")]),
         }
     }
@@ -234,7 +243,6 @@ impl BrownoutConfig {
             || self.throttled_throughput_percent > 100
             || self.emergency_throughput_percent > self.throttled_throughput_percent
             || self.starvation_throughput_percent > self.emergency_throughput_percent
-            || self.emergency_energy_bid_ceiling.0 <= 0
             || !self
                 .survival_goods
                 .iter()
@@ -531,10 +539,14 @@ pub enum FleetMode {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FleetArchetype {
+    pub id: ContentId,
     pub id_prefix: String,
     pub name_prefix: String,
+    pub initial_count: usize,
+    pub maximum_count: usize,
     pub starting_tank: Energy,
     pub energy_tank_capacity: Energy,
+    pub bulk_energy_capacity: Energy,
     pub cargo_capacity: u32,
     pub speed: f64,
     pub travel_burn_per_distance: Energy,
@@ -555,10 +567,9 @@ impl FleetArchetype {
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct FleetDynamics {
     pub mode: Option<FleetMode>,
-    /// Validated common NPC archetype. Anti-strand protection consumes this
-    /// configured capability rather than depending on active fleet size.
-    pub archetype: Option<FleetArchetype>,
-    pub archetype_capability: Option<LiquidationTraderCapability>,
+    /// Stable-ID ordered NPC archetype registry. Total caps live in `mode` and
+    /// each archetype contributes its own initial and maximum count.
+    pub archetypes: BTreeMap<ContentId, FleetArchetype>,
     /// Canonical profitable request score left after one request per idle NPC,
     /// normalized by system count.
     pub normalized_unserved_opportunity: u64,
@@ -637,6 +648,10 @@ impl MarketPolicy {
             || self.liquidation_threshold_percent < 100
             || self.liquidation_discount_percent > 100
             || self.default_target == 0
+            || self
+                .import_priorities
+                .keys()
+                .any(|good| good.as_str() == ENERGY_ID)
         {
             return Err(CoreError::InvalidPolicy);
         }
@@ -662,6 +677,8 @@ pub struct SystemDefinition {
     pub investment_policy: InvestmentPolicy,
     pub governance: Governance,
     pub policy: MarketPolicy,
+    /// Fully resolved policy for this market; content overrides are compiled before core.
+    pub energy_logistics: EnergyLogisticsPolicy,
     /// Graph/content-compiled anti-strand reserve; never derived from policy knobs.
     pub protected_liquidation_budget: Energy,
     pub bootstrap_risk_acknowledged: bool,
@@ -709,8 +726,10 @@ pub struct TraderDefinition {
     pub id: ContentId,
     pub name: String,
     pub system: ContentId,
+    pub archetype: Option<ContentId>,
     pub energy_tank: Energy,
     pub energy_tank_capacity: Energy,
+    pub bulk_energy_capacity: Energy,
     pub cargo_capacity: u32,
     pub speed: f64,
     pub travel_burn_per_distance: Energy,
@@ -756,6 +775,7 @@ pub struct EconomyConfig {
     pub source_output_percent: u32,
     pub idle_trader_repositioning: bool,
     pub brownouts: BrownoutConfig,
+    pub energy_logistics: EnergyLogisticsPolicy,
     pub population: PopulationConfig,
     pub investments: BTreeMap<InvestmentKind, InvestmentShape>,
 }
@@ -768,6 +788,7 @@ impl Default for EconomyConfig {
             source_output_percent: 100,
             idle_trader_repositioning: true,
             brownouts: BrownoutConfig::default(),
+            energy_logistics: EnergyLogisticsPolicy::default(),
             population: PopulationConfig::default(),
             investments: default_investment_shapes(),
         }
@@ -944,23 +965,36 @@ fn validate_fleet_definition(
     let Some(mode) = &fleet.mode else {
         return Err(CoreError::InvalidWorldDynamics);
     };
-    let Some(archetype) = &fleet.archetype else {
-        return match mode {
-            FleetMode::Fixed { .. } => Ok(()),
-            FleetMode::Dynamic { .. } => Err(CoreError::InvalidWorldDynamics),
-        };
-    };
-    if archetype.starting_tank.0 < 0
-        || archetype.starting_tank > archetype.energy_tank_capacity
-        || archetype.energy_tank_capacity.0 <= 0
-        || archetype.cargo_capacity == 0
-        || !archetype.speed.is_finite()
-        || archetype.speed <= 0.0
-        || archetype.travel_burn_per_distance.0 < 0
-        || fleet.archetype_capability != Some(archetype.liquidation_capability())
-        || dynamic_trader_id(archetype, 1).is_err()
-        || archetype.name_prefix.trim().is_empty()
-    {
+    if matches!(mode, FleetMode::Dynamic { .. }) && fleet.archetypes.is_empty() {
+        return Err(CoreError::InvalidWorldDynamics);
+    }
+    let mut prefixes = BTreeSet::new();
+    for (id, archetype) in &fleet.archetypes {
+        if id != &archetype.id
+            || archetype.initial_count > archetype.maximum_count
+            || archetype.maximum_count == 0
+            || archetype.starting_tank.0 <= 0
+            || archetype.starting_tank > archetype.energy_tank_capacity
+            || archetype.energy_tank_capacity.0 <= 0
+            || archetype.bulk_energy_capacity.0 < 0
+            || archetype.cargo_capacity == 0
+            || !archetype.speed.is_finite()
+            || archetype.speed <= 0.0
+            || archetype.travel_burn_per_distance.0 <= 0
+            || dynamic_trader_id(archetype, 1).is_err()
+            || archetype.name_prefix.trim().is_empty()
+            || !prefixes.insert(archetype.id_prefix.as_str())
+        {
+            return Err(CoreError::InvalidWorldDynamics);
+        }
+    }
+    if prefixes.iter().any(|left| {
+        prefixes.iter().any(|right| {
+            left != right
+                && (left.starts_with(&format!("{right}_"))
+                    || right.starts_with(&format!("{left}_")))
+        })
+    }) {
         return Err(CoreError::InvalidWorldDynamics);
     }
     if let FleetMode::Dynamic {
@@ -972,7 +1006,29 @@ fn validate_fleet_definition(
         maximum_count,
         ..
     } = mode
-        && (*opportunity_threshold == 0
+    {
+        let authored_initial = fleet
+            .archetypes
+            .values()
+            .try_fold(0_usize, |sum, value| sum.checked_add(value.initial_count))
+            .ok_or(CoreError::Overflow)?;
+        let authored_maximum = fleet
+            .archetypes
+            .values()
+            .try_fold(0_usize, |sum, value| sum.checked_add(value.maximum_count))
+            .ok_or(CoreError::Overflow)?;
+        let mut actual = BTreeMap::<ContentId, usize>::new();
+        for trader in traders.iter().filter(|trader| !trader.player) {
+            let archetype = trader
+                .archetype
+                .as_ref()
+                .ok_or(CoreError::InvalidWorldDynamics)?;
+            if !fleet.archetypes.contains_key(archetype) {
+                return Err(CoreError::InvalidWorldDynamics);
+            }
+            *actual.entry(archetype.clone()).or_default() += 1;
+        }
+        if *opportunity_threshold == 0
             || *opportunity_window == 0
             || *opportunity_window > MAX_FLEET_WINDOW_TICKS
             || *spawn_cooldown_ticks == 0
@@ -980,15 +1036,21 @@ fn validate_fleet_definition(
             || *retirement_window > MAX_FLEET_WINDOW_TICKS
             || *maximum_count == 0
             || *initial_count > *maximum_count
+            || *maximum_count > authored_maximum
+            || *initial_count != authored_initial
             || *initial_count != traders.iter().filter(|trader| !trader.player).count()
-            || traders.iter().any(|trader| {
-                trader
-                    .id
-                    .as_str()
-                    .starts_with(&format!("{}_dynamic_", archetype.id_prefix))
-            }))
-    {
-        return Err(CoreError::InvalidWorldDynamics);
+            || fleet.archetypes.values().any(|archetype| {
+                actual.get(&archetype.id).copied().unwrap_or(0) != archetype.initial_count
+                    || traders.iter().any(|trader| {
+                        trader
+                            .id
+                            .as_str()
+                            .starts_with(&format!("{}_dynamic_", archetype.id_prefix))
+                    })
+            })
+        {
+            return Err(CoreError::InvalidWorldDynamics);
+        }
     }
     Ok(())
 }
@@ -1437,11 +1499,34 @@ pub struct EnergyFlowLedger {
     pub curtailed: Energy,
     pub market_to_tank: Energy,
     pub tank_to_market: Energy,
-    pub market_to_energy_cargo: Energy,
-    pub energy_cargo_to_market: Energy,
+    pub contract_source_loaded: Energy,
+    pub contract_destination_delivered: Energy,
+    pub contract_allocation_converted: Energy,
+    pub owned_bulk_deposited: Energy,
+    pub contract_recovery_returned: Energy,
+    pub contract_recovery_curtailed: Energy,
 }
 
 impl EnergyFlowLedger {
+    pub fn validate_contract_channels(self) -> Result<(), CoreError> {
+        let delivered_to_markets = self
+            .contract_destination_delivered
+            .checked_add(self.owned_bulk_deposited)?
+            .checked_add(self.contract_recovery_returned)?;
+        if delivered_to_markets.0 < 0
+            || self.contract_source_loaded.0 < 0
+            || self.contract_destination_delivered.0 < 0
+            || self.contract_allocation_converted.0 < 0
+            || self.owned_bulk_deposited.0 < 0
+            || self.contract_recovery_returned.0 < 0
+            || self.contract_recovery_curtailed.0 < 0
+            || self.contract_recovery_curtailed > self.curtailed
+        {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        Ok(())
+    }
+
     pub fn net_external_delta(self) -> Result<Energy, CoreError> {
         self.external_inflow
             .checked_add(self.generated)?
@@ -1469,8 +1554,12 @@ pub struct GlobalEnergyFlowLedger {
     pub curtailed: WideEnergy,
     pub market_to_tank: WideEnergy,
     pub tank_to_market: WideEnergy,
-    pub market_to_energy_cargo: WideEnergy,
-    pub energy_cargo_to_market: WideEnergy,
+    pub contract_source_loaded: WideEnergy,
+    pub contract_destination_delivered: WideEnergy,
+    pub contract_allocation_converted: WideEnergy,
+    pub owned_bulk_deposited: WideEnergy,
+    pub contract_recovery_returned: WideEnergy,
+    pub contract_recovery_curtailed: WideEnergy,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
@@ -1516,8 +1605,12 @@ impl GlobalEnergyFlowLedger {
         add!(curtailed);
         add!(market_to_tank);
         add!(tank_to_market);
-        add!(market_to_energy_cargo);
-        add!(energy_cargo_to_market);
+        add!(contract_source_loaded);
+        add!(contract_destination_delivered);
+        add!(contract_allocation_converted);
+        add!(owned_bulk_deposited);
+        add!(contract_recovery_returned);
+        add!(contract_recovery_curtailed);
     }
 }
 
@@ -1548,6 +1641,7 @@ pub struct Market {
     pub investment_policy: InvestmentPolicy,
     pub investment_state: InvestmentState,
     pub governance: Governance,
+    pub energy_logistics: EnergyLogisticsPolicy,
     pub throughput_carry: BTreeMap<ThroughputScheduleKey, u64>,
     pub source_output_percent: u32,
     pub recipe_operating_energy: BTreeMap<ContentId, Energy>,
@@ -1691,9 +1785,28 @@ pub struct TravelPlan {
 pub struct TradeLedger {
     pub purchase_cost: Energy,
     pub sales_revenue: Energy,
+    /// Contract allocation converted solely to reimburse loaded/recovery burn.
+    pub contract_reimbursement: Energy,
     pub travel_cost: Energy,
+    /// Travel cost covered by contract reimbursement.
+    pub reimbursed_travel_cost: Energy,
     pub cargo_units_moved: u64,
     pub completed_transactions: u64,
+}
+
+impl TradeLedger {
+    fn validate_contract_subsets(&self) -> Result<(), CoreError> {
+        if self.sales_revenue.0 < 0
+            || self.contract_reimbursement.0 < 0
+            || self.contract_reimbursement > self.sales_revenue
+            || self.travel_cost.0 < 0
+            || self.reimbursed_travel_cost.0 < 0
+            || self.reimbursed_travel_cost > self.travel_cost
+        {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1707,7 +1820,9 @@ struct TraderLifecycle {
     profitability: Vec<i64>,
     observed_purchase_cost: Energy,
     observed_sales_revenue: Energy,
+    observed_contract_reimbursement: Energy,
     observed_travel_cost: Energy,
+    observed_reimbursed_travel_cost: Energy,
     failed_liquidation_ticks: u32,
     last_failed_tick: Option<u64>,
     retirement: Option<TraderRetirementState>,
@@ -1722,8 +1837,11 @@ pub struct PlayerTradeNetworkAccess {
 #[derive(Component, Clone, Debug)]
 pub struct Trader {
     pub system: ContentId,
+    pub archetype: Option<ContentId>,
     pub energy_tank: Energy,
     pub energy_tank_capacity: Energy,
+    pub bulk_energy_capacity: Energy,
+    pub bulk_energy: BulkEnergyHold,
     pub cargo: BTreeMap<ContentId, u64>,
     pub cargo_cost_basis: BTreeMap<ContentId, CostBasis>,
     pub cargo_capacity: u32,
@@ -1764,6 +1882,12 @@ struct SaleTerms {
     partial: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct FundingProtection {
+    released_ordinary_claim: Energy,
+    protect_liquidation_budget: bool,
+}
+
 #[derive(Resource, Clone, Debug, Default)]
 struct Reservations {
     next_id: u64,
@@ -1796,6 +1920,79 @@ struct PendingTradeRequest {
 
 #[derive(Resource, Clone, Debug, Default)]
 struct PendingTradeRequests(Vec<PendingTradeRequest>);
+
+#[derive(Clone, Debug)]
+struct OrdinaryNpcOpportunity {
+    score: i128,
+    source: ContentId,
+    destination: ContentId,
+    good: ContentId,
+    quantity: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum DynamicOpportunityKind {
+    EnergyContract,
+    OrdinaryTrade,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct DynamicOpportunityKey {
+    kind: DynamicOpportunityKind,
+    source: ContentId,
+    destination: ContentId,
+    good: Option<ContentId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DynamicSpawnCandidate {
+    score: i128,
+    opportunity: DynamicOpportunityKey,
+    archetype: ContentId,
+}
+
+impl DynamicSpawnCandidate {
+    fn selection_order(left: &Self, right: &Self) -> Ordering {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.opportunity.kind.cmp(&right.opportunity.kind))
+            .then_with(|| left.opportunity.source.cmp(&right.opportunity.source))
+            .then_with(|| {
+                left.opportunity
+                    .destination
+                    .cmp(&right.opportunity.destination)
+            })
+            .then_with(|| left.opportunity.good.cmp(&right.opportunity.good))
+            .then_with(|| left.archetype.cmp(&right.archetype))
+    }
+
+    fn is_better_than(&self, other: &Self) -> bool {
+        Self::selection_order(self, other) == Ordering::Less
+    }
+}
+
+fn retain_best_dynamic_candidate(
+    candidates: &mut BTreeMap<DynamicOpportunityKey, DynamicSpawnCandidate>,
+    candidate: DynamicSpawnCandidate,
+) {
+    match candidates.get_mut(&candidate.opportunity) {
+        Some(current) if candidate.is_better_than(current) => *current = candidate,
+        Some(_) => {}
+        None => {
+            candidates.insert(candidate.opportunity.clone(), candidate);
+        }
+    }
+}
+
+/// Phase-10-only spawn choice. It is deliberately absent from snapshots and
+/// revalidated rather than replaced during phase 13.
+#[derive(Resource, Clone, Debug, Default)]
+struct DynamicFleetOpportunityState {
+    captured_tick: Option<u64>,
+    candidate: Option<DynamicSpawnCandidate>,
+}
+
 #[derive(Resource, Clone, Debug)]
 pub struct Catalog {
     pub goods: BTreeMap<ContentId, GoodDefinition>,
@@ -1985,6 +2182,7 @@ impl GovernorRejectionReason {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GameEvent {
     TickAdvanced(u64),
+    EnergyLogistics(EnergyContractEvent),
     EnergyGenerated {
         system: ContentId,
         amount: Energy,
@@ -2123,6 +2321,20 @@ pub enum GameCommand {
     WithdrawTank {
         amount: Energy,
     },
+    TransferOwnedBulkToTank {
+        amount: Energy,
+    },
+    DepositOwnedBulkEnergy {
+        amount: Energy,
+    },
+    AcceptEnergyContract {
+        source: ContentId,
+        destination: ContentId,
+        gross_payload: Energy,
+    },
+    CancelEnergyContract {
+        contract_id: ContractId,
+    },
     SetMarketPolicy {
         system: ContentId,
         policy: MarketPolicy,
@@ -2188,6 +2400,14 @@ pub enum CoreError {
     InvalidPlayerCount,
     #[error("core:energy definition missing or invalid")]
     InvalidEnergyGood,
+    #[error("core:energy is not available through ordinary trade")]
+    EnergyNotTradable,
+    #[error("locked contract energy cannot be moved or spent")]
+    LockedEnergy,
+    #[error("an energy contract request is already pending")]
+    PendingEnergyContractIntent,
+    #[error("an active energy contract blocks this action")]
+    ActiveEnergyContract,
     #[error("invalid market policy")]
     InvalidPolicy,
     #[error("player is not authorized to govern this market")]
@@ -2246,6 +2466,7 @@ pub struct MarketSnapshot {
     pub governance: Governance,
     pub bootstrap_risk_acknowledged: bool,
     pub policy: MarketPolicy,
+    pub energy_logistics: EnergyLogisticsPolicy,
     pub cost_basis: BTreeMap<ContentId, CostBasis>,
     pub ledger: MarketLedger,
     pub energy_flow: EnergyFlowLedger,
@@ -2255,8 +2476,11 @@ pub struct TraderSnapshot {
     pub id: ContentId,
     pub name: String,
     pub system: ContentId,
+    pub archetype: Option<ContentId>,
     pub energy_tank: Energy,
     pub energy_tank_capacity: Energy,
+    pub bulk_energy_capacity: Energy,
+    pub bulk_energy: BulkEnergyHold,
     pub cargo: BTreeMap<ContentId, u64>,
     pub cargo_capacity: u32,
     pub speed: f64,
@@ -2274,6 +2498,11 @@ pub struct TraderSnapshot {
 pub struct CoreSnapshot {
     pub tick: u64,
     pub markets: Vec<MarketSnapshot>,
+    pub energy_markets: Vec<EnergyMarketLogisticsSnapshot>,
+    pub energy_opportunities: Vec<EnergyContractOpportunitySnapshot>,
+    pub energy_contracts: Vec<EnergyContractSnapshot>,
+    pub energy_logistics: EnergyLogisticsDiagnostics,
+    pub energy_starvation: BTreeMap<ContentId, EnergyStarvationCause>,
     pub investment_shapes: BTreeMap<InvestmentKind, InvestmentShape>,
     pub player_trade_network_access: TradeNetworkAccess,
     pub traders: Vec<TraderSnapshot>,
@@ -2546,6 +2775,7 @@ impl GameSession {
             .life_support_burn_per_capita
             .checked_mul(1)?;
         definition.economy.brownouts.validate()?;
+        definition.economy.energy_logistics.validate()?;
         validate_population_config(&definition.economy.population)?;
         validate_investment_shapes(
             &definition.economy.investments,
@@ -2576,8 +2806,21 @@ impl GameSession {
         world.insert_resource(EventBuffer::default());
         world.insert_resource(Reservations::default());
         world.insert_resource(PendingTradeRequests::default());
+        world.insert_resource(DynamicFleetOpportunityState::default());
+        world.insert_resource(EnergyContracts::default());
+        world.insert_resource(PendingEnergyContractIntents::default());
+        world.insert_resource(energy_logistics::EnergyLogisticsTickCapture::default());
         for mut system in definition.systems {
+            if system
+                .policy
+                .import_priorities
+                .keys()
+                .any(|good| good.as_str() == ENERGY_ID)
+            {
+                return Err(CoreError::InvalidWorldDynamics);
+            }
             system.policy.validate()?;
+            system.energy_logistics.validate()?;
             system.investment_policy.validate()?;
             // Additive Slice-2 defaults keep older fixed-output/static-population
             // fixtures source-compatible when they adjust the legacy fields.
@@ -2742,6 +2985,7 @@ impl GameSession {
                     investment_policy: system.investment_policy,
                     investment_state: InvestmentState::default(),
                     governance: system.governance,
+                    energy_logistics: system.energy_logistics,
                     throughput_carry: BTreeMap::new(),
                     source_output_percent: source_percent,
                     recipe_operating_energy,
@@ -2758,6 +3002,7 @@ impl GameSession {
             if trader.energy_tank.0 < 0
                 || trader.energy_tank > trader.energy_tank_capacity
                 || trader.energy_tank_capacity.0 <= 0
+                || trader.bulk_energy_capacity.0 < 0
                 || trader.cargo_capacity == 0
                 || !trader.speed.is_finite()
                 || trader.speed <= 0.0
@@ -2771,8 +3016,11 @@ impl GameSession {
                 DisplayName(trader.name),
                 Trader {
                     system: trader.system,
+                    archetype: trader.archetype,
                     energy_tank: trader.energy_tank,
                     energy_tank_capacity: trader.energy_tank_capacity,
+                    bulk_energy_capacity: trader.bulk_energy_capacity,
+                    bulk_energy: BulkEnergyHold::default(),
                     cargo: BTreeMap::new(),
                     cargo_cost_basis: BTreeMap::new(),
                     cargo_capacity: trader.cargo_capacity,
@@ -2795,9 +3043,7 @@ impl GameSession {
                 e.insert(TraderLifecycle::default());
             }
         }
-        let mut session = Self { world };
-        session.validate_emergency_energy_bid_ceiling()?;
-        Ok(session)
+        Ok(Self { world })
     }
     #[must_use]
     pub fn tick(&self) -> u64 {
@@ -2856,15 +3102,19 @@ impl GameSession {
                 self.local_buy(e, &good, quantity)
             }
             GameCommand::Sell { good, quantity } => {
-                let maximum = self.player_local_trade_limits(&good)?.sell.maximum;
-                if quantity > maximum {
-                    Err(CoreError::ExactQuantityUnavailable {
-                        requested: quantity,
-                        maximum,
-                    })
+                if good.as_str() == ENERGY_ID {
+                    Err(CoreError::EnergyNotTradable)
                 } else {
-                    let e = self.player_entity()?;
-                    self.local_sell(e, &good, quantity, false).map(|_| ())
+                    let maximum = self.player_local_trade_limits(&good)?.sell.maximum;
+                    if quantity > maximum {
+                        Err(CoreError::ExactQuantityUnavailable {
+                            requested: quantity,
+                            maximum,
+                        })
+                    } else {
+                        let e = self.player_entity()?;
+                        self.local_sell(e, &good, quantity, false).map(|_| ())
+                    }
                 }
             }
             GameCommand::BeginTravel { destination } => {
@@ -2877,20 +3127,24 @@ impl GameSession {
                 good,
                 quantity,
             } => {
-                let e = self.player_entity()?;
-                let trader = self.world.get::<Trader>(e).unwrap();
-                let access = self
-                    .world
-                    .get::<PlayerTradeNetworkAccess>(e)
-                    .ok_or(CoreError::InvalidPlayerCount)?
-                    .access;
-                let system = trader.system.clone();
-                if access != TradeNetworkAccess::ReservationContracts {
-                    Err(CoreError::TradeNetworkAccessDenied)
-                } else if system != origin {
-                    Err(CoreError::WrongLocation)
+                if good.as_str() == ENERGY_ID {
+                    Err(CoreError::EnergyNotTradable)
                 } else {
-                    self.enqueue_commit_request(e, &destination, &good, quantity, true, true)
+                    let e = self.player_entity()?;
+                    let trader = self.world.get::<Trader>(e).unwrap();
+                    let access = self
+                        .world
+                        .get::<PlayerTradeNetworkAccess>(e)
+                        .ok_or(CoreError::InvalidPlayerCount)?
+                        .access;
+                    let system = trader.system.clone();
+                    if access != TradeNetworkAccess::ReservationContracts {
+                        Err(CoreError::TradeNetworkAccessDenied)
+                    } else if system != origin {
+                        Err(CoreError::WrongLocation)
+                    } else {
+                        self.enqueue_commit_request(e, &destination, &good, quantity, true, true)
+                    }
                 }
             }
             GameCommand::DepositTank { amount } => {
@@ -2900,6 +3154,22 @@ impl GameSession {
             GameCommand::WithdrawTank { amount } => {
                 let e = self.player_entity()?;
                 self.transfer_tank(e, amount, false)
+            }
+            GameCommand::TransferOwnedBulkToTank { amount } => {
+                let e = self.player_entity()?;
+                self.transfer_owned_bulk(e, amount, false)
+            }
+            GameCommand::DepositOwnedBulkEnergy { amount } => {
+                let e = self.player_entity()?;
+                self.transfer_owned_bulk(e, amount, true)
+            }
+            GameCommand::AcceptEnergyContract {
+                source,
+                destination,
+                gross_payload,
+            } => self.enqueue_player_energy_contract(source, destination, gross_payload),
+            GameCommand::CancelEnergyContract { contract_id } => {
+                self.cancel_player_energy_contract(contract_id)
             }
             GameCommand::SetMarketPolicy { system, policy } => {
                 self.set_player_policy(&system, policy)
@@ -3013,15 +3283,22 @@ impl GameSession {
 
     pub fn step(&mut self) -> Result<(), CoreError> {
         self.advance_travel()?;
+        self.mark_energy_contract_arrivals()?;
         self.refresh_enroute_reservations()?;
         self.expire_reservations()?;
         self.generate_and_life_support()?;
+        self.capture_unsupplied_energy_destinations();
         self.classify_brownouts()?;
         self.execute_sources_and_recipes()?;
+        self.maintain_preload_energy_contracts()?;
+        self.settle_energy_contracts()?;
         self.settle_idle_laden()?;
         self.rebalance_idle_npc_tanks()?;
         self.execute_autonomous_investments()?;
+        self.capture_phase10_energy_logistics()?;
         self.collect_automated_trader_requests()?;
+        self.resolve_pending_energy_contract_intents()?;
+        self.finalize_energy_starvation_attribution()?;
         self.resolve_pending_trade_requests()?;
         self.evaluate_dynamic_fleet()?;
         self.update_populations()?;
@@ -3042,6 +3319,9 @@ impl GameSession {
         system: &ContentId,
         good: &ContentId,
     ) -> Result<(Energy, Energy), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let e = self.market_entity(system)?;
         let market = self.world.get::<Market>(e).unwrap();
         let policy = self.world.get::<MarketPolicy>(e).unwrap();
@@ -3055,6 +3335,16 @@ impl GameSession {
         &mut self,
         good: &ContentId,
     ) -> Result<LocalTradeLimits, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            let unavailable = LocalTradeQuantityLimit {
+                maximum: 0,
+                reason: LocalTradeLimitReason::TradingUnavailable,
+            };
+            return Ok(LocalTradeLimits {
+                buy: unavailable,
+                sell: unavailable,
+            });
+        }
         let trader_entity = self.player_entity()?;
         let trader = self.world.get::<Trader>(trader_entity).unwrap();
         if trader.travel.is_some() {
@@ -3110,21 +3400,14 @@ impl GameSession {
                 u64::try_from(tank.0 / ask.0).unwrap_or(0),
                 LocalTradeLimitReason::TankEnergy,
             );
-            let net_market_energy = if good.as_str() == ENERGY_ID {
-                ask.0.saturating_sub(1)
-            } else {
-                ask.0
-            };
-            if net_market_energy > 0 {
-                let headroom = market
-                    .energy_storage_cap
-                    .0
-                    .saturating_sub(market.energy_stock()?.0);
-                apply(
-                    u64::try_from(headroom / net_market_energy).unwrap_or(0),
-                    LocalTradeLimitReason::MarketEnergyStorage,
-                );
-            }
+            let headroom = market
+                .energy_storage_cap
+                .0
+                .saturating_sub(market.energy_stock()?.0);
+            apply(
+                u64::try_from(headroom / ask.0).unwrap_or(0),
+                LocalTradeLimitReason::MarketEnergyStorage,
+            );
             limit
         };
 
@@ -3134,16 +3417,16 @@ impl GameSession {
                 reason: LocalTradeLimitReason::MarketQuote,
             }
         } else {
-            let life_support = self
-                .world
-                .resource::<EconomyConfig>()
-                .life_support_burn_per_capita;
-            let funded = market.funded_quantity_for_purchases(
+            let funded = self.funded_quantity_with_preload_claims(
+                &system,
+                market,
                 policy,
-                life_support,
                 u32::MAX,
                 bid,
-                Energy::ZERO,
+                FundingProtection {
+                    released_ordinary_claim: Energy::ZERO,
+                    protect_liquidation_budget: true,
+                },
             )?;
             let mut limit = LocalTradeQuantityLimit {
                 maximum: u32::MAX,
@@ -3176,6 +3459,9 @@ impl GameSession {
         system: &ContentId,
         good: &ContentId,
     ) -> Result<MarketDemandSnapshot, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let entity = self.market_entity(system)?;
         let market = self.world.get::<Market>(entity).unwrap();
         let policy = self.world.get::<MarketPolicy>(entity).unwrap();
@@ -3192,12 +3478,17 @@ impl GameSession {
         if bid.0 <= 0 {
             return Ok(MarketDemandSnapshot::default());
         }
-        let life = self
-            .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
-        let funded =
-            market.funded_quantity_for_purchases(policy, life, advertised, bid, Energy::ZERO)?;
+        let funded = self.funded_quantity_with_preload_claims(
+            system,
+            market,
+            policy,
+            advertised,
+            bid,
+            FundingProtection {
+                released_ordinary_claim: Energy::ZERO,
+                protect_liquidation_budget: true,
+            },
+        )?;
         Ok(MarketDemandSnapshot { advertised, funded })
     }
     pub fn processor_solvency(&mut self) -> Result<Vec<ProcessorSolvency>, CoreError> {
@@ -3264,7 +3555,7 @@ impl GameSession {
         Ok(rows)
     }
 
-    pub fn snapshot(&mut self) -> CoreSnapshot {
+    pub fn try_snapshot(&mut self) -> Result<CoreSnapshot, CoreError> {
         let life = self
             .world
             .resource::<EconomyConfig>()
@@ -3312,6 +3603,7 @@ impl GameSession {
                 governance: m.governance.clone(),
                 bootstrap_risk_acknowledged: m.bootstrap_risk_acknowledged,
                 policy: p.clone(),
+                energy_logistics: m.energy_logistics,
                 cost_basis: m.cost_basis.clone(),
                 ledger: m.ledger,
                 energy_flow: m.energy_flow,
@@ -3328,6 +3620,7 @@ impl GameSession {
         for market in &mut markets {
             market.demand = goods
                 .iter()
+                .filter(|good| good.as_str() != ENERGY_ID)
                 .map(|good| {
                     (
                         good.clone(),
@@ -3351,8 +3644,11 @@ impl GameSession {
                 id: id.0.clone(),
                 name: n.0.clone(),
                 system: t.system.clone(),
+                archetype: t.archetype.clone(),
                 energy_tank: t.energy_tank,
                 energy_tank_capacity: t.energy_tank_capacity,
+                bulk_energy_capacity: t.bulk_energy_capacity,
+                bulk_energy: t.bulk_energy,
                 cargo: t.cargo.clone(),
                 cargo_capacity: t.cargo_capacity,
                 speed: t.speed,
@@ -3392,9 +3688,15 @@ impl GameSession {
             .next()
             .expect("validated player access component")
             .access;
-        CoreSnapshot {
+        let energy_logistics = self.energy_logistics_projection()?;
+        Ok(CoreSnapshot {
             tick: self.tick(),
             markets,
+            energy_markets: energy_logistics.markets,
+            energy_opportunities: energy_logistics.opportunities,
+            energy_contracts: energy_logistics.contracts,
+            energy_logistics: energy_logistics.diagnostics,
+            energy_starvation: energy_logistics.starvation,
             investment_shapes: self.world.resource::<EconomyConfig>().investments.clone(),
             player_trade_network_access,
             traders,
@@ -3402,7 +3704,12 @@ impl GameSession {
             energy_flow,
             dynamics_history: self.world.resource::<AggregateDynamicsHistory>().clone(),
             fleet: self.world.resource::<FleetDynamics>().clone(),
-        }
+        })
+    }
+
+    pub fn snapshot(&mut self) -> CoreSnapshot {
+        self.try_snapshot()
+            .expect("validated simulation state must produce an immutable snapshot")
     }
 
     fn good_cost_basis(&self, market: &Market, good: &ContentId) -> Result<Energy, CoreError> {
@@ -3477,6 +3784,9 @@ impl GameSession {
         policy: &MarketPolicy,
         good: &ContentId,
     ) -> Result<Energy, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let basis = self.good_cost_basis(market, good)?;
         let scarcity = self.scarcity_multiplier(market, policy, good)?;
         let price = match policy.pricing_mode {
@@ -3559,45 +3869,6 @@ impl GameSession {
         Ok(ceilings.into_iter().min())
     }
 
-    fn maximum_normal_energy_bid(
-        &self,
-        market: &Market,
-        policy: &MarketPolicy,
-    ) -> Result<Energy, CoreError> {
-        let energy = ContentId::new(ENERGY_ID).expect("constant id");
-        let mut maximum_scarcity = market.clone();
-        maximum_scarcity.set_energy_stock(Energy::ZERO)?;
-        let ask = self.ask_quote(&maximum_scarcity, policy, &energy)?;
-        let priority = u64::from(
-            policy
-                .import_priorities
-                .get(&energy)
-                .copied()
-                .unwrap_or(100),
-        );
-        checked_mul_ratio_ceil(ask, priority, 100)
-    }
-
-    fn validate_emergency_energy_bid_ceiling(&mut self) -> Result<(), CoreError> {
-        let ceiling = self
-            .world
-            .resource::<EconomyConfig>()
-            .brownouts
-            .emergency_energy_bid_ceiling;
-        let markets = self
-            .world
-            .query::<(&Market, &MarketPolicy)>()
-            .iter(&self.world)
-            .map(|(market, policy)| (market.clone(), policy.clone()))
-            .collect::<Vec<_>>();
-        for (market, policy) in markets {
-            if self.maximum_normal_energy_bid(&market, &policy)? > ceiling {
-                return Err(CoreError::InvalidWorldDynamics);
-            }
-        }
-        Ok(())
-    }
-
     fn demand_allowed(&self, market: &Market, good: &ContentId) -> bool {
         market.operating_profile.stage < BrownoutStage::Emergency
             || self
@@ -3632,6 +3903,9 @@ impl GameSession {
         policy: &MarketPolicy,
         good: &ContentId,
     ) -> Result<Energy, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         if !self.demand_allowed(market, good) {
             return Ok(Energy::ZERO);
         }
@@ -3674,25 +3948,6 @@ impl GameSession {
                 }
             }
         }
-        if good.as_str() == ENERGY_ID && market.operating_profile.stage >= BrownoutStage::Emergency
-        {
-            let brownouts = &self.world.resource::<EconomyConfig>().brownouts;
-            let ceiling = brownouts.emergency_energy_bid_ceiling;
-            debug_assert!(
-                bid <= ceiling,
-                "validated emergency ceiling must not lower bids"
-            );
-            if market.operating_profile.stage == BrownoutStage::Starvation {
-                bid = ceiling;
-            } else if bid < ceiling {
-                let range = u64::from(brownouts.emergency_recovery_ticks);
-                let pressure = range.saturating_sub(u64::from(market.brownout.ticks_of_burn));
-                let increase = Energy(ceiling.0 - bid.0);
-                bid = bid
-                    .checked_add(checked_mul_ratio_ceil(increase, pressure, range)?)?
-                    .min(ceiling);
-            }
-        }
         Ok(bid)
     }
     fn cargo_used(trader: &Trader) -> Result<u64, CoreError> {
@@ -3708,11 +3963,16 @@ impl GameSession {
         good: &ContentId,
         quantity: u32,
     ) -> Result<(), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         if quantity == 0 {
             return Err(CoreError::ZeroQuantity);
         }
         let (system, tank, travel, used, cap) = {
             let t = self.world.get::<Trader>(trader_entity).unwrap();
+            let trader_id = self.world.get::<StableId>(trader_entity).unwrap();
+            self.ensure_carrier_contract_free(&trader_id.0, t)?;
             (
                 t.system.clone(),
                 t.energy_tank,
@@ -3757,13 +4017,7 @@ impl GameSession {
             .get::<Market>(market_entity)
             .unwrap()
             .energy_stock()?;
-        let market_energy = if good.as_str() == ENERGY_ID {
-            initial_market_energy
-                .checked_sub(Energy(i64::from(quantity)))?
-                .checked_add(total)?
-        } else {
-            initial_market_energy.checked_add(total)?
-        };
+        let market_energy = initial_market_energy.checked_add(total)?;
         if market_energy
             > self
                 .world
@@ -3816,12 +4070,6 @@ impl GameSession {
                 market.ledger.processor_output_revenue.checked_add(total)?;
         }
         market.energy_flow.tank_to_market = market.energy_flow.tank_to_market.checked_add(total)?;
-        if good.as_str() == ENERGY_ID {
-            market.energy_flow.market_to_energy_cargo = market
-                .energy_flow
-                .market_to_energy_cargo
-                .checked_add(Energy(i64::from(quantity)))?;
-        }
         trader.energy_tank = trader.energy_tank.checked_sub(total)?;
         trader.cargo.insert(good.clone(), cargo_next);
         trader
@@ -3856,11 +4104,16 @@ impl GameSession {
         requested: u32,
         liquidation: bool,
     ) -> Result<u32, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         if requested == 0 {
             return Err(CoreError::ZeroQuantity);
         }
         let (system, cargo, tank, cap, travel) = {
             let t = self.world.get::<Trader>(trader_entity).unwrap();
+            let trader_id = self.world.get::<StableId>(trader_entity).unwrap();
+            self.ensure_carrier_contract_free(&trader_id.0, t)?;
             (
                 t.system.clone(),
                 t.cargo.get(good).copied().unwrap_or(0),
@@ -3876,10 +4129,6 @@ impl GameSession {
             return Err(CoreError::InsufficientStock);
         }
         let market_entity = self.market_entity(&system)?;
-        let life = self
-            .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
         let (bid, mut quantity) = {
             let m = self.world.get::<Market>(market_entity).unwrap();
             let p = self.world.get::<MarketPolicy>(market_entity).unwrap();
@@ -3903,18 +4152,17 @@ impl GameSession {
                 return Err(CoreError::Unfunded);
             }
             let requested = requested.min(u32::try_from(cargo).unwrap_or(u32::MAX));
-            let quantity = if liquidation {
-                funded_quantity(
-                    requested,
-                    m.energy_stock()?,
-                    m.reserved_energy,
-                    m.operating_reserve(p, life)?,
-                    Energy::ZERO,
-                    bid,
-                )?
-            } else {
-                m.funded_quantity_for_purchases(p, life, requested, bid, Energy::ZERO)?
-            };
+            let quantity = self.funded_quantity_with_preload_claims(
+                &system,
+                m,
+                p,
+                requested,
+                bid,
+                FundingProtection {
+                    released_ordinary_claim: Energy::ZERO,
+                    protect_liquidation_budget: !liquidation,
+                },
+            )?;
             (bid, quantity)
         };
         let headroom = cap.checked_sub(tank)?;
@@ -3936,8 +4184,8 @@ impl GameSession {
         Ok(quantity)
     }
 
-    /// Shared validate-before-mutate settlement used by reservations, immediate
-    /// funded sales, energy cargo, and liquidation.
+    /// Shared validate-before-mutate settlement used by ordinary reservations,
+    /// immediate funded sales, and liquidation. Energy rejects at this boundary.
     fn execute_funded_sale(
         &mut self,
         trader_entity: Entity,
@@ -3946,6 +4194,9 @@ impl GameSession {
         quantity: u32,
         terms: SaleTerms,
     ) -> Result<(), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let total = terms.unit_price.checked_mul(u64::from(quantity))?;
         if total != terms.reserved_release && terms.reserved_release != Energy::ZERO {
             return Err(CoreError::InvalidPhysicalDefinition);
@@ -3967,28 +4218,20 @@ impl GameSession {
             return Err(CoreError::InsufficientTankCapacity);
         }
         let after_payment = market.energy_stock()?.checked_sub(total)?;
-        if good.as_str() == ENERGY_ID {
-            market.set_energy_stock(after_payment.checked_add(Energy(i64::from(quantity)))?)?;
-            market.energy_flow.energy_cargo_to_market = market
-                .energy_flow
-                .energy_cargo_to_market
-                .checked_add(Energy(i64::from(quantity)))?;
-        } else {
-            let next_stock = market
-                .inventory
-                .get(good)
-                .copied()
-                .unwrap_or(0)
-                .checked_add(u64::from(quantity))
-                .ok_or(CoreError::Overflow)?;
-            market.set_energy_stock(after_payment)?;
-            market.inventory.insert(good.clone(), next_stock);
-            market
-                .cost_basis
-                .entry(good.clone())
-                .or_default()
-                .add(u64::from(quantity), cargo_cost)?;
-        }
+        let next_stock = market
+            .inventory
+            .get(good)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(u64::from(quantity))
+            .ok_or(CoreError::Overflow)?;
+        market.set_energy_stock(after_payment)?;
+        market.inventory.insert(good.clone(), next_stock);
+        market
+            .cost_basis
+            .entry(good.clone())
+            .or_default()
+            .add(u64::from(quantity), cargo_cost)?;
         market.reserved_energy = market.reserved_energy.checked_sub(terms.reserved_release)?;
         market.ledger.energy_paid_to_traders =
             market.ledger.energy_paid_to_traders.checked_add(total)?;
@@ -4040,6 +4283,160 @@ impl GameSession {
         Ok(())
     }
 
+    fn preload_export_claims_for_source(&self, source: &ContentId) -> Result<Energy, CoreError> {
+        self.world
+            .resource::<EnergyContracts>()
+            .active
+            .values()
+            .filter(|contract| &contract.source == source)
+            .try_fold(Energy::ZERO, |claims, contract| match contract.state {
+                EnergyContractState::DeadheadingToSource { source_claim, .. } => {
+                    claims.checked_add(source_claim)
+                }
+                _ => Ok(claims),
+            })
+    }
+
+    fn market_exportable_energy_for_state(
+        &self,
+        market_entity: Entity,
+        market: &Market,
+    ) -> Result<Energy, CoreError> {
+        let policy = self.world.get::<MarketPolicy>(market_entity).unwrap();
+        let source = &self.world.get::<StableId>(market_entity).unwrap().0;
+        let life = self
+            .world
+            .resource::<EconomyConfig>()
+            .life_support_burn_per_capita;
+        energy_logistics::exportable_energy(
+            market.energy_stock()?,
+            market.reserved_energy,
+            self.preload_export_claims_for_source(source)?,
+            market.operating_reserve(policy, life)?,
+            market.protected_liquidation_budget,
+            market.energy_logistics.export_reserve,
+        )
+    }
+
+    fn market_exportable_energy(&self, market_entity: Entity) -> Result<Energy, CoreError> {
+        self.market_exportable_energy_for_state(
+            market_entity,
+            self.world.get::<Market>(market_entity).unwrap(),
+        )
+    }
+
+    fn projected_market_after_exportable_withdrawal(
+        &self,
+        market_entity: Entity,
+        amount: Energy,
+    ) -> Result<Option<Market>, CoreError> {
+        if amount.0 < 0 {
+            return Err(CoreError::InvalidPhysicalDefinition);
+        }
+        let mut market = self.world.get::<Market>(market_entity).unwrap().clone();
+        if self.market_exportable_energy_for_state(market_entity, &market)? < amount {
+            return Ok(None);
+        }
+        market.set_energy_stock(market.energy_stock()?.checked_sub(amount)?)?;
+        Ok(Some(market))
+    }
+
+    fn funded_quantity_with_preload_claims(
+        &self,
+        system: &ContentId,
+        market: &Market,
+        policy: &MarketPolicy,
+        requested: u32,
+        bid: Energy,
+        protection: FundingProtection,
+    ) -> Result<u32, CoreError> {
+        let life = self
+            .world
+            .resource::<EconomyConfig>()
+            .life_support_burn_per_capita;
+        let ordinary_claims = market
+            .reserved_energy
+            .checked_sub(protection.released_ordinary_claim)?;
+        let claims = ordinary_claims.checked_add(self.preload_export_claims_for_source(system)?)?;
+        funded_quantity(
+            requested,
+            market.energy_stock()?,
+            claims,
+            market.operating_reserve(policy, life)?,
+            if protection.protect_liquidation_budget {
+                market.protected_liquidation_budget
+            } else {
+                Energy::ZERO
+            },
+            bid,
+        )
+    }
+
+    fn transfer_owned_bulk(
+        &mut self,
+        trader_entity: Entity,
+        amount: Energy,
+        to_market: bool,
+    ) -> Result<(), CoreError> {
+        if amount.0 <= 0 {
+            return Err(CoreError::ZeroQuantity);
+        }
+        let mut trader = self.world.get::<Trader>(trader_entity).unwrap().clone();
+        let trader_id = self.world.get::<StableId>(trader_entity).unwrap().0.clone();
+        if self.carrier_has_active_energy_contract(&trader_id) {
+            return Err(CoreError::ActiveEnergyContract);
+        }
+        if trader.travel.is_some() {
+            return Err(CoreError::InTransit);
+        }
+        if trader.bulk_energy.owned < amount {
+            return Err(CoreError::InsufficientStock);
+        }
+        if trader.bulk_energy.locked.is_some() {
+            return Err(CoreError::LockedEnergy);
+        }
+        let next_owned = trader.bulk_energy.owned.checked_sub(amount)?;
+        let event = if to_market {
+            let market_entity = self.market_entity(&trader.system)?;
+            let mut market = self.world.get::<Market>(market_entity).unwrap().clone();
+            let next_stock = market.energy_stock()?.checked_add(amount)?;
+            if next_stock > market.energy_storage_cap {
+                return Err(CoreError::InsufficientCapacity);
+            }
+            market.set_energy_stock(next_stock)?;
+            market.energy_flow.owned_bulk_deposited = market
+                .energy_flow
+                .owned_bulk_deposited
+                .checked_add(amount)?;
+            trader.bulk_energy.owned = next_owned;
+            let system = trader.system.clone();
+            *self.world.get_mut::<Market>(market_entity).unwrap() = market;
+            *self.world.get_mut::<Trader>(trader_entity).unwrap() = trader;
+            EnergyContractEvent::OwnedBulkDepositedToMarket {
+                trader: trader_id,
+                system,
+                amount,
+            }
+        } else {
+            let next_tank = trader.energy_tank.checked_add(amount)?;
+            if next_tank > trader.energy_tank_capacity {
+                return Err(CoreError::InsufficientTankCapacity);
+            }
+            trader.energy_tank = next_tank;
+            trader.bulk_energy.owned = next_owned;
+            *self.world.get_mut::<Trader>(trader_entity).unwrap() = trader;
+            EnergyContractEvent::OwnedBulkTransferredToTank {
+                trader: trader_id,
+                amount,
+            }
+        };
+        self.world
+            .resource_mut::<EventBuffer>()
+            .0
+            .push(GameEvent::EnergyLogistics(event));
+        Ok(())
+    }
+
     fn transfer_tank(
         &mut self,
         trader_entity: Entity,
@@ -4051,6 +4448,8 @@ impl GameSession {
         }
         let (system, tank, cap, travel, refuel_policy) = {
             let t = self.world.get::<Trader>(trader_entity).unwrap();
+            let trader_id = self.world.get::<StableId>(trader_entity).unwrap();
+            self.ensure_carrier_contract_free(&trader_id.0, t)?;
             (
                 t.system.clone(),
                 t.energy_tank,
@@ -4089,13 +4488,7 @@ impl GameSession {
             }
             (next_stock, tank.checked_sub(amount)?)
         } else {
-            let life = self
-                .world
-                .resource::<EconomyConfig>()
-                .life_support_burn_per_capita;
-            let market = self.world.get::<Market>(market_entity).unwrap();
-            let policy = self.world.get::<MarketPolicy>(market_entity).unwrap();
-            if market.unreserved_energy_for_purchases(policy, life)? < amount {
+            if self.market_exportable_energy(market_entity)? < amount {
                 return Err(CoreError::InsufficientEnergy);
             }
             let next = tank.checked_add(amount)?;
@@ -4120,17 +4513,15 @@ impl GameSession {
         Ok(())
     }
     fn rebalance_idle_npc_tanks(&mut self) -> Result<(), CoreError> {
-        let life = self
-            .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
         let mut traders = self
             .world
             .query_filtered::<(Entity, &StableId, &Trader), Without<PlayerControlled>>()
             .iter(&self.world)
-            .filter(|(entity, _, trader)| {
+            .filter(|(entity, id, trader)| {
                 trader.travel.is_none()
                     && trader.cargo.is_empty()
+                    && trader.bulk_energy.locked.is_none()
+                    && !self.carrier_has_active_energy_contract(&id.0)
                     && self
                         .world
                         .get::<TraderLifecycle>(*entity)
@@ -4160,9 +4551,7 @@ impl GameSession {
                     self.transfer_tank(entity, amount, true)?;
                 }
             } else if tank < target {
-                let market = self.world.get::<Market>(market_entity).unwrap();
-                let policy = self.world.get::<MarketPolicy>(market_entity).unwrap();
-                let available = market.unreserved_energy_for_purchases(policy, life)?;
+                let available = self.market_exportable_energy(market_entity)?;
                 let amount = Energy((target.0 - tank.0).min(available.0));
                 if amount.0 > 0 {
                     self.transfer_tank(entity, amount, false)?;
@@ -4293,15 +4682,6 @@ impl GameSession {
         {
             return Err(CoreError::InvalidPolicy);
         }
-        let market = self.world.get::<Market>(market_entity).unwrap();
-        let emergency_ceiling = self
-            .world
-            .resource::<EconomyConfig>()
-            .brownouts
-            .emergency_energy_bid_ceiling;
-        if self.maximum_normal_energy_bid(market, &policy)? > emergency_ceiling {
-            return Err(CoreError::InvalidPolicy);
-        }
         let bootstrap_costs = self
             .world
             .resource::<Catalog>()
@@ -4319,9 +4699,13 @@ impl GameSession {
                 travel_burn_per_distance: trader.travel_burn_per_distance,
             })
             .collect::<Vec<_>>();
-        if let Some(capability) = self.world.resource::<FleetDynamics>().archetype_capability {
-            capabilities.push(capability);
-        }
+        capabilities.extend(
+            self.world
+                .resource::<FleetDynamics>()
+                .archetypes
+                .values()
+                .map(FleetArchetype::liquidation_capability),
+        );
         let protected_liquidation_budget = compute_protected_liquidation_budget(
             self.graph(),
             system,
@@ -4520,6 +4904,8 @@ impl GameSession {
     ) -> Result<(), CoreError> {
         let (start, speed, burn, tank) = {
             let t = self.world.get::<Trader>(trader_entity).unwrap();
+            let trader_id = self.world.get::<StableId>(trader_entity).unwrap();
+            self.ensure_carrier_contract_free(&trader_id.0, t)?;
             if t.travel.is_some() {
                 return Err(CoreError::InTransit);
             }
@@ -5189,11 +5575,13 @@ impl GameSession {
         good: &ContentId,
         requested: u32,
     ) -> Result<u32, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
+        let trader_id = self.world.get::<StableId>(trader_entity).unwrap().0.clone();
+        let trader = self.world.get::<Trader>(trader_entity).unwrap();
+        self.ensure_carrier_contract_free(&trader_id, trader)?;
         let market_entity = self.market_entity(destination)?;
-        let life = self
-            .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
         let (price, quantity, total) = {
             let m = self.world.get::<Market>(market_entity).unwrap();
             let p = self.world.get::<MarketPolicy>(market_entity).unwrap();
@@ -5201,14 +5589,23 @@ impl GameSession {
             if price == Energy::ZERO {
                 return Err(CoreError::Unfunded);
             }
-            let q = m.funded_quantity_for_purchases(p, life, requested, price, Energy::ZERO)?;
+            let q = self.funded_quantity_with_preload_claims(
+                destination,
+                m,
+                p,
+                requested,
+                price,
+                FundingProtection {
+                    released_ordinary_claim: Energy::ZERO,
+                    protect_liquidation_budget: true,
+                },
+            )?;
             if q == 0 {
                 return Err(CoreError::Unfunded);
             }
             let total = price.checked_mul(u64::from(q))?;
             (price, q, total)
         };
-        let trader_id = self.world.get::<StableId>(trader_entity).unwrap().0.clone();
         let ttl = u64::from(self.world.resource::<EconomyConfig>().reservation_ttl);
         let expires = self.tick().checked_add(ttl).ok_or(CoreError::Overflow)?;
         let mut reservations = self.world.resource::<Reservations>().clone();
@@ -5365,6 +5762,9 @@ impl GameSession {
         if r.status != ReservationStatus::Active {
             return Ok(());
         }
+        if r.good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let system = self.world.get::<Trader>(e).unwrap().system.clone();
         if system != r.destination {
             return Ok(());
@@ -5373,6 +5773,8 @@ impl GameSession {
             return Err(CoreError::InvalidPhysicalDefinition);
         }
         let trader = self.world.get::<Trader>(e).unwrap();
+        let trader_id = self.world.get::<StableId>(e).unwrap();
+        self.ensure_carrier_contract_free(&trader_id.0, trader)?;
         let cargo = trader.cargo.get(&r.good).copied().unwrap_or(0);
         let headroom = trader
             .energy_tank_capacity
@@ -5380,17 +5782,17 @@ impl GameSession {
         let market_entity = self.market_entity(&system)?;
         let market = self.world.get::<Market>(market_entity).unwrap();
         let policy = self.world.get::<MarketPolicy>(market_entity).unwrap();
-        let life = self
-            .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
-        let quantity = market
-            .funded_quantity_for_purchases(
+        let quantity = self
+            .funded_quantity_with_preload_claims(
+                &system,
+                market,
                 policy,
-                life,
                 r.remaining_quantity,
                 r.floor_unit_price,
-                r.reserved_energy,
+                FundingProtection {
+                    released_ordinary_claim: r.reserved_energy,
+                    protect_liquidation_budget: true,
+                },
             )?
             .min(u32::try_from(cargo).unwrap_or(u32::MAX))
             .min(u32::try_from(headroom.0 / r.floor_unit_price.0).unwrap_or(u32::MAX));
@@ -5424,10 +5826,15 @@ impl GameSession {
         buy_at_origin: bool,
         command_driven: bool,
     ) -> Result<(), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         if quantity == 0 {
             return Err(CoreError::ZeroQuantity);
         }
         let state = self.world.get::<Trader>(trader).unwrap();
+        let trader_id = self.world.get::<StableId>(trader).unwrap().0.clone();
+        self.ensure_carrier_contract_free(&trader_id, state)?;
         if state.travel.is_some() {
             return Err(CoreError::InTransit);
         }
@@ -5443,7 +5850,6 @@ impl GameSession {
         let origin = state.system.clone();
         let burn_per_distance = state.travel_burn_per_distance;
         let speed = state.speed;
-        let trader_id = self.world.get::<StableId>(trader).unwrap().0.clone();
         let (route, distance) = self
             .graph()
             .shortest_path(&origin, destination)
@@ -5587,10 +5993,15 @@ impl GameSession {
         good: &ContentId,
         requested: u32,
     ) -> Result<PreparedTradeCommitment, CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         if requested == 0 {
             return Err(CoreError::ZeroQuantity);
         }
         let original_trader = self.world.get::<Trader>(trader_entity).unwrap().clone();
+        let trader_id = self.world.get::<StableId>(trader_entity).unwrap().0.clone();
+        self.ensure_carrier_contract_free(&trader_id, &original_trader)?;
         if original_trader.travel.is_some() {
             return Err(CoreError::InTransit);
         }
@@ -5606,7 +6017,6 @@ impl GameSession {
         let tank_capacity = original_trader.energy_tank_capacity;
         let burn_per_distance = original_trader.travel_burn_per_distance;
         let speed = original_trader.speed;
-        let trader_id = self.world.get::<StableId>(trader_entity).unwrap().0.clone();
 
         let origin_entity = self.market_entity(&origin)?;
         let destination_entity = self.market_entity(destination)?;
@@ -5648,16 +6058,16 @@ impl GameSession {
             return Err(CoreError::InsufficientTankCapacity);
         }
 
-        let life = self
-            .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
-        let quantity = destination_market.funded_quantity_for_purchases(
+        let quantity = self.funded_quantity_with_preload_claims(
+            destination,
+            &destination_market,
             destination_policy,
-            life,
             candidate_quantity,
             bid,
-            Energy::ZERO,
+            FundingProtection {
+                released_ordinary_claim: Energy::ZERO,
+                protect_liquidation_budget: true,
+            },
         )?;
         if quantity == 0 {
             return Err(CoreError::Unfunded);
@@ -5708,13 +6118,7 @@ impl GameSession {
             .unwrap_or_default()
             .removal_cost(quantity_u64)?;
         let initial_market_energy = origin_market.energy_stock()?;
-        let next_market_energy = if good.as_str() == ENERGY_ID {
-            initial_market_energy
-                .checked_sub(Energy(i64::from(quantity)))?
-                .checked_add(purchase_total)?
-        } else {
-            initial_market_energy.checked_add(purchase_total)?
-        };
+        let next_market_energy = initial_market_energy.checked_add(purchase_total)?;
         if next_market_energy > origin_market.energy_storage_cap {
             return Err(CoreError::InsufficientCapacity);
         }
@@ -5761,12 +6165,6 @@ impl GameSession {
             .energy_flow
             .tank_to_market
             .checked_add(purchase_total)?;
-        if good.as_str() == ENERGY_ID {
-            origin_market.energy_flow.market_to_energy_cargo = origin_market
-                .energy_flow
-                .market_to_energy_cargo
-                .checked_add(Energy(i64::from(quantity)))?;
-        }
         trader.energy_tank = tank.checked_sub(required_tank)?;
         trader.ledger.travel_cost = trader.ledger.travel_cost.checked_add(travel_burn)?;
         trader.cargo.insert(good.clone(), next_cargo);
@@ -5865,13 +6263,34 @@ impl GameSession {
             .world
             .query::<(&StableId, Entity, &Trader, Option<&PlayerControlled>)>()
             .iter(&self.world)
-            .filter(|(_, _, trader, _)| trader.travel.is_none() && !trader.cargo.is_empty())
+            .filter(|(id, _, trader, _)| {
+                trader.travel.is_none()
+                    && !trader.cargo.is_empty()
+                    && trader.bulk_energy.locked.is_none()
+                    && !self.carrier_has_active_energy_contract(&id.0)
+            })
             .map(|(id, entity, trader, player)| {
                 (id.0.clone(), entity, trader.reservation, player.is_some())
             })
             .collect::<Vec<_>>();
         traders.sort_by(|a, b| a.0.cmp(&b.0));
         for (_, e, reservation, player) in traders {
+            if self
+                .world
+                .get::<Trader>(e)
+                .unwrap()
+                .cargo
+                .keys()
+                .any(|good| good.as_str() == ENERGY_ID)
+            {
+                self.world
+                    .resource_mut::<EventBuffer>()
+                    .0
+                    .push(GameEvent::Rejected(
+                        CoreError::EnergyNotTradable.to_string(),
+                    ));
+                continue;
+            }
             if let Some(id) = reservation {
                 self.settle_reservation(e, id)?;
             }
@@ -5939,6 +6358,9 @@ impl GameSession {
         Ok(())
     }
     fn liquidate_for_jump(&mut self, e: Entity, good: &ContentId) -> Result<(), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let (system, tank, burn) = {
             let t = self.world.get::<Trader>(e).unwrap();
             (t.system.clone(), t.energy_tank, t.travel_burn_per_distance)
@@ -5980,8 +6402,13 @@ impl GameSession {
     /// destination can currently reserve it, keep the trader moving over the
     /// cheapest adjacent jump so every market gets another liquidation chance.
     fn reroute_laden(&mut self, e: Entity, good: &ContentId) -> Result<(), CoreError> {
+        if good.as_str() == ENERGY_ID {
+            return Err(CoreError::EnergyNotTradable);
+        }
         let (origin, tank, capacity, burn_per_distance, cargo) = {
             let trader = self.world.get::<Trader>(e).unwrap();
+            let trader_id = self.world.get::<StableId>(e).unwrap();
+            self.ensure_carrier_contract_free(&trader_id.0, trader)?;
             (
                 trader.system.clone(),
                 trader.energy_tank,
@@ -5993,10 +6420,6 @@ impl GameSession {
         if cargo == 0 {
             return Ok(());
         }
-        let life = self
-            .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
         let graph = self.graph().clone();
         let mut candidates = Vec::new();
         let markets = self
@@ -6020,12 +6443,16 @@ impl GameSession {
             if bid == Energy::ZERO {
                 continue;
             }
-            let funded = market.funded_quantity_for_purchases(
+            let funded = self.funded_quantity_with_preload_claims(
+                &destination,
+                &market,
                 &policy,
-                life,
                 u32::try_from(cargo).unwrap_or(u32::MAX),
                 bid,
-                Energy::ZERO,
+                FundingProtection {
+                    released_ordinary_claim: Energy::ZERO,
+                    protect_liquidation_budget: true,
+                },
             )?;
             let arrival_headroom = capacity.checked_sub(tank.checked_sub(burn)?)?;
             let quantity =
@@ -6069,6 +6496,251 @@ impl GameSession {
         self.begin_travel(e, &destination)
     }
 
+    fn ordinary_npc_opportunities(
+        &self,
+        carrier: &Trader,
+        markets: &[(ContentId, Market, MarketPolicy)],
+    ) -> Result<Vec<OrdinaryNpcOpportunity>, CoreError> {
+        let origin = markets
+            .iter()
+            .find(|(system, _, _)| system == &carrier.system)
+            .ok_or(CoreError::InvalidPhysicalDefinition)?;
+        let mut opportunities = Vec::new();
+        for (good, stock) in &origin.1.inventory {
+            if good.as_str() == ENERGY_ID || *stock == 0 {
+                continue;
+            }
+            let ask = self.ask_quote(&origin.1, &origin.2, good)?;
+            for (destination, market, policy) in markets {
+                if destination == &carrier.system {
+                    continue;
+                }
+                let bid = self.bid_quote(market, policy, good)?;
+                if bid <= ask {
+                    continue;
+                }
+                let Some((route, distance)) =
+                    self.graph().shortest_path(&carrier.system, destination)
+                else {
+                    continue;
+                };
+                let burn =
+                    route_travel_energy(self.graph(), &route, carrier.travel_burn_per_distance)?;
+                if carrier.energy_tank < burn {
+                    continue;
+                }
+                let affordable = u32::try_from(carrier.energy_tank.checked_sub(burn)?.0 / ask.0)
+                    .unwrap_or(u32::MAX);
+                let requested = u32::try_from((*stock).min(u64::from(carrier.cargo_capacity)))
+                    .unwrap_or(u32::MAX)
+                    .min(affordable);
+                let quantity = self.funded_quantity_with_preload_claims(
+                    destination,
+                    market,
+                    policy,
+                    requested,
+                    bid,
+                    FundingProtection {
+                        released_ordinary_claim: Energy::ZERO,
+                        protect_liquidation_budget: true,
+                    },
+                )?;
+                let Some(score) = profitable_opportunity_score(
+                    bid,
+                    ask,
+                    quantity,
+                    burn,
+                    distance,
+                    carrier.speed,
+                )?
+                else {
+                    continue;
+                };
+                if score <= 0 {
+                    continue;
+                }
+                opportunities.push(OrdinaryNpcOpportunity {
+                    score,
+                    source: carrier.system.clone(),
+                    destination: destination.clone(),
+                    good: good.clone(),
+                    quantity,
+                });
+            }
+        }
+        Ok(opportunities)
+    }
+
+    fn hypothetical_dynamic_trader(archetype: &FleetArchetype, source: &ContentId) -> Trader {
+        Trader {
+            system: source.clone(),
+            archetype: Some(archetype.id.clone()),
+            energy_tank: archetype.starting_tank,
+            energy_tank_capacity: archetype.energy_tank_capacity,
+            bulk_energy_capacity: archetype.bulk_energy_capacity,
+            bulk_energy: BulkEnergyHold::default(),
+            cargo: BTreeMap::new(),
+            cargo_cost_basis: BTreeMap::new(),
+            cargo_capacity: archetype.cargo_capacity,
+            speed: archetype.speed,
+            travel_burn_per_distance: archetype.travel_burn_per_distance,
+            refuel_policy: archetype.refuel_policy,
+            travel: None,
+            reservation: None,
+            ledger: TradeLedger::default(),
+        }
+    }
+
+    fn dynamic_candidates_for_archetype_source(
+        &mut self,
+        archetype: &FleetArchetype,
+        source: &ContentId,
+        projected_source_market: &Market,
+        ordinary_markets: &[(ContentId, Market, MarketPolicy)],
+    ) -> Result<Vec<DynamicSpawnCandidate>, CoreError> {
+        let hypothetical = Self::hypothetical_dynamic_trader(archetype, source);
+        let mut candidates = self
+            .ordinary_npc_opportunities(&hypothetical, ordinary_markets)?
+            .into_iter()
+            .map(|opportunity| DynamicSpawnCandidate {
+                score: opportunity.score,
+                opportunity: DynamicOpportunityKey {
+                    kind: DynamicOpportunityKind::OrdinaryTrade,
+                    source: opportunity.source,
+                    destination: opportunity.destination,
+                    good: Some(opportunity.good),
+                },
+                archetype: archetype.id.clone(),
+            })
+            .collect::<Vec<_>>();
+        candidates.extend(
+            self.hypothetical_energy_contract_opportunities(
+                &archetype.id,
+                &hypothetical,
+                projected_source_market,
+            )?
+            .into_iter()
+            .map(|opportunity| DynamicSpawnCandidate {
+                score: opportunity.score,
+                opportunity: DynamicOpportunityKey {
+                    kind: DynamicOpportunityKind::EnergyContract,
+                    source: opportunity.source,
+                    destination: opportunity.destination,
+                    good: None,
+                },
+                archetype: archetype.id.clone(),
+            }),
+        );
+        Ok(candidates)
+    }
+
+    fn derive_dynamic_fleet_opportunity(
+        &mut self,
+        selected_opportunities: &BTreeSet<DynamicOpportunityKey>,
+    ) -> Result<(u64, Option<DynamicSpawnCandidate>), CoreError> {
+        let mut markets = self
+            .world
+            .query_filtered::<(Entity, &StableId, &Market, &MarketPolicy), With<SystemMarker>>()
+            .iter(&self.world)
+            .map(|(entity, stable, market, policy)| {
+                (entity, stable.0.clone(), market.clone(), policy.clone())
+            })
+            .collect::<Vec<_>>();
+        markets.sort_by(|left, right| left.1.cmp(&right.1));
+        let ordinary_markets = markets
+            .iter()
+            .map(|(_, stable, market, policy)| (stable.clone(), market.clone(), policy.clone()))
+            .collect::<Vec<_>>();
+        let counts = self
+            .world
+            .query_filtered::<&Trader, Without<PlayerControlled>>()
+            .iter(&self.world)
+            .filter_map(|trader| trader.archetype.clone())
+            .fold(BTreeMap::<ContentId, usize>::new(), |mut counts, id| {
+                *counts.entry(id).or_default() += 1;
+                counts
+            });
+        let archetypes = self
+            .world
+            .resource::<FleetDynamics>()
+            .archetypes
+            .values()
+            .filter(|archetype| {
+                counts.get(&archetype.id).copied().unwrap_or(0) < archetype.maximum_count
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut best_by_opportunity =
+            BTreeMap::<DynamicOpportunityKey, DynamicSpawnCandidate>::new();
+        for archetype in archetypes {
+            for (source_entity, source, _, _) in &markets {
+                let Some(projected_source_market) = self
+                    .projected_market_after_exportable_withdrawal(
+                        *source_entity,
+                        archetype.starting_tank,
+                    )?
+                else {
+                    continue;
+                };
+                for candidate in self.dynamic_candidates_for_archetype_source(
+                    &archetype,
+                    source,
+                    &projected_source_market,
+                    &ordinary_markets,
+                )? {
+                    retain_best_dynamic_candidate(&mut best_by_opportunity, candidate);
+                }
+            }
+        }
+
+        // One canonical row per underlying route prevents archetype variants
+        // from inflating demand. Only routes actually selected by compatible
+        // idle carriers consume their matching canonical backlog row.
+        let mut unserved = best_by_opportunity
+            .into_values()
+            .filter(|candidate| !selected_opportunities.contains(&candidate.opportunity))
+            .collect::<Vec<_>>();
+        unserved.sort_by(DynamicSpawnCandidate::selection_order);
+        let highest = unserved.first().cloned();
+        let system_count = u64::try_from(markets.len().max(1)).map_err(|_| CoreError::Overflow)?;
+        let normalized = unserved.into_iter().try_fold(0_u64, |sum, candidate| {
+            let normalized_score = u64::try_from(candidate.score / 1_000_000)
+                .map_err(|_| CoreError::Overflow)?
+                .max(1);
+            sum.checked_add(normalized_score).ok_or(CoreError::Overflow)
+        })? / system_count;
+        Ok((normalized, highest))
+    }
+
+    fn dynamic_spawn_candidate_is_current(
+        &mut self,
+        candidate: &DynamicSpawnCandidate,
+        archetype: &FleetArchetype,
+        projected_source_market: &Market,
+    ) -> Result<bool, CoreError> {
+        let mut markets = self
+            .world
+            .query_filtered::<(&StableId, &Market, &MarketPolicy), With<SystemMarker>>()
+            .iter(&self.world)
+            .map(|(stable, market, policy)| (stable.0.clone(), market.clone(), policy.clone()))
+            .collect::<Vec<_>>();
+        markets.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(self
+            .dynamic_candidates_for_archetype_source(
+                archetype,
+                &candidate.opportunity.source,
+                projected_source_market,
+                &markets,
+            )?
+            .into_iter()
+            .any(|current| {
+                current.archetype == candidate.archetype
+                    && current.opportunity == candidate.opportunity
+                    && current.score > 0
+            }))
+    }
+
     fn evaluate_dynamic_fleet(&mut self) -> Result<(), CoreError> {
         let mode = self
             .world
@@ -6104,22 +6776,53 @@ impl GameSession {
             .collect::<Vec<_>>();
         ordered.sort_by(|a, b| a.1.cmp(&b.1));
 
-        for (entity, _, trader, mut lifecycle) in ordered {
-            let purchases = trader
-                .ledger
-                .purchase_cost
-                .checked_sub(lifecycle.observed_purchase_cost)?;
-            let sales = trader
-                .ledger
-                .sales_revenue
-                .checked_sub(lifecycle.observed_sales_revenue)?;
-            let travel = trader
-                .ledger
-                .travel_cost
-                .checked_sub(lifecycle.observed_travel_cost)?;
-            let profit = i128::from(sales.0)
+        let mut prepared_lifecycles = Vec::with_capacity(ordered.len());
+        for (entity, id, trader, mut lifecycle) in ordered {
+            let checked_delta = |current: Energy, observed: Energy| {
+                if current.0 < 0 || observed.0 < 0 || current < observed {
+                    return Err(CoreError::InvalidPhysicalDefinition);
+                }
+                current.checked_sub(observed)
+            };
+            let checked_subset = |total: Energy, subset: Energy| {
+                if total.0 < 0 || subset.0 < 0 || subset > total {
+                    return Err(CoreError::InvalidPhysicalDefinition);
+                }
+                total.checked_sub(subset)
+            };
+
+            trader.ledger.validate_contract_subsets()?;
+            checked_subset(
+                lifecycle.observed_sales_revenue,
+                lifecycle.observed_contract_reimbursement,
+            )?;
+            checked_subset(
+                lifecycle.observed_travel_cost,
+                lifecycle.observed_reimbursed_travel_cost,
+            )?;
+
+            let purchases = checked_delta(
+                trader.ledger.purchase_cost,
+                lifecycle.observed_purchase_cost,
+            )?;
+            let sales = checked_delta(
+                trader.ledger.sales_revenue,
+                lifecycle.observed_sales_revenue,
+            )?;
+            let reimbursement = checked_delta(
+                trader.ledger.contract_reimbursement,
+                lifecycle.observed_contract_reimbursement,
+            )?;
+            let travel = checked_delta(trader.ledger.travel_cost, lifecycle.observed_travel_cost)?;
+            let reimbursed_travel = checked_delta(
+                trader.ledger.reimbursed_travel_cost,
+                lifecycle.observed_reimbursed_travel_cost,
+            )?;
+            let earned_sales = checked_subset(sales, reimbursement)?;
+            let unreimbursed_travel = checked_subset(travel, reimbursed_travel)?;
+            let profit = i128::from(earned_sales.0)
                 .checked_sub(i128::from(purchases.0))
-                .and_then(|value| value.checked_sub(i128::from(travel.0)))
+                .and_then(|value| value.checked_sub(i128::from(unreimbursed_travel.0)))
                 .ok_or(CoreError::Overflow)?;
             lifecycle
                 .profitability
@@ -6130,7 +6833,9 @@ impl GameSession {
             }
             lifecycle.observed_purchase_cost = trader.ledger.purchase_cost;
             lifecycle.observed_sales_revenue = trader.ledger.sales_revenue;
+            lifecycle.observed_contract_reimbursement = trader.ledger.contract_reimbursement;
             lifecycle.observed_travel_cost = trader.ledger.travel_cost;
+            lifecycle.observed_reimbursed_travel_cost = trader.ledger.reimbursed_travel_cost;
             if trader.cargo.is_empty() {
                 lifecycle.failed_liquidation_ticks = 0;
                 lifecycle.last_failed_tick = None;
@@ -6143,11 +6848,17 @@ impl GameSession {
                         sum.checked_add(*value).ok_or(CoreError::Overflow)
                     })?
                     <= retirement_threshold;
+            let retirement_blocked =
+                trader.bulk_energy.locked.is_some() || self.carrier_has_active_energy_contract(&id);
             if lifecycle.retirement.is_none()
+                && !retirement_blocked
                 && (sustained_loss || lifecycle.failed_liquidation_ticks >= retirement_window)
             {
                 lifecycle.retirement = Some(TraderRetirementState::CleaningUp);
             }
+            prepared_lifecycles.push((entity, lifecycle));
+        }
+        for (entity, lifecycle) in prepared_lifecycles {
             *self.world.get_mut::<TraderLifecycle>(entity).unwrap() = lifecycle;
         }
 
@@ -6218,7 +6929,18 @@ impl GameSession {
         let mut market_updates = BTreeMap::<ContentId, (Entity, Market)>::new();
         let mut retirements = Vec::new();
         for (id, entity, trader) in candidates {
-            if trader.reservation.is_some() || trader.travel.is_some() || !trader.cargo.is_empty() {
+            let active_contract = self
+                .world
+                .resource::<EnergyContracts>()
+                .active
+                .values()
+                .any(|contract| contract.carrier == id);
+            if trader.reservation.is_some()
+                || trader.travel.is_some()
+                || !trader.cargo.is_empty()
+                || trader.bulk_energy.used()?.0 > 0
+                || active_contract
+            {
                 continue;
             }
             let market_entity = self.market_entity(&trader.system)?;
@@ -6276,35 +6998,81 @@ impl GameSession {
     }
 
     fn spawn_dynamic_trader(&mut self) -> Result<bool, CoreError> {
-        let life = self
+        let tick = self.tick();
+        let (captured_for_phase, phase_candidate) = {
+            let state = self.world.resource::<DynamicFleetOpportunityState>();
+            if state.captured_tick == Some(tick) {
+                (true, state.candidate.clone())
+            } else {
+                (false, None)
+            }
+        };
+        // Phase 13 must preserve and use its exact phase-10 choice, including
+        // an explicitly captured no-choice. Lazy derivation is only for direct
+        // internal callers that have no capture for the current tick.
+        let candidate = if captured_for_phase {
+            phase_candidate
+        } else {
+            self.derive_dynamic_fleet_opportunity(&BTreeSet::new())?.1
+        };
+        let Some(candidate) = candidate else {
+            return Ok(false);
+        };
+
+        let maximum_count = match &self.world.resource::<FleetDynamics>().mode {
+            Some(FleetMode::Dynamic { maximum_count, .. }) => *maximum_count,
+            _ => return Ok(false),
+        };
+        let active_count = self
             .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
-        let archetype = self
+            .query_filtered::<Entity, (With<Trader>, Without<PlayerControlled>)>()
+            .iter(&self.world)
+            .count();
+        if active_count >= maximum_count {
+            return Ok(false);
+        }
+        let counts = self
+            .world
+            .query_filtered::<&Trader, Without<PlayerControlled>>()
+            .iter(&self.world)
+            .filter_map(|trader| trader.archetype.clone())
+            .fold(BTreeMap::<ContentId, usize>::new(), |mut counts, id| {
+                *counts.entry(id).or_default() += 1;
+                counts
+            });
+        let Some(archetype) = self
             .world
             .resource::<FleetDynamics>()
-            .archetype
-            .clone()
-            .ok_or(CoreError::InvalidWorldDynamics)?;
-        let mut markets = self
-            .world
-            .query_filtered::<(Entity, &StableId, &Market, &MarketPolicy), With<SystemMarker>>()
-            .iter(&self.world)
-            .map(|(entity, id, market, policy)| {
-                Ok((
-                    market.unreserved_energy_for_purchases(policy, life)?,
-                    id.0.clone(),
-                    entity,
-                ))
-            })
-            .collect::<Result<Vec<_>, CoreError>>()?;
-        markets.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        let Some((_, system, market_entity)) = markets
-            .into_iter()
-            .find(|(surplus, _, _)| *surplus >= archetype.starting_tank)
+            .archetypes
+            .get(&candidate.archetype)
+            .cloned()
         else {
             return Ok(false);
         };
+        if counts.get(&archetype.id).copied().unwrap_or(0) >= archetype.maximum_count {
+            return Ok(false);
+        }
+
+        let system = candidate.opportunity.source.clone();
+        let market_entity = match self.market_entity(&system) {
+            Ok(entity)
+                if self
+                    .world
+                    .get::<StableId>(entity)
+                    .is_some_and(|stable| stable.0 == system) =>
+            {
+                entity
+            }
+            Ok(_) | Err(_) => return Ok(false),
+        };
+        let Some(mut market) = self
+            .projected_market_after_exportable_withdrawal(market_entity, archetype.starting_tank)?
+        else {
+            return Ok(false);
+        };
+        if !self.dynamic_spawn_candidate_is_current(&candidate, &archetype, &market)? {
+            return Ok(false);
+        }
 
         let current_sequence = self.world.resource::<FleetDynamics>().spawn_sequence;
         let next_sequence = current_sequence.checked_add(1).ok_or(CoreError::Overflow)?;
@@ -6317,29 +7085,11 @@ impl GameSession {
         {
             return Err(CoreError::InvalidPhysicalDefinition);
         }
-        let mut market = self.world.get::<Market>(market_entity).unwrap().clone();
-        let next_stock = market
-            .energy_stock()?
-            .checked_sub(archetype.starting_tank)?;
-        market.set_energy_stock(next_stock)?;
         market.energy_flow.market_to_tank = market
             .energy_flow
             .market_to_tank
             .checked_add(archetype.starting_tank)?;
-        let trader = Trader {
-            system: system.clone(),
-            energy_tank: archetype.starting_tank,
-            energy_tank_capacity: archetype.energy_tank_capacity,
-            cargo: BTreeMap::new(),
-            cargo_cost_basis: BTreeMap::new(),
-            cargo_capacity: archetype.cargo_capacity,
-            speed: archetype.speed,
-            travel_burn_per_distance: archetype.travel_burn_per_distance,
-            refuel_policy: archetype.refuel_policy,
-            travel: None,
-            reservation: None,
-            ledger: TradeLedger::default(),
-        };
+        let trader = Self::hypothetical_dynamic_trader(&archetype, &system);
         let history = self
             .world
             .resource::<AggregateDynamicsHistory>()
@@ -6359,6 +7109,11 @@ impl GameSession {
         self.world
             .resource_mut::<AggregateDynamicsHistory>()
             .fleet_spawns = history;
+        if captured_for_phase {
+            self.world
+                .resource_mut::<DynamicFleetOpportunityState>()
+                .candidate = None;
+        }
         self.world
             .resource_mut::<EventBuffer>()
             .0
@@ -6372,23 +7127,81 @@ impl GameSession {
             score: i128,
             trader_id: ContentId,
             e: Entity,
+            source: ContentId,
             good: ContentId,
             destination: ContentId,
             quantity: u32,
         }
-        let graph = self.graph().clone();
-        let life = self
-            .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
+
+        enum Opportunity {
+            Energy(energy_logistics::NpcEnergyContractOpportunity),
+            Ordinary(Request),
+        }
+
+        impl Opportunity {
+            fn score(&self) -> i128 {
+                match self {
+                    Self::Energy(opportunity) => opportunity.score,
+                    Self::Ordinary(request) => request.score,
+                }
+            }
+
+            fn kind_rank(&self) -> u8 {
+                match self {
+                    Self::Energy(_) => 0,
+                    Self::Ordinary(_) => 1,
+                }
+            }
+
+            fn source(&self) -> &ContentId {
+                match self {
+                    Self::Energy(opportunity) => &opportunity.source,
+                    Self::Ordinary(request) => &request.source,
+                }
+            }
+
+            fn destination(&self) -> &ContentId {
+                match self {
+                    Self::Energy(opportunity) => &opportunity.destination,
+                    Self::Ordinary(request) => &request.destination,
+                }
+            }
+
+            fn good(&self) -> Option<&ContentId> {
+                match self {
+                    Self::Energy(_) => None,
+                    Self::Ordinary(request) => Some(&request.good),
+                }
+            }
+
+            fn carrier(&self) -> &ContentId {
+                match self {
+                    Self::Energy(opportunity) => &opportunity.carrier,
+                    Self::Ordinary(request) => &request.trader_id,
+                }
+            }
+
+            fn key(&self) -> DynamicOpportunityKey {
+                DynamicOpportunityKey {
+                    kind: match self {
+                        Self::Energy(_) => DynamicOpportunityKind::EnergyContract,
+                        Self::Ordinary(_) => DynamicOpportunityKind::OrdinaryTrade,
+                    },
+                    source: self.source().clone(),
+                    destination: self.destination().clone(),
+                    good: self.good().cloned(),
+                }
+            }
+        }
         let markets = self
             .world
             .query_filtered::<(&StableId, &Market, &MarketPolicy), With<SystemMarker>>()
             .iter(&self.world)
-            .map(|(id, m, p)| (id.0.clone(), m.clone(), p.clone()))
+            .map(|(id, market, policy)| (id.0.clone(), market.clone(), policy.clone()))
             .collect::<Vec<_>>();
         let mut requests = Vec::new();
-        for (e, id, t, lifecycle) in self
+        let mut eligible_carriers = Vec::new();
+        for (entity, id, trader, lifecycle) in self
             .world
             .query_filtered::<
                 (Entity, &StableId, &Trader, &TraderLifecycle),
@@ -6396,72 +7209,28 @@ impl GameSession {
             >()
             .iter(&self.world)
         {
-            if t.travel.is_some() || !t.cargo.is_empty() || lifecycle.retirement.is_some() {
+            if trader.travel.is_some()
+                || !trader.cargo.is_empty()
+                || trader.bulk_energy.locked.is_some()
+                || self.carrier_has_active_energy_contract(&id.0)
+                || lifecycle.retirement.is_some()
+            {
                 continue;
             }
-            for (good, stock) in markets
-                .iter()
-                .find(|(sid, _, _)| sid == &t.system)
-                .unwrap()
-                .1
-                .inventory
-                .iter()
-            {
-                if *stock == 0 {
-                    continue;
-                }
-                let origin = markets.iter().find(|(sid, _, _)| sid == &t.system).unwrap();
-                let ask = self.ask_quote(&origin.1, &origin.2, good)?;
-                for (destination, m, p) in &markets {
-                    if destination == &t.system {
-                        continue;
-                    }
-                    let bid = self.bid_quote(m, p, good)?;
-                    if bid <= ask {
-                        continue;
-                    }
-                    let Some((route, distance)) = graph.shortest_path(&t.system, destination)
-                    else {
-                        continue;
-                    };
-                    let burn = route_travel_energy(&graph, &route, t.travel_burn_per_distance)?;
-                    if t.energy_tank < burn {
-                        continue;
-                    }
-                    let affordable = u32::try_from(t.energy_tank.checked_sub(burn)?.0 / ask.0)
-                        .unwrap_or(u32::MAX);
-                    let requested = u32::try_from((*stock).min(u64::from(t.cargo_capacity)))
-                        .unwrap_or(u32::MAX)
-                        .min(affordable);
-                    let quantity = m.funded_quantity_for_purchases(
-                        p,
-                        life,
-                        requested,
-                        bid,
-                        Energy::ZERO,
-                    )?;
-                    if quantity > 0 {
-                        let Some(score) = profitable_opportunity_score(
-                            bid,
-                            ask,
-                            quantity,
-                            burn,
-                            distance,
-                            t.speed,
-                        )? else {
-                            continue;
-                        };
-                        requests.push(Request {
-                            score,
-                            trader_id: id.0.clone(),
-                            e,
-                            good: good.clone(),
-                            destination: destination.clone(),
-                            quantity,
-                        });
-                    }
-                }
-            }
+            eligible_carriers.push(id.0.clone());
+            requests.extend(
+                self.ordinary_npc_opportunities(trader, &markets)?
+                    .into_iter()
+                    .map(|opportunity| Request {
+                        score: opportunity.score,
+                        trader_id: id.0.clone(),
+                        e: entity,
+                        source: opportunity.source,
+                        good: opportunity.good,
+                        destination: opportunity.destination,
+                        quantity: opportunity.quantity,
+                    }),
+            );
         }
         requests.sort_by(|a, b| {
             b.score
@@ -6470,3971 +7239,93 @@ impl GameSession {
                 .then_with(|| a.good.cmp(&b.good))
                 .then_with(|| a.destination.cmp(&b.destination))
         });
-        if matches!(
+        let mut opportunities = requests
+            .into_iter()
+            .map(Opportunity::Ordinary)
+            .collect::<Vec<_>>();
+        for carrier in eligible_carriers {
+            opportunities.extend(
+                self.npc_energy_contract_opportunities(&carrier)?
+                    .into_iter()
+                    .map(Opportunity::Energy),
+            );
+        }
+        opportunities.sort_by(|left, right| {
+            right
+                .score()
+                .cmp(&left.score())
+                .then_with(|| left.kind_rank().cmp(&right.kind_rank()))
+                .then_with(|| left.source().cmp(right.source()))
+                .then_with(|| left.destination().cmp(right.destination()))
+                .then_with(|| left.good().cmp(&right.good()))
+                .then_with(|| left.carrier().cmp(right.carrier()))
+        });
+
+        let mut selected_carriers = BTreeSet::new();
+        let mut selected_opportunities = BTreeSet::new();
+        let mut energy_intents = Vec::new();
+        let mut ordinary_requests = Vec::new();
+        for opportunity in opportunities {
+            if !selected_carriers.insert(opportunity.carrier().clone()) {
+                continue;
+            }
+            selected_opportunities.insert(opportunity.key());
+            match opportunity {
+                Opportunity::Energy(opportunity) => {
+                    energy_intents.push(EnergyContractIntent {
+                        carrier: opportunity.carrier,
+                        source: opportunity.source,
+                        destination: opportunity.destination,
+                        gross_payload: opportunity.gross_payload,
+                        command_driven: false,
+                    });
+                }
+                Opportunity::Ordinary(request) => {
+                    ordinary_requests.push(PendingTradeRequest {
+                        score: request.score,
+                        trader_id: request.trader_id,
+                        trader: request.e,
+                        destination: request.destination,
+                        good: request.good,
+                        quantity: request.quantity,
+                        buy_at_origin: true,
+                        command_driven: false,
+                    });
+                }
+            }
+        }
+
+        let dynamic_capture = if matches!(
             &self.world.resource::<FleetDynamics>().mode,
             Some(FleetMode::Dynamic { .. })
         ) {
-            // Score every market route with the same canonical margin-after-burn
-            // helper used above for active automated requests. One highest score is
-            // consumed per idle active NPC; the rest is genuinely unserved network
-            // opportunity and remains meaningful even when active count reaches 0.
-            let archetype = self.world.resource::<FleetDynamics>().archetype.clone();
-            let mut route_scores = Vec::new();
-            if let Some(archetype) = archetype {
-                for (origin_id, origin, origin_policy) in &markets {
-                    for (good, stock) in &origin.inventory {
-                        if *stock == 0 {
-                            continue;
-                        }
-                        let ask = self.ask_quote(origin, origin_policy, good)?;
-                        if ask.0 <= 0 {
-                            continue;
-                        }
-                        for (destination_id, destination, destination_policy) in &markets {
-                            if destination_id == origin_id {
-                                continue;
-                            }
-                            let bid = self.bid_quote(destination, destination_policy, good)?;
-                            // An emergency-stage market suppresses non-survival
-                            // demand with a zero bid. Reject that non-opportunity
-                            // before passing the bid to physical funding math,
-                            // whose contract requires a positive unit price.
-                            if bid <= ask {
-                                continue;
-                            }
-                            let Some((route, distance)) =
-                                graph.shortest_path(origin_id, destination_id)
-                            else {
-                                continue;
-                            };
-                            let burn = route_travel_energy(
-                                &graph,
-                                &route,
-                                archetype.travel_burn_per_distance,
-                            )?;
-                            if archetype.starting_tank < burn {
-                                continue;
-                            }
-                            let affordable =
-                                u32::try_from(archetype.starting_tank.checked_sub(burn)?.0 / ask.0)
-                                    .unwrap_or(u32::MAX);
-                            let advertised = u32::try_from(
-                                u64::from(destination.targets.get(good).copied().unwrap_or(0))
-                                    .saturating_sub(
-                                        destination.inventory.get(good).copied().unwrap_or(0),
-                                    ),
-                            )
-                            .unwrap_or(u32::MAX);
-                            let requested =
-                                u32::try_from((*stock).min(u64::from(archetype.cargo_capacity)))
-                                    .unwrap_or(u32::MAX)
-                                    .min(affordable)
-                                    .min(advertised);
-                            let quantity = destination.funded_quantity_for_purchases(
-                                destination_policy,
-                                life,
-                                requested,
-                                bid,
-                                Energy::ZERO,
-                            )?;
-                            if let Some(score) = profitable_opportunity_score(
-                                bid,
-                                ask,
-                                quantity,
-                                burn,
-                                distance,
-                                archetype.speed,
-                            )? {
-                                route_scores.push(score);
-                            }
-                        }
-                    }
-                }
-            }
-            route_scores.sort_by(|a, b| b.cmp(a));
-            let idle_count = self
-                .world
-                .query_filtered::<(&Trader, &TraderLifecycle), Without<PlayerControlled>>()
-                .iter(&self.world)
-                .filter(|(trader, lifecycle)| {
-                    trader.travel.is_none()
-                        && trader.cargo.is_empty()
-                        && lifecycle.retirement.is_none()
-                })
-                .count();
-            let system_count = markets.len().max(1);
-            let unserved =
-                route_scores
-                    .into_iter()
-                    .skip(idle_count)
-                    .try_fold(0_u64, |sum, score| {
-                        let normalized_score = u64::try_from(score / 1_000_000)
-                            .map_err(|_| CoreError::Overflow)?
-                            .max(1);
-                        sum.checked_add(normalized_score).ok_or(CoreError::Overflow)
-                    })?
-                    / u64::try_from(system_count).map_err(|_| CoreError::Overflow)?;
+            Some(self.derive_dynamic_fleet_opportunity(&selected_opportunities)?)
+        } else {
+            None
+        };
+        if let Some((unserved, candidate)) = dynamic_capture {
+            let captured_tick = self.tick();
             self.world
                 .resource_mut::<FleetDynamics>()
                 .normalized_unserved_opportunity = unserved;
+            *self.world.resource_mut::<DynamicFleetOpportunityState>() =
+                DynamicFleetOpportunityState {
+                    captured_tick: Some(captured_tick),
+                    candidate,
+                };
         }
+
+        self.world
+            .resource_mut::<PendingEnergyContractIntents>()
+            .0
+            .extend(energy_intents);
         self.world
             .resource_mut::<PendingTradeRequests>()
             .0
-            .extend(requests.into_iter().map(|request| PendingTradeRequest {
-                score: request.score,
-                trader_id: request.trader_id,
-                trader: request.e,
-                destination: request.destination,
-                good: request.good,
-                quantity: request.quantity,
-                buy_at_origin: true,
-                command_driven: false,
-            }));
+            .extend(ordinary_requests);
         Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    fn id(s: &str) -> ContentId {
-        ContentId::new(s).unwrap()
-    }
-    fn physical_energy(snapshot: &CoreSnapshot) -> i128 {
-        let markets = snapshot
-            .markets
-            .iter()
-            .map(|market| i128::from(market.energy_stock.0))
-            .sum::<i128>();
-        let tanks = snapshot
-            .traders
-            .iter()
-            .map(|trader| i128::from(trader.energy_tank.0))
-            .sum::<i128>();
-        let cargo = snapshot
-            .traders
-            .iter()
-            .map(|trader| {
-                trader
-                    .cargo
-                    .get(&id(ENERGY_ID))
-                    .copied()
-                    .map_or(0, i128::from)
-            })
-            .sum::<i128>();
-        markets + tanks + cargo
-    }
-    fn definition() -> GameDefinition {
-        let energy = id(ENERGY_ID);
-        let ore = id("core:ore");
-        GameDefinition {
-            goods: vec![
-                GoodDefinition {
-                    id: energy.clone(),
-                    name: "Energy".into(),
-                    category: GoodCategory::Energy,
-                    bootstrap_cost: Energy(1),
-                },
-                GoodDefinition {
-                    id: ore.clone(),
-                    name: "Ore".into(),
-                    category: GoodCategory::Raw,
-                    bootstrap_cost: Energy(3),
-                },
-            ],
-            recipes: vec![],
-            systems: (0..2)
-                .map(|i| SystemDefinition {
-                    id: id(&format!("core:s{i}")),
-                    name: format!("S{i}"),
-                    position: Position3 {
-                        x: f64::from(i) * 10.0,
-                        y: 0.0,
-                        z: 0.0,
-                    },
-                    inventory: BTreeMap::from([
-                        (energy.clone(), 1000),
-                        (ore.clone(), if i == 0 { 100 } else { 0 }),
-                    ]),
-                    targets: BTreeMap::from([(ore.clone(), 10), (energy.clone(), 100)]),
-                    recipes: vec![],
-                    sources: vec![],
-                    energy_output_per_tick: Energy(10),
-                    seasonal_generation: SeasonalGenerationState {
-                        base_output: Energy(10),
-                        amplitude_percent: 0,
-                        period_ticks: 100,
-                        phase_ticks: 0,
-                        current_effective_output: Energy(10),
-                    },
-                    energy_storage_cap: Energy(2000),
-                    population: 1,
-                    population_state: PopulationState {
-                        current: 1,
-                        reference: 1,
-                        carrying_capacity: 1,
-                        ..PopulationState::default()
-                    },
-                    investment_policy: InvestmentPolicy::default(),
-                    governance: Governance {
-                        authority: MarketAuthority::Player(id("core:player")),
-                    },
-                    policy: MarketPolicy::default(),
-                    protected_liquidation_budget: Energy(20),
-                    bootstrap_risk_acknowledged: false,
-                })
-                .collect(),
-            traders: vec![TraderDefinition {
-                id: id("core:player"),
-                name: "Player".into(),
-                system: id("core:s0"),
-                energy_tank: Energy(100),
-                energy_tank_capacity: Energy(1000),
-                cargo_capacity: 20,
-                speed: 10.0,
-                travel_burn_per_distance: Energy(1),
-                refuel_policy: RefuelPolicy::DepositAndWithdraw,
-                player: true,
-            }],
-            player_trade_network_access: TradeNetworkAccess::Offline,
-            fleet: FleetDynamics {
-                mode: Some(FleetMode::Fixed { count: 0 }),
-                ..FleetDynamics::default()
-            },
-            economy: EconomyConfig::default(),
-        }
-    }
-    fn dynamic_fleet(
-        initial_count: usize,
-        maximum_count: usize,
-        opportunity_window: u32,
-        retirement_window: u32,
-    ) -> FleetDynamics {
-        let archetype = FleetArchetype {
-            id_prefix: "core:trader".into(),
-            name_prefix: "Trader".into(),
-            starting_tank: Energy(100),
-            energy_tank_capacity: Energy(500),
-            cargo_capacity: 20,
-            speed: 10.0,
-            travel_burn_per_distance: Energy(1),
-            refuel_policy: RefuelPolicy::DepositAndWithdraw,
-        };
-        FleetDynamics {
-            mode: Some(FleetMode::Dynamic {
-                initial_count,
-                opportunity_threshold: 1,
-                opportunity_window,
-                spawn_cooldown_ticks: 3,
-                retirement_window,
-                retirement_threshold: 0,
-                maximum_count,
-            }),
-            archetype_capability: Some(archetype.liquidation_capability()),
-            archetype: Some(archetype),
-            ..FleetDynamics::default()
-        }
-    }
-
-    #[test]
-    fn fixed_fleet_mode_is_a_strict_lifecycle_bypass() {
-        let mut session = GameSession::new(definition()).unwrap();
-        for _ in 0..100 {
-            session.step().unwrap();
-        }
-        let events = session.drain_events();
-        let snapshot = session.snapshot();
-        assert_eq!(
-            snapshot
-                .traders
-                .iter()
-                .filter(|trader| !trader.player)
-                .count(),
-            0
-        );
-        assert_eq!(snapshot.fleet.opportunity_persistence, 0);
-        assert!(!events.iter().any(|event| matches!(
-            event,
-            GameEvent::TraderSpawned { .. } | GameEvent::TraderRetired { .. }
-        )));
-    }
-
-    #[test]
-    fn dynamic_generated_namespace_collision_is_rejected_at_startup_and_atomic_at_runtime() {
-        let mut invalid = definition();
-        invalid.fleet = dynamic_fleet(1, 2, 1, 100);
-        invalid.traders.push(TraderDefinition {
-            id: id("core:trader_dynamic_00000001"),
-            name: "Collision".into(),
-            system: id("core:s0"),
-            energy_tank: Energy(100),
-            energy_tank_capacity: Energy(500),
-            cargo_capacity: 20,
-            speed: 10.0,
-            travel_burn_per_distance: Energy(1),
-            refuel_policy: RefuelPolicy::DepositAndWithdraw,
-            player: false,
-        });
-        assert!(matches!(
-            GameSession::new(invalid),
-            Err(CoreError::InvalidWorldDynamics)
-        ));
-
-        // Defense in depth: even an impossible post-startup collision leaves
-        // the complete tick-visible state and event stream untouched.
-        let mut runtime = definition();
-        runtime.fleet = dynamic_fleet(0, 2, 1, 100);
-        let mut session = GameSession::new(runtime).unwrap();
-        session
-            .world
-            .spawn(StableId(id("core:trader_dynamic_00000001")));
-        let before = session.snapshot();
-        assert_eq!(
-            session.spawn_dynamic_trader(),
-            Err(CoreError::InvalidPhysicalDefinition)
-        );
-        assert_eq!(session.snapshot(), before);
-        assert!(session.drain_events().is_empty());
-    }
-
-    #[test]
-    fn fixed_laden_liquidation_failures_preserve_all_lifecycle_state() {
-        let mut fixed = definition();
-        fixed.fleet.mode = Some(FleetMode::Fixed { count: 1 });
-        fixed.traders.push(TraderDefinition {
-            id: id("core:trader_01"),
-            name: "Trader 01".into(),
-            system: id("core:s0"),
-            energy_tank: Energy::ZERO,
-            energy_tank_capacity: Energy(500),
-            cargo_capacity: 20,
-            speed: 10.0,
-            travel_burn_per_distance: Energy(1),
-            refuel_policy: RefuelPolicy::DepositAndWithdraw,
-            player: false,
-        });
-        for system in &mut fixed.systems {
-            system.inventory.insert(id(ENERGY_ID), 0);
-            system.protected_liquidation_budget = Energy::ZERO;
-        }
-        let mut session = GameSession::new(fixed).unwrap();
-        let npc = session
-            .world
-            .query_filtered::<(Entity, &StableId), (With<Trader>, Without<PlayerControlled>)>()
-            .iter(&session.world)
-            .find(|(_, stable)| stable.0 == id("core:trader_01"))
-            .unwrap()
-            .0;
-        {
-            let mut trader = session.world.get_mut::<Trader>(npc).unwrap();
-            trader.cargo.insert(id("core:ore"), 1);
-            trader.cargo_cost_basis.insert(
-                id("core:ore"),
-                CostBasis {
-                    stock_quantity: 1,
-                    total_embodied_energy: Energy(3),
-                },
-            );
-        }
-        let fleet_before = session.world.resource::<FleetDynamics>().clone();
-        let history_before = session.world.resource::<AggregateDynamicsHistory>().clone();
-        let lifecycle_before = session.world.get::<TraderLifecycle>(npc).unwrap().clone();
-
-        session.settle_idle_laden().unwrap();
-        session.evaluate_dynamic_fleet().unwrap();
-
-        assert_eq!(*session.world.resource::<FleetDynamics>(), fleet_before);
-        assert_eq!(
-            *session.world.resource::<AggregateDynamicsHistory>(),
-            history_before
-        );
-        assert_eq!(
-            *session.world.get::<TraderLifecycle>(npc).unwrap(),
-            lifecycle_before
-        );
-        let events = session.drain_events();
-        assert!(!events.is_empty());
-        assert!(events.iter().all(|event| matches!(
-            event,
-            GameEvent::SaleDeferred { trader, .. } if trader == &id("core:trader_01")
-        )));
-    }
-
-    #[test]
-    fn dynamic_spawn_is_persistent_funded_stable_and_next_tick_eligible() {
-        let mut definition = definition();
-        definition.fleet = dynamic_fleet(0, 1, 2, 100);
-        let initial_energy = definition
-            .systems
-            .iter()
-            .map(|system| i128::from(system.inventory[&id(ENERGY_ID)]))
-            .sum::<i128>()
-            + i128::from(definition.traders[0].energy_tank.0);
-        let mut session = GameSession::new(definition).unwrap();
-        session.step().unwrap();
-        assert_eq!(session.snapshot().traders.len(), 1);
-        session.drain_events();
-        session.step().unwrap();
-        let events = session.drain_events();
-        let snapshot = session.snapshot();
-        let spawned = snapshot
-            .traders
-            .iter()
-            .find(|trader| !trader.player)
-            .unwrap();
-        assert_eq!(spawned.id, id("core:trader_dynamic_00000001"));
-        assert_eq!(spawned.system, id("core:s0"));
-        assert!(events.iter().any(|event| matches!(
-            event,
-            GameEvent::TraderSpawned { trader, system }
-                if trader == &id("core:trader_dynamic_00000001") && system == &id("core:s0")
-        )));
-        assert!(!events.iter().any(|event| matches!(
-            event,
-            GameEvent::Bought { trader, .. }
-                if trader == &id("core:trader_dynamic_00000001")
-        )));
-        let expected = initial_energy + i128::from(snapshot.energy_flow.net_external_delta().0);
-        assert_eq!(physical_energy(&snapshot), expected);
-        session.step().unwrap();
-        assert_eq!(
-            session
-                .snapshot()
-                .traders
-                .iter()
-                .filter(|trader| !trader.player)
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn dynamic_spawn_obeys_cooldown_and_monotonic_ids() {
-        let mut definition = definition();
-        for index in 2..4 {
-            let mut system = definition.systems[1].clone();
-            system.id = id(&format!("core:s{index}"));
-            system.name = format!("S{index}");
-            system.position.x = f64::from(index) * 10.0;
-            definition.systems.push(system);
-        }
-        definition.fleet = dynamic_fleet(0, 3, 1, 100);
-        let mut session = GameSession::new(definition).unwrap();
-        session.step().unwrap();
-        assert_eq!(
-            session
-                .snapshot()
-                .traders
-                .iter()
-                .filter(|trader| !trader.player)
-                .count(),
-            1
-        );
-        session.step().unwrap();
-        session.step().unwrap();
-        assert_eq!(
-            session
-                .snapshot()
-                .traders
-                .iter()
-                .filter(|trader| !trader.player)
-                .count(),
-            1
-        );
-        session.step().unwrap();
-        let snapshot = session.snapshot();
-        assert_eq!(
-            snapshot
-                .traders
-                .iter()
-                .filter(|trader| !trader.player)
-                .count(),
-            2
-        );
-        assert!(
-            snapshot
-                .traders
-                .iter()
-                .any(|trader| trader.id == id("core:trader_dynamic_00000002"))
-        );
-    }
-
-    #[test]
-    fn dynamic_spawn_defers_without_safe_market_funding() {
-        let mut definition = definition();
-        let mut fleet = dynamic_fleet(0, 1, 1, 100);
-        let archetype = fleet.archetype.as_mut().unwrap();
-        archetype.starting_tank = Energy(10_000);
-        archetype.energy_tank_capacity = Energy(10_000);
-        fleet.archetype_capability = Some(archetype.liquidation_capability());
-        definition.fleet = fleet;
-        let mut session = GameSession::new(definition).unwrap();
-        for _ in 0..5 {
-            session.step().unwrap();
-        }
-        assert_eq!(session.snapshot().traders.len(), 1);
-        assert_eq!(session.snapshot().fleet.spawn_sequence, 0);
-    }
-
-    #[test]
-    fn dynamic_opportunity_scoring_skips_emergency_suppressed_demand() {
-        let mut definition = definition();
-        definition.fleet = dynamic_fleet(0, 1, 1, 100);
-        let mut session = GameSession::new(definition).unwrap();
-        let destination = session.market_entity(&id("core:s1")).unwrap();
-        session
-            .world
-            .get_mut::<Market>(destination)
-            .unwrap()
-            .operating_profile
-            .stage = BrownoutStage::Emergency;
-
-        session.collect_automated_trader_requests().unwrap();
-
-        assert_eq!(
-            session
-                .world
-                .resource::<FleetDynamics>()
-                .normalized_unserved_opportunity,
-            0
-        );
-        assert!(
-            session
-                .world
-                .resource::<PendingTradeRequests>()
-                .0
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn subsidized_dynamic_opportunity_requires_canonical_destination_funding() {
-        let mut definition = definition();
-        enable_investments(&mut definition);
-        definition.fleet = dynamic_fleet(0, 1, 1, 100);
-        let mut session = GameSession::new(definition).unwrap();
-        let destination = session.market_entity(&id("core:s1")).unwrap();
-        {
-            let mut market = session.world.get_mut::<Market>(destination).unwrap();
-            market
-                .investment_state
-                .levels
-                .insert(InvestmentKind::RouteSubsidy, 1);
-            let protected = market.protected_liquidation_budget;
-            market.reserved_energy = Energy(10);
-            market
-                .set_energy_stock(protected.checked_add(Energy(10)).unwrap())
-                .unwrap();
-        }
-
-        session.collect_automated_trader_requests().unwrap();
-        assert_eq!(
-            session
-                .world
-                .resource::<FleetDynamics>()
-                .normalized_unserved_opportunity,
-            0
-        );
-        session.evaluate_dynamic_fleet().unwrap();
-        assert_eq!(
-            session
-                .world
-                .query_filtered::<Entity, (With<Trader>, Without<PlayerControlled>)>()
-                .iter(&session.world)
-                .count(),
-            0,
-            "an advertised but zero-funded subsidy must not spawn a donor"
-        );
-
-        {
-            let mut market = session.world.get_mut::<Market>(destination).unwrap();
-            market.reserved_energy = Energy::ZERO;
-            market.set_energy_stock(Energy(1_000)).unwrap();
-        }
-        session.collect_automated_trader_requests().unwrap();
-        assert!(
-            session
-                .world
-                .resource::<FleetDynamics>()
-                .normalized_unserved_opportunity
-                > 0
-        );
-        session.evaluate_dynamic_fleet().unwrap();
-        assert_eq!(
-            session
-                .world
-                .query_filtered::<Entity, (With<Trader>, Without<PlayerControlled>)>()
-                .iter(&session.world)
-                .count(),
-            1,
-            "restored destination funding makes the opportunity spawnable"
-        );
-    }
-
-    #[test]
-    fn dynamic_spawn_overflows_are_atomic_and_retry_uses_unique_monotonic_ids() {
-        let mut dynamic = definition();
-        dynamic.fleet = dynamic_fleet(0, 3, 1, 100);
-        let mut session = GameSession::new(dynamic).unwrap();
-
-        session.world.resource_mut::<FleetDynamics>().spawn_sequence = u64::MAX;
-        let before_sequence_overflow = session.snapshot();
-        assert_eq!(session.spawn_dynamic_trader(), Err(CoreError::Overflow));
-        assert_eq!(session.snapshot(), before_sequence_overflow);
-        assert!(session.drain_events().is_empty());
-
-        session.world.resource_mut::<FleetDynamics>().spawn_sequence = 0;
-        session
-            .world
-            .resource_mut::<AggregateDynamicsHistory>()
-            .fleet_spawns = u64::MAX;
-        let before_counter_overflow = session.snapshot();
-        let energy_before = physical_energy(&before_counter_overflow);
-        assert_eq!(session.spawn_dynamic_trader(), Err(CoreError::Overflow));
-        assert_eq!(session.snapshot(), before_counter_overflow);
-        assert_eq!(physical_energy(&session.snapshot()), energy_before);
-        assert!(session.drain_events().is_empty());
-
-        session
-            .world
-            .resource_mut::<AggregateDynamicsHistory>()
-            .fleet_spawns = 0;
-        assert_eq!(session.spawn_dynamic_trader(), Ok(true));
-        assert_eq!(session.spawn_dynamic_trader(), Ok(true));
-        let snapshot = session.snapshot();
-        let ids = snapshot
-            .traders
-            .iter()
-            .filter(|trader| !trader.player)
-            .map(|trader| trader.id.clone())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            ids,
-            vec![
-                id("core:trader_dynamic_00000001"),
-                id("core:trader_dynamic_00000002")
-            ]
-        );
-        assert_eq!(snapshot.fleet.spawn_sequence, 2);
-        assert_eq!(snapshot.dynamics_history.fleet_spawns, 2);
-        assert_eq!(physical_energy(&snapshot), energy_before);
-        assert_eq!(
-            session
-                .drain_events()
-                .iter()
-                .filter(|event| matches!(event, GameEvent::TraderSpawned { .. }))
-                .count(),
-            2
-        );
-    }
-
-    #[test]
-    fn dynamic_retirement_counter_overflow_is_atomic_and_retry_returns_tank_once() {
-        let mut dynamic = definition();
-        dynamic.fleet = dynamic_fleet(1, 1, 100, 100);
-        dynamic.traders.push(TraderDefinition {
-            id: id("core:trader_01"),
-            name: "Trader 01".into(),
-            system: id("core:s0"),
-            energy_tank: Energy(100),
-            energy_tank_capacity: Energy(500),
-            cargo_capacity: 20,
-            speed: 10.0,
-            travel_burn_per_distance: Energy(1),
-            refuel_policy: RefuelPolicy::DepositAndWithdraw,
-            player: false,
-        });
-        let mut session = GameSession::new(dynamic).unwrap();
-        let npc = session
-            .world
-            .query_filtered::<(Entity, &StableId), (With<Trader>, Without<PlayerControlled>)>()
-            .iter(&session.world)
-            .find(|(_, stable)| stable.0 == id("core:trader_01"))
-            .unwrap()
-            .0;
-        session
-            .world
-            .get_mut::<TraderLifecycle>(npc)
-            .unwrap()
-            .retirement = Some(TraderRetirementState::CleaningUp);
-        session
-            .world
-            .resource_mut::<AggregateDynamicsHistory>()
-            .fleet_retirements = u64::MAX;
-        let before = session.snapshot();
-        let energy_before = physical_energy(&before);
-
-        assert_eq!(
-            session.finish_deferred_retirements(),
-            Err(CoreError::Overflow)
-        );
-        assert_eq!(session.snapshot(), before);
-        assert_eq!(physical_energy(&session.snapshot()), energy_before);
-        assert!(session.drain_events().is_empty());
-
-        session
-            .world
-            .resource_mut::<AggregateDynamicsHistory>()
-            .fleet_retirements = 0;
-        session.finish_deferred_retirements().unwrap();
-        let retired = session.snapshot();
-        assert_eq!(retired.dynamics_history.fleet_retirements, 1);
-        assert!(retired.traders.iter().all(|trader| trader.player));
-        assert_eq!(physical_energy(&retired), energy_before);
-        assert!(matches!(
-            session.drain_events().as_slice(),
-            [GameEvent::TraderRetired { trader, .. }] if trader == &id("core:trader_01")
-        ));
-        session.finish_deferred_retirements().unwrap();
-        assert_eq!(session.snapshot(), retired);
-        assert!(session.drain_events().is_empty());
-    }
-
-    #[test]
-    fn empty_unprofitable_dynamic_trader_returns_tank_before_retiring() {
-        let mut definition = definition();
-        definition.fleet = dynamic_fleet(1, 1, 100, 2);
-        for system in &mut definition.systems {
-            system.targets.insert(id("core:ore"), 0);
-            system.inventory.insert(id("core:ore"), 0);
-        }
-        definition.traders.push(TraderDefinition {
-            id: id("core:trader_01"),
-            name: "Trader 01".into(),
-            system: id("core:s0"),
-            energy_tank: Energy(100),
-            energy_tank_capacity: Energy(500),
-            cargo_capacity: 20,
-            speed: 10.0,
-            travel_burn_per_distance: Energy(1),
-            refuel_policy: RefuelPolicy::DepositAndWithdraw,
-            player: false,
-        });
-        let mut session = GameSession::new(definition).unwrap();
-        session.step().unwrap();
-        session.drain_events();
-        session.step().unwrap();
-        let events = session.drain_events();
-        let snapshot = session.snapshot();
-        assert_eq!(
-            snapshot
-                .traders
-                .iter()
-                .filter(|trader| !trader.player)
-                .count(),
-            0
-        );
-        assert_eq!(snapshot.dynamics_history.fleet_retirements, 1);
-        assert!(events.iter().any(|event| matches!(
-            event,
-            GameEvent::TraderRetired { trader, .. } if trader == &id("core:trader_01")
-        )));
-        assert_eq!(
-            snapshot
-                .reservations
-                .iter()
-                .filter(|r| r.status == ReservationStatus::Active)
-                .count(),
-            0
-        );
-    }
-
-    #[test]
-    fn laden_sustained_unprofitable_trader_uses_anti_strand_cleanup_and_retires() {
-        let mut definition = definition();
-        definition.fleet = dynamic_fleet(1, 1, 100, 2);
-        definition.traders.push(TraderDefinition {
-            id: id("core:trader_01"),
-            name: "Trader 01".into(),
-            system: id("core:s0"),
-            energy_tank: Energy(40),
-            energy_tank_capacity: Energy(1_000),
-            cargo_capacity: 20,
-            speed: 10.0,
-            travel_burn_per_distance: Energy(1),
-            refuel_policy: RefuelPolicy::DepositAndWithdraw,
-            player: false,
-        });
-        let mut session = GameSession::new(definition).unwrap();
-        let npc = session
-            .world
-            .query_filtered::<(Entity, &StableId), (With<Trader>, Without<PlayerControlled>)>()
-            .iter(&session.world)
-            .find(|(_, stable)| stable.0 == id("core:trader_01"))
-            .unwrap()
-            .0;
-        session
-            .commit_and_depart(npc, &id("core:s1"), &id("core:ore"), 5)
-            .unwrap();
-        // Remove ordinary purchasing power after the valid commitment. Once
-        // cleanup cancels the reservation, only Slice 1's protected liquidation
-        // payout can fund this low-tank trader's adjacent jump.
-        let destination = session.market_entity(&id("core:s1")).unwrap();
-        session
-            .world
-            .get_mut::<Market>(destination)
-            .unwrap()
-            .set_energy_stock(Energy::ZERO)
-            .unwrap();
-        assert_eq!(
-            session
-                .world
-                .get::<TraderLifecycle>(npc)
-                .unwrap()
-                .retirement,
-            None,
-            "retirement must be triggered by sustained unprofitability"
-        );
-        let initial = session.snapshot();
-        let initial_energy = physical_energy(&initial);
-        let initial_flow = i128::from(initial.energy_flow.net_external_delta().0);
-        let initial_ore = initial
-            .markets
-            .iter()
-            .map(|market| market.inventory[&id("core:ore")])
-            .sum::<u64>()
-            + initial
-                .traders
-                .iter()
-                .flat_map(|trader| trader.cargo.get(&id("core:ore")))
-                .sum::<u64>();
-
-        let retirement_window = 2_usize;
-        let destination_storage_cap = session
-            .world
-            .get::<Market>(destination)
-            .unwrap()
-            .energy_storage_cap;
-        let mut blocked_tank_return = false;
-        let mut releases = 0;
-        let mut liquidation_sale = false;
-        let mut observed_profitability_retirement = false;
-        let mut was_retiring = false;
-        let mut retired = false;
-        for _ in 0..20 {
-            session.step().unwrap();
-            let events = session.drain_events();
-            releases += events
-                .iter()
-                .filter(|event| matches!(event, GameEvent::ReservationReleased { .. }))
-                .count();
-            liquidation_sale |= events.iter().any(|event| {
-                matches!(
-                    event,
-                    GameEvent::Sold { trader, .. } if trader == &id("core:trader_01")
-                )
-            });
-            let snapshot = session.snapshot();
-            if let Some(trader) = snapshot
-                .traders
-                .iter()
-                .find(|trader| trader.id == id("core:trader_01"))
-            {
-                let is_retiring = trader.retirement.is_some();
-                if is_retiring && !was_retiring {
-                    assert_eq!(trader.profitability_window.len(), retirement_window);
-                    assert!(
-                        trader.profitability_window.iter().sum::<i64>() <= 0,
-                        "profitability retirement transitioned without a sustained loss"
-                    );
-                    assert!(
-                        usize::try_from(trader.failed_liquidation_ticks).unwrap()
-                            < retirement_window,
-                        "failed-liquidation trigger, not profitability, caused retirement"
-                    );
-                    observed_profitability_retirement = true;
-                    session
-                        .world
-                        .get_mut::<Market>(destination)
-                        .unwrap()
-                        .energy_storage_cap = destination_storage_cap;
-                } else if trader.profitability_window.len() == retirement_window - 1
-                    && !blocked_tank_return
-                {
-                    // Keep the retiring entity observable for one snapshot by
-                    // temporarily filling local tank-return headroom. Restoring
-                    // the cap immediately after the transition preserves the
-                    // bounded cleanup and conservation checks below.
-                    let mut market = session.world.get_mut::<Market>(destination).unwrap();
-                    market.energy_storage_cap = market.energy_stock().unwrap();
-                    blocked_tank_return = true;
-                }
-                was_retiring = is_retiring;
-            }
-            assert!(!snapshot.traders.iter().any(|trader| {
-                !trader.player
-                    && trader.travel.is_none()
-                    && !trader.cargo.is_empty()
-                    && trader.retirement.is_some()
-            }));
-            if snapshot.traders.iter().all(|trader| trader.player) {
-                retired = true;
-                break;
-            }
-        }
-        assert!(retired, "laden retirement did not finish within 20 ticks");
-        assert!(
-            observed_profitability_retirement,
-            "the profitability-triggered retirement transition was not observed"
-        );
-        assert_eq!(releases, 1);
-        assert!(
-            liquidation_sale,
-            "cleanup never used the funded liquidation sale path"
-        );
-        let final_snapshot = session.snapshot();
-        let final_ore = final_snapshot
-            .markets
-            .iter()
-            .map(|market| market.inventory[&id("core:ore")])
-            .sum::<u64>()
-            + final_snapshot
-                .traders
-                .iter()
-                .flat_map(|trader| trader.cargo.get(&id("core:ore")))
-                .sum::<u64>();
-        assert_eq!(final_ore, initial_ore);
-        assert_eq!(
-            physical_energy(&final_snapshot),
-            initial_energy + i128::from(final_snapshot.energy_flow.net_external_delta().0)
-                - initial_flow
-        );
-    }
-
-    #[test]
-    fn physical_tick_generates_caps_burns_and_reports_deficit() {
-        let mut d = definition();
-        d.systems[0].inventory.insert(id(ENERGY_ID), 1999);
-        d.systems[0].population = 3;
-        let mut s = GameSession::new(d).unwrap();
-        s.step().unwrap();
-        let m = &s.snapshot().markets[0];
-        assert_eq!(m.energy_stock, Energy(1997));
-        assert_eq!(m.energy_flow.generated, Energy(10));
-        assert_eq!(m.energy_flow.curtailed, Energy(9));
-        assert_eq!(m.energy_flow.life_support_burned, Energy(3));
-    }
-    #[test]
-    fn funded_quantity_keeps_reserves_independent() {
-        assert_eq!(
-            funded_quantity(
-                30,
-                Energy(400),
-                Energy(87),
-                Energy(50),
-                Energy(20),
-                Energy(13)
-            )
-            .unwrap(),
-            18
-        );
-        assert_eq!(
-            funded_quantity(
-                30,
-                Energy(400),
-                Energy(87),
-                Energy(100),
-                Energy(20),
-                Energy(13)
-            )
-            .unwrap(),
-            14
-        );
-    }
-    #[test]
-    fn cost_basis_and_weighted_allocation_preserve_exact_energy() {
-        let mut b = CostBasis {
-            stock_quantity: 3,
-            total_embodied_energy: Energy(10),
-        };
-        assert_eq!(b.remove(2).unwrap(), Energy(6));
-        assert_eq!(
-            b,
-            CostBasis {
-                stock_quantity: 1,
-                total_embodied_energy: Energy(4)
-            }
-        );
-        let a = allocate_embodied_energy(Energy(11), &[(id("core:a"), 1, 1), (id("core:b"), 1, 2)])
-            .unwrap();
-        assert_eq!(a[0].1, Energy(4));
-        assert_eq!(a[1].1, Energy(7));
-        let permuted =
-            allocate_embodied_energy(Energy(11), &[(id("core:b"), 1, 2), (id("core:a"), 1, 1)])
-                .unwrap();
-        assert_eq!(a, permuted);
-    }
-    #[test]
-    fn bay_energy_is_not_tank_energy_and_travel_only_burns_tank() {
-        let mut s = GameSession::new(definition()).unwrap();
-        s.submit(GameCommand::Buy {
-            good: id(ENERGY_ID),
-            quantity: 5,
-        })
-        .unwrap();
-        let before = s.snapshot().traders[0].clone();
-        assert_eq!(before.cargo.get(&id(ENERGY_ID)), Some(&5));
-        s.submit(GameCommand::BeginTravel {
-            destination: id("core:s1"),
-        })
-        .unwrap();
-        let after = s.snapshot().traders[0].clone();
-        assert_eq!(after.cargo.get(&id(ENERGY_ID)), Some(&5));
-        assert_eq!(before.energy_tank.0 - after.energy_tank.0, 10);
-    }
-    #[test]
-    fn offline_trade_network_access_rejects_commit_trade_atomically() {
-        let mut denied = GameSession::new(definition()).unwrap();
-        let mut control = GameSession::new(definition()).unwrap();
-        let before = denied.snapshot();
-
-        assert_eq!(
-            denied.submit(GameCommand::CommitTrade {
-                origin: id("core:s0"),
-                destination: id("core:s1"),
-                good: id("core:ore"),
-                quantity: 1,
-            }),
-            Err(CoreError::TradeNetworkAccessDenied)
-        );
-        assert!(
-            denied.world.resource::<PendingTradeRequests>().0.is_empty(),
-            "a denied player command must not leave deferred work"
-        );
-        assert_eq!(denied.snapshot(), before);
-        assert!(matches!(
-            denied.drain_events().as_slice(),
-            [GameEvent::Rejected(reason)] if reason.contains("trade-network access")
-        ));
-
-        denied.step().unwrap();
-        control.step().unwrap();
-        assert!(denied.world.resource::<PendingTradeRequests>().0.is_empty());
-        assert_eq!(
-            denied.snapshot(),
-            control.snapshot(),
-            "stepping after rejection must match a session that never received the command"
-        );
-        assert_eq!(denied.drain_events(), control.drain_events());
-    }
-
-    #[test]
-    fn offline_player_access_does_not_gate_npc_automated_commitments() {
-        let mut d = definition();
-        d.traders.push(TraderDefinition {
-            id: id("core:ai"),
-            name: "AI".into(),
-            system: id("core:s0"),
-            energy_tank: Energy(500),
-            energy_tank_capacity: Energy(1_000),
-            cargo_capacity: 20,
-            speed: 10.0,
-            travel_burn_per_distance: Energy(1),
-            refuel_policy: RefuelPolicy::DepositAndWithdraw,
-            player: false,
-        });
-        let mut s = GameSession::new(d).unwrap();
-
-        s.step().unwrap();
-
-        let npc_entity = s
-            .world
-            .query_filtered::<(Entity, &StableId), Without<PlayerControlled>>()
-            .iter(&s.world)
-            .find(|(_, stable)| stable.0 == id("core:ai"))
-            .unwrap()
-            .0;
-        assert!(
-            s.world
-                .get::<PlayerTradeNetworkAccess>(npc_entity)
-                .is_none(),
-            "NPC entities must remain capability-free"
-        );
-        let snapshot = s.snapshot();
-        assert_eq!(
-            snapshot.player_trade_network_access,
-            TradeNetworkAccess::Offline
-        );
-        let reservation = snapshot
-            .reservations
-            .iter()
-            .find(|reservation| reservation.trader == id("core:ai"))
-            .expect("NPC automation should create its funded commitment");
-        assert_eq!(reservation.status, ReservationStatus::Active);
-        let npc = snapshot
-            .traders
-            .iter()
-            .find(|trader| trader.id == id("core:ai"))
-            .unwrap();
-        assert!(npc.travel.is_some());
-        assert!(npc.reservation.is_some());
-    }
-
-    #[test]
-    fn reservation_contract_access_queues_trade_commitment_and_respects_tank_headroom() {
-        let mut d = definition();
-        d.player_trade_network_access = TradeNetworkAccess::ReservationContracts;
-        let energy = id(ENERGY_ID);
-        d.systems[0].targets.insert(energy.clone(), 100);
-        d.systems[1].inventory.insert(energy.clone(), 100);
-        d.systems[1].targets.insert(energy.clone(), 1_000);
-        d.systems[1]
-            .policy
-            .import_priorities
-            .insert(energy.clone(), 200);
-        d.traders[0].energy_tank = Energy(990);
-        d.traders[0].energy_tank_capacity = Energy(1_000);
-        let mut s = GameSession::new(d).unwrap();
-        assert_eq!(s.quotes(&id("core:s0"), &energy).unwrap().1, Energy(2));
-        assert_eq!(s.quotes(&id("core:s1"), &energy).unwrap().0, Energy(6));
-
-        s.submit(GameCommand::CommitTrade {
-            origin: id("core:s0"),
-            destination: id("core:s1"),
-            good: energy.clone(),
-            quantity: 20,
-        })
-        .unwrap();
-        assert!(
-            s.snapshot().reservations.is_empty(),
-            "requests resolve only on tick"
-        );
-        s.step().unwrap();
-        let departure = s.snapshot();
-        let reservation = departure
-            .reservations
-            .iter()
-            .find(|reservation| reservation.status == ReservationStatus::Active)
-            .unwrap();
-        assert_eq!(reservation.quantity, 5, "profit must fit arrival headroom");
-        assert_eq!(departure.traders[0].cargo.get(&energy), Some(&5));
-        assert!(departure.traders[0].travel.is_some());
-        assert!(departure.markets[1].reserved_energy > Energy::ZERO);
-
-        s.step().unwrap();
-        let arrival = s.snapshot();
-        assert_eq!(arrival.traders[0].cargo.get(&energy), None);
-        assert_eq!(arrival.traders[0].energy_tank, Energy(1_000));
-        assert_eq!(
-            arrival.energy_flow.market_to_energy_cargo,
-            WideEnergy(WideAmount(5))
-        );
-        assert_eq!(
-            arrival.energy_flow.energy_cargo_to_market,
-            WideEnergy(WideAmount(5))
-        );
-        assert_eq!(arrival.markets[1].reserved_energy, Energy::ZERO);
-    }
-
-    #[test]
-    fn local_trade_limits_match_buy_capacity_and_target_met_sell_funding() {
-        let ore = id("core:ore");
-        let mut session = GameSession::new(definition()).unwrap();
-        let initial = session.player_local_trade_limits(&ore).unwrap();
-        assert_eq!(initial.buy.maximum, 20);
-        assert_eq!(initial.buy.reason, LocalTradeLimitReason::CargoCapacity);
-        assert_eq!(initial.sell.maximum, 0);
-        assert_eq!(initial.sell.reason, LocalTradeLimitReason::UnitsHeld);
-
-        session
-            .submit(GameCommand::Buy {
-                good: ore.clone(),
-                quantity: 5,
-            })
-            .unwrap();
-        let market = session
-            .snapshot()
-            .markets
-            .into_iter()
-            .find(|market| market.system_id == id("core:s0"))
-            .unwrap();
-        assert!(market.inventory[&ore] >= market.targets[&ore].into());
-        assert_eq!(
-            market.demand.get(&ore).copied().unwrap_or_default().funded,
-            0,
-            "advertised target demand is intentionally met"
-        );
-
-        let after_buy = session.player_local_trade_limits(&ore).unwrap();
-        assert_eq!(after_buy.sell.maximum, 5);
-        assert_eq!(after_buy.sell.reason, LocalTradeLimitReason::UnitsHeld);
-        let before_rejected = session.snapshot();
-        assert_eq!(
-            session.submit(GameCommand::Sell {
-                good: ore.clone(),
-                quantity: 6,
-            }),
-            Err(CoreError::ExactQuantityUnavailable {
-                requested: 6,
-                maximum: 5,
-            })
-        );
-        assert_eq!(
-            session.snapshot().traders[0].cargo,
-            before_rejected.traders[0].cargo
-        );
-        assert_eq!(
-            session.snapshot().traders[0].energy_tank,
-            before_rejected.traders[0].energy_tank
-        );
-        session
-            .submit(GameCommand::Sell {
-                good: ore,
-                quantity: after_buy.sell.maximum,
-            })
-            .unwrap();
-        assert_eq!(
-            session
-                .snapshot()
-                .traders
-                .into_iter()
-                .find(|trader| trader.player)
-                .unwrap()
-                .cargo
-                .values()
-                .sum::<u64>(),
-            0
-        );
-    }
-
-    #[test]
-    fn invalid_policy_and_failed_purchase_are_atomic() {
-        let mut s = GameSession::new(definition()).unwrap();
-        let before = format!("{:?}", s.snapshot());
-        let p = MarketPolicy {
-            default_target: 0,
-            ..MarketPolicy::default()
-        };
-        assert_eq!(
-            s.submit(GameCommand::SetMarketPolicy {
-                system: id("core:s0"),
-                policy: p
-            }),
-            Err(CoreError::InvalidPolicy)
-        );
-        assert_eq!(format!("{:?}", s.snapshot()), before);
-        let before = format!("{:?}", s.snapshot());
-        assert!(
-            s.submit(GameCommand::Buy {
-                good: id("core:ore"),
-                quantity: u32::MAX
-            })
-            .is_err()
-        );
-        assert_eq!(format!("{:?}", s.snapshot()), before);
-    }
-    #[test]
-    fn policy_replacement_recomputes_protection_and_rejects_infeasible_changes_atomically() {
-        let mut s = GameSession::new(definition()).unwrap();
-        let system = id("core:s0");
-        let mut policy = MarketPolicy {
-            liquidation_discount_percent: 100,
-            operating_reserve_ticks: 99,
-            ..MarketPolicy::default()
-        };
-        s.submit(GameCommand::SetMarketPolicy {
-            system: system.clone(),
-            policy: policy.clone(),
-        })
-        .unwrap();
-        let changed = s.snapshot();
-        assert_eq!(changed.markets[0].policy, policy);
-        assert_eq!(changed.markets[0].protected_liquidation_budget, Energy(21));
-
-        policy.operating_reserve_ticks = 0;
-        s.submit(GameCommand::SetMarketPolicy {
-            system: system.clone(),
-            policy: policy.clone(),
-        })
-        .unwrap();
-        assert_eq!(
-            s.snapshot().markets[0].protected_liquidation_budget,
-            Energy(21),
-            "operating reserve must not weaken or inflate anti-strand protection"
-        );
-
-        s.drain_events();
-        let before = format!("{:?}", s.snapshot());
-        policy.liquidation_threshold_percent = u32::MAX;
-        assert_eq!(
-            s.submit(GameCommand::SetMarketPolicy { system, policy }),
-            Err(CoreError::InvalidPhysicalDefinition)
-        );
-        assert_eq!(format!("{:?}", s.snapshot()), before);
-        assert!(matches!(
-            s.drain_events().as_slice(),
-            [GameEvent::GovernorPolicyRejected {
-                reason: GovernorRejectionReason::InvalidPolicy,
-                ..
-            }]
-        ));
-
-        let trader = s.player_entity().unwrap();
-        s.world
-            .get_mut::<Trader>(trader)
-            .unwrap()
-            .travel_burn_per_distance = Energy(i64::MAX);
-        let before = format!("{:?}", s.snapshot());
-        let feasible_policy = MarketPolicy {
-            liquidation_discount_percent: 100,
-            operating_reserve_ticks: 0,
-            ..MarketPolicy::default()
-        };
-        assert_eq!(
-            s.submit(GameCommand::SetMarketPolicy {
-                system: id("core:s0"),
-                policy: feasible_policy,
-            }),
-            Err(CoreError::Overflow)
-        );
-        assert_eq!(format!("{:?}", s.snapshot()), before);
-        assert!(matches!(
-            s.drain_events().as_slice(),
-            [GameEvent::GovernorPolicyRejected {
-                reason: GovernorRejectionReason::Arithmetic,
-                ..
-            }]
-        ));
-    }
-
-    #[test]
-    fn failed_departure_after_staged_purchase_leaves_commitment_snapshot_and_events_unchanged() {
-        let mut s = GameSession::new(definition()).unwrap();
-        let trader = s.player_entity().unwrap();
-        let origin = s.market_entity(&id("core:s0")).unwrap();
-        s.world
-            .get_mut::<Market>(origin)
-            .unwrap()
-            .energy_flow
-            .travel_burned = Energy(i64::MAX);
-        s.drain_events();
-        let before_snapshot = format!("{:?}", s.snapshot());
-        let before_events = s.drain_events();
-
-        assert_eq!(
-            s.commit_and_depart(trader, &id("core:s1"), &id("core:ore"), 1),
-            Err(CoreError::Overflow)
-        );
-
-        assert_eq!(format!("{:?}", s.snapshot()), before_snapshot);
-        assert_eq!(s.drain_events(), before_events);
-    }
-
-    #[test]
-    fn same_tick_contention_winner_is_invariant_to_trader_insertion_order() {
-        fn run(reverse: bool) -> (ContentId, Energy) {
-            let mut d = definition();
-            d.systems[1].inventory.insert(id(ENERGY_ID), 50);
-            d.systems[1].energy_output_per_tick = Energy::ZERO;
-            d.systems[1].population = 0;
-            d.systems[1].population_state.current = 0;
-            d.systems[1].population_state.reference = 0;
-            d.systems[1].population_state.carrying_capacity = 0;
-            // Keep this fixture focused on reservation contention; autonomous
-            // investment spending is covered independently.
-            d.systems[1].investment_policy = InvestmentPolicy::default();
-            d.systems[1]
-                .policy
-                .import_priorities
-                .insert(id("core:ore"), 200);
-            let mut npcs = vec![
-                TraderDefinition {
-                    id: id("core:ai_a"),
-                    name: "A".into(),
-                    system: id("core:s0"),
-                    energy_tank: Energy(500),
-                    energy_tank_capacity: Energy(1_000),
-                    cargo_capacity: 20,
-                    speed: 10.0,
-                    travel_burn_per_distance: Energy(1),
-                    refuel_policy: RefuelPolicy::DepositAndWithdraw,
-                    player: false,
-                },
-                TraderDefinition {
-                    id: id("core:ai_b"),
-                    name: "B".into(),
-                    system: id("core:s0"),
-                    energy_tank: Energy(500),
-                    energy_tank_capacity: Energy(1_000),
-                    cargo_capacity: 20,
-                    speed: 10.0,
-                    travel_burn_per_distance: Energy(1),
-                    refuel_policy: RefuelPolicy::DepositAndWithdraw,
-                    player: false,
-                },
-            ];
-            if reverse {
-                npcs.reverse();
-            }
-            d.traders.extend(npcs);
-            let mut s = GameSession::new(d).unwrap();
-            s.step().unwrap();
-            let snapshot = s.snapshot();
-            let reservation = snapshot
-                .reservations
-                .iter()
-                .filter(|reservation| reservation.status == ReservationStatus::Active)
-                .min_by_key(|reservation| reservation.trader.clone())
-                .unwrap();
-            let market = snapshot
-                .markets
-                .iter()
-                .find(|market| market.system_id == id("core:s1"))
-                .unwrap();
-            assert!(market.reserved_energy <= Energy(30));
-            (reservation.trader.clone(), market.reserved_energy)
-        }
-
-        let forward = run(false);
-        let reverse = run(true);
-        assert_eq!(forward, reverse);
-        assert_eq!(forward.0, id("core:ai_a"));
-    }
-
-    #[test]
-    fn low_liquidity_arrival_partially_settles_releases_claim_and_reroutes() {
-        let mut d = definition();
-        d.systems[0].energy_output_per_tick = Energy::ZERO;
-        d.systems[1].energy_output_per_tick = Energy::ZERO;
-        d.systems[0].population = 0;
-        d.systems[1].population = 0;
-        d.traders.push(TraderDefinition {
-            id: id("core:ai"),
-            name: "AI".into(),
-            system: id("core:s0"),
-            energy_tank: Energy(100),
-            energy_tank_capacity: Energy(1_000),
-            cargo_capacity: 20,
-            speed: 10.0,
-            travel_burn_per_distance: Energy(1),
-            refuel_policy: RefuelPolicy::DepositAndWithdraw,
-            player: false,
-        });
-        let mut s = GameSession::new(d).unwrap();
-        let ai = s
-            .world
-            .query_filtered::<(Entity, &StableId), (With<Trader>, Without<PlayerControlled>)>()
-            .iter(&s.world)
-            .find(|(_, stable)| stable.0 == id("core:ai"))
-            .unwrap()
-            .0;
-        s.commit_and_depart(ai, &id("core:s1"), &id("core:ore"), 10)
-            .unwrap();
-        let reservation_id = s.world.get::<Trader>(ai).unwrap().reservation.unwrap();
-        let reservation = s
-            .world
-            .resource::<Reservations>()
-            .entries
-            .get(&reservation_id)
-            .unwrap()
-            .clone();
-        let destination = s.market_entity(&id("core:s1")).unwrap();
-        let protected = s
-            .world
-            .get::<Market>(destination)
-            .unwrap()
-            .protected_liquidation_budget;
-        s.world
-            .get_mut::<Market>(destination)
-            .unwrap()
-            .set_energy_stock(
-                protected
-                    .checked_add(reservation.floor_unit_price.checked_mul(2).unwrap())
-                    .unwrap(),
-            )
-            .unwrap();
-        s.drain_events();
-        s.step().unwrap();
-        let snapshot = s.snapshot();
-        let trader = snapshot
-            .traders
-            .iter()
-            .find(|trader| trader.id == id("core:ai"))
-            .unwrap();
-        assert!(trader.cargo.get(&id("core:ore")).copied().unwrap_or(0) > 0);
-        assert!(trader.travel.is_some() || trader.energy_tank > Energy::ZERO);
-        assert_eq!(snapshot.markets[1].reserved_energy, Energy::ZERO);
-        let released = snapshot
-            .reservations
-            .iter()
-            .find(|entry| entry.id == reservation_id)
-            .unwrap();
-        assert_eq!(released.status, ReservationStatus::Fulfilled);
-        assert_eq!(released.reserved_energy, Energy::ZERO);
-        let events = s.drain_events();
-        assert!(events.iter().any(|event| matches!(
-            event,
-            GameEvent::Sold {
-                partial: true,
-                quantity: 2,
-                ..
-            }
-        )));
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| matches!(event, GameEvent::ReservationReleased { reservation, .. } if *reservation == reservation_id))
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn mandatory_life_support_may_exhaust_claimed_stock_without_failing_arrival_tick() {
-        let mut d = definition();
-        d.systems[0].population = 0;
-        d.systems[1].population = 1_000;
-        d.systems[1].policy.operating_reserve_ticks = 0;
-        d.systems[0].energy_output_per_tick = Energy::ZERO;
-        d.systems[1].energy_output_per_tick = Energy::ZERO;
-        d.traders.push(TraderDefinition {
-            id: id("core:ai"),
-            name: "AI".into(),
-            system: id("core:s0"),
-            energy_tank: Energy(100),
-            energy_tank_capacity: Energy(1_000),
-            cargo_capacity: 20,
-            speed: 10.0,
-            travel_burn_per_distance: Energy(1),
-            refuel_policy: RefuelPolicy::DepositAndWithdraw,
-            player: false,
-        });
-        let mut s = GameSession::new(d).unwrap();
-        let ai = s
-            .world
-            .query_filtered::<(Entity, &StableId), (With<Trader>, Without<PlayerControlled>)>()
-            .iter(&s.world)
-            .find(|(_, stable)| stable.0 == id("core:ai"))
-            .unwrap()
-            .0;
-        s.commit_and_depart(ai, &id("core:s1"), &id("core:ore"), 2)
-            .unwrap();
-        s.step().unwrap();
-        let snapshot = s.snapshot();
-        assert_eq!(snapshot.markets[1].energy_stock, Energy::ZERO);
-        assert_eq!(snapshot.markets[1].reserved_energy, Energy::ZERO);
-        assert_eq!(
-            snapshot.markets[1].energy_flow.life_support_burned,
-            Energy(1_000)
-        );
-    }
-
-    #[test]
-    fn reservation_contention_is_stable_and_partial_settlement_releases_claim() {
-        let mut d = definition();
-        d.traders.push(TraderDefinition {
-            id: id("core:ai"),
-            name: "AI".into(),
-            system: id("core:s0"),
-            energy_tank: Energy(500),
-            energy_tank_capacity: Energy(1000),
-            cargo_capacity: 20,
-            speed: 10.0,
-            travel_burn_per_distance: Energy(1),
-            refuel_policy: RefuelPolicy::DepositAndWithdraw,
-            player: false,
-        });
-        let mut s = GameSession::new(d).unwrap();
-        let ai = s
-            .world
-            .query_filtered::<Entity, (With<Trader>, Without<PlayerControlled>)>()
-            .iter(&s.world)
-            .next()
-            .unwrap();
-        let q = s
-            .create_reservation(ai, &id("core:s1"), &id("core:ore"), 20)
-            .unwrap();
-        assert!(q > 0);
-        let reserved = s.snapshot().markets[1].reserved_energy;
-        assert!(reserved.0 > 0);
-        s.release_reservation(
-            s.world.get::<Trader>(ai).unwrap().reservation.unwrap(),
-            ReservationStatus::Cancelled,
-        )
-        .unwrap();
-        assert_eq!(s.snapshot().markets[1].reserved_energy, Energy(0));
-    }
-    #[test]
-    fn energy_flow_reconciles_external_delta() {
-        let mut s = GameSession::new(definition()).unwrap();
-        let before = s.snapshot();
-        let total_before: i64 = before.markets.iter().map(|m| m.energy_stock.0).sum::<i64>()
-            + before
-                .traders
-                .iter()
-                .map(|t| {
-                    t.energy_tank.0
-                        + i64::try_from(t.cargo.get(&id(ENERGY_ID)).copied().unwrap_or(0)).unwrap()
-                })
-                .sum::<i64>();
-        s.step().unwrap();
-        let after = s.snapshot();
-        let total_after: i64 = after.markets.iter().map(|m| m.energy_stock.0).sum::<i64>()
-            + after
-                .traders
-                .iter()
-                .map(|t| {
-                    t.energy_tank.0
-                        + i64::try_from(t.cargo.get(&id(ENERGY_ID)).copied().unwrap_or(0)).unwrap()
-                })
-                .sum::<i64>();
-        assert_eq!(
-            total_after - total_before,
-            i64::try_from(i128::from(after.energy_flow.net_external_delta().0)).unwrap()
-        );
-    }
-
-    #[test]
-    fn active_claims_block_discretionary_burn_independently_of_operating_reserve() {
-        let mut d = definition();
-        d.economy.source_output_percent = 50;
-        d.systems[0].policy.operating_reserve_ticks = 0;
-        d.systems[0].sources = vec![SourceDefinition {
-            good: id("core:ore"),
-            quantity_per_tick: 2,
-            extraction_energy: Energy(2),
-        }];
-        d.goods.push(GoodDefinition {
-            id: id("core:alloy"),
-            name: "Alloy".into(),
-            category: GoodCategory::Primary,
-            bootstrap_cost: Energy(5),
-        });
-        d.recipes.push(RecipeDefinition {
-            id: id("core:smelt"),
-            name: "Smelt".into(),
-            layer: RecipeLayer::Primary,
-            inputs: vec![GoodAmount {
-                good: id("core:ore"),
-                quantity: 1,
-            }],
-            outputs: vec![RecipeOutput {
-                good: id("core:alloy"),
-                quantity: 1,
-                cost_weight: 1,
-            }],
-            operating_energy: Energy(2),
-            margin_percent: None,
-        });
-        d.systems[0].recipes.push(id("core:smelt"));
-        d.systems[0].energy_output_per_tick = Energy::ZERO;
-        d.systems[0].population = 0;
-        let mut s = GameSession::new(d).unwrap();
-        let market = s.market_entity(&id("core:s0")).unwrap();
-        let stock = s
-            .world
-            .get::<Market>(market)
-            .unwrap()
-            .energy_stock()
-            .unwrap();
-        s.world.get_mut::<Market>(market).unwrap().reserved_energy = Energy(stock.0 - 1);
-        s.step().unwrap();
-        let snapshot = s.snapshot();
-        let market = snapshot
-            .markets
-            .iter()
-            .find(|market| market.system_id == id("core:s0"))
-            .unwrap();
-        assert_eq!(market.energy_flow.source_burned, Energy::ZERO);
-        assert_eq!(market.energy_flow.production_burned, Energy::ZERO);
-        assert_eq!(market.inventory[&id("core:ore")], 100);
-        assert_eq!(market.reserved_energy, Energy(stock.0 - 1));
-
-        let mut d = definition();
-        d.economy.source_output_percent = 50;
-        d.economy.life_support_burn_per_capita = Energy::ZERO;
-        d.systems[0].policy.operating_reserve_ticks = 0;
-        d.systems[0].sources = vec![SourceDefinition {
-            good: id("core:ore"),
-            quantity_per_tick: 2,
-            extraction_energy: Energy(2),
-        }];
-        d.systems[0].energy_output_per_tick = Energy::ZERO;
-        let mut s = GameSession::new(d).unwrap();
-        let entity = s.market_entity(&id("core:s0")).unwrap();
-        let protected = s
-            .world
-            .get::<Market>(entity)
-            .unwrap()
-            .protected_liquidation_budget;
-        s.world
-            .get_mut::<Market>(entity)
-            .unwrap()
-            .set_energy_stock(protected.checked_add(Energy(1)).unwrap())
-            .unwrap();
-        s.step().unwrap();
-        let snapshot = s.snapshot();
-        assert_eq!(snapshot.markets[0].energy_flow.source_burned, Energy::ZERO);
-        assert_eq!(
-            snapshot.markets[0].energy_stock,
-            protected.checked_add(Energy(1)).unwrap()
-        );
-    }
-
-    #[test]
-    fn authored_refuel_policy_and_all_protected_claims_bound_tank_withdrawal() {
-        let mut d = definition();
-        d.traders[0].refuel_policy = RefuelPolicy::DepositOnly;
-        let mut s = GameSession::new(d).unwrap();
-        assert_eq!(
-            s.submit(GameCommand::WithdrawTank { amount: Energy(1) }),
-            Err(CoreError::RefuelForbidden)
-        );
-
-        let trader = s.player_entity().unwrap();
-        s.world.get_mut::<Trader>(trader).unwrap().refuel_policy = RefuelPolicy::DepositAndWithdraw;
-        let market = s.market_entity(&id("core:s0")).unwrap();
-        let life = s
-            .world
-            .resource::<EconomyConfig>()
-            .life_support_burn_per_capita;
-        let policy = s.world.get::<MarketPolicy>(market).unwrap().clone();
-        s.world.get_mut::<Market>(market).unwrap().reserved_energy = Energy(100);
-        let available = s
-            .world
-            .get::<Market>(market)
-            .unwrap()
-            .unreserved_energy_for_purchases(&policy, life)
-            .unwrap();
-        assert_eq!(
-            s.submit(GameCommand::WithdrawTank {
-                amount: available.checked_add(Energy(1)).unwrap(),
-            }),
-            Err(CoreError::InsufficientEnergy)
-        );
-        s.submit(GameCommand::WithdrawTank { amount: available })
-            .unwrap();
-        let market = s.world.get::<Market>(market).unwrap();
-        assert_eq!(
-            market.energy_stock().unwrap(),
-            market
-                .reserved_energy
-                .checked_add(market.operating_reserve(&policy, life).unwrap())
-                .unwrap()
-                .checked_add(market.protected_liquidation_budget)
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn buy_tank_transfer_and_travel_are_atomic_on_ledger_overflow() {
-        let mut s = GameSession::new(definition()).unwrap();
-        let market = s.market_entity(&id("core:s0")).unwrap();
-        s.world
-            .get_mut::<Market>(market)
-            .unwrap()
-            .ledger
-            .energy_received_from_traders = Energy(i64::MAX);
-        let before = format!("{:?}", s.snapshot());
-        assert_eq!(
-            s.submit(GameCommand::Buy {
-                good: id("core:ore"),
-                quantity: 1,
-            }),
-            Err(CoreError::Overflow)
-        );
-        assert_eq!(format!("{:?}", s.snapshot()), before);
-
-        s.world
-            .get_mut::<Market>(market)
-            .unwrap()
-            .energy_flow
-            .tank_to_market = Energy(i64::MAX);
-        let before = format!("{:?}", s.snapshot());
-        assert_eq!(
-            s.submit(GameCommand::DepositTank { amount: Energy(1) }),
-            Err(CoreError::Overflow)
-        );
-        assert_eq!(format!("{:?}", s.snapshot()), before);
-
-        s.world
-            .get_mut::<Market>(market)
-            .unwrap()
-            .energy_flow
-            .travel_burned = Energy(i64::MAX);
-        let before = format!("{:?}", s.snapshot());
-        assert_eq!(
-            s.submit(GameCommand::BeginTravel {
-                destination: id("core:s1"),
-            }),
-            Err(CoreError::Overflow)
-        );
-        assert_eq!(format!("{:?}", s.snapshot()), before);
-    }
-
-    #[test]
-    fn cost_aware_ask_compounds_margin_and_bounded_scarcity_with_checked_rounding() {
-        let mut d = definition();
-        d.systems[0].inventory.insert(id("core:ore"), 0);
-        d.systems[0].targets.insert(id("core:ore"), 10);
-        d.systems[0].policy.producer_margin_percent = 20;
-        let mut s = GameSession::new(d).unwrap();
-        // ceil(3 * 1.20) = 4, then ceil(4 * 1.50) = 6.
-        assert_eq!(
-            s.quotes(&id("core:s0"), &id("core:ore")).unwrap().1,
-            Energy(6)
-        );
-        assert_eq!(
-            checked_mul_ratio_ceil(Energy(i64::MAX), 2, 1),
-            Err(CoreError::Overflow)
-        );
-    }
-
-    #[test]
-    fn route_subsidy_raises_solvent_bid_and_canonical_dynamic_backlog() {
-        let mut definition = definition();
-        enable_investments(&mut definition);
-        definition.fleet = dynamic_fleet(0, 2, 1, 100);
-        definition.goods.push(GoodDefinition {
-            id: id("core:alloy"),
-            name: "Alloy".into(),
-            category: GoodCategory::Primary,
-            bootstrap_cost: Energy(20),
-        });
-        definition.recipes.push(RecipeDefinition {
-            id: id("core:smelt"),
-            name: "Smelt".into(),
-            layer: RecipeLayer::Primary,
-            inputs: vec![GoodAmount {
-                good: id("core:ore"),
-                quantity: 1,
-            }],
-            outputs: vec![RecipeOutput {
-                good: id("core:alloy"),
-                quantity: 1,
-                cost_weight: 1,
-            }],
-            operating_energy: Energy::ZERO,
-            margin_percent: Some(0),
-        });
-        definition.systems[1].recipes.push(id("core:smelt"));
-        definition.systems[1].inventory.insert(id("core:alloy"), 10);
-        definition.systems[1].targets.insert(id("core:alloy"), 10);
-
-        let mut unsubsidized = GameSession::new(definition.clone()).unwrap();
-        let mut subsidized = GameSession::new(definition).unwrap();
-        let destination = subsidized.market_entity(&id("core:s1")).unwrap();
-        subsidized
-            .world
-            .get_mut::<Market>(destination)
-            .unwrap()
-            .investment_state
-            .levels
-            .insert(InvestmentKind::RouteSubsidy, 1);
-
-        let ore = id("core:ore");
-        let normal_bid = unsubsidized.quotes(&id("core:s1"), &ore).unwrap().0;
-        let subsidized_bid = subsidized.quotes(&id("core:s1"), &ore).unwrap().0;
-        let ceiling = {
-            let market = subsidized.world.get::<Market>(destination).unwrap();
-            let policy = subsidized.world.get::<MarketPolicy>(destination).unwrap();
-            subsidized
-                .processor_input_bid_ceiling(market, policy, &ore)
-                .unwrap()
-                .unwrap()
-        };
-        assert!(subsidized_bid > normal_bid);
-        assert!(subsidized_bid <= ceiling);
-        let solvency = subsidized
-            .processor_solvency()
-            .unwrap()
-            .into_iter()
-            .find(|row| row.system == id("core:s1") && row.recipe == id("core:smelt"))
-            .unwrap();
-        assert!(solvency.solvent, "{solvency:?}");
-
-        unsubsidized.collect_automated_trader_requests().unwrap();
-        subsidized.collect_automated_trader_requests().unwrap();
-        let normal_backlog = unsubsidized
-            .world
-            .resource::<FleetDynamics>()
-            .normalized_unserved_opportunity;
-        let subsidized_backlog = subsidized
-            .world
-            .resource::<FleetDynamics>()
-            .normalized_unserved_opportunity;
-        assert!(
-            subsidized_backlog > normal_backlog,
-            "subsidy did not increase canonical fleet routing signal: normal={normal_backlog}, subsidized={subsidized_backlog}"
-        );
-    }
-
-    #[test]
-    fn processor_input_bids_are_non_recursive_and_structurally_solvent() {
-        let mut d = definition();
-        d.goods.extend([
-            GoodDefinition {
-                id: id("core:catalyst"),
-                name: "Catalyst".into(),
-                category: GoodCategory::Raw,
-                bootstrap_cost: Energy(2),
-            },
-            GoodDefinition {
-                id: id("core:alloy"),
-                name: "Alloy".into(),
-                category: GoodCategory::Primary,
-                bootstrap_cost: Energy(12),
-            },
-        ]);
-        d.recipes.push(RecipeDefinition {
-            id: id("core:smelt"),
-            name: "Smelt".into(),
-            layer: RecipeLayer::Primary,
-            inputs: vec![
-                GoodAmount {
-                    good: id("core:ore"),
-                    quantity: 2,
-                },
-                GoodAmount {
-                    good: id("core:catalyst"),
-                    quantity: 1,
-                },
-            ],
-            outputs: vec![RecipeOutput {
-                good: id("core:alloy"),
-                quantity: 1,
-                cost_weight: 1,
-            }],
-            operating_energy: Energy(2),
-            margin_percent: Some(20),
-        });
-        d.systems[0].recipes.push(id("core:smelt"));
-        d.systems[0].inventory.insert(id("core:catalyst"), 10);
-        d.systems[0].inventory.insert(id("core:alloy"), 10);
-        d.systems[0].targets.insert(id("core:catalyst"), 10);
-        d.systems[0].targets.insert(id("core:alloy"), 10);
-        d.economy.investments.insert(
-            InvestmentKind::RouteSubsidy,
-            InvestmentShape {
-                enabled: true,
-                base_cost: Energy(100),
-                cost_growth_percent: 150,
-                maximum_level: 2,
-                cooldown_ticks: 2,
-                effect_per_level: 10,
-            },
-        );
-        let mut s = GameSession::new(d).unwrap();
-        let baseline_bid = s.quotes(&id("core:s0"), &id("core:ore")).unwrap().0;
-        let rows = s.processor_solvency().unwrap();
-        let row = rows
-            .iter()
-            .find(|row| row.recipe == id("core:smelt"))
-            .unwrap();
-        assert!(row.solvent, "{row:?}");
-        assert!(row.expected_input_bids.0 > 0);
-
-        let market = s.market_entity(&id("core:s0")).unwrap();
-        s.world
-            .get_mut::<Market>(market)
-            .unwrap()
-            .investment_state
-            .levels
-            .insert(InvestmentKind::RouteSubsidy, 2);
-        assert_eq!(
-            s.quotes(&id("core:s0"), &id("core:ore")).unwrap().0,
-            baseline_bid,
-            "a subsidy cannot raise a processor input above its solvency ceiling"
-        );
-        let subsidized = s
-            .processor_solvency()
-            .unwrap()
-            .into_iter()
-            .find(|row| row.recipe == id("core:smelt"))
-            .unwrap();
-        assert!(subsidized.solvent, "{subsidized:?}");
-    }
-
-    #[test]
-    fn runtime_cost_propagates_through_single_multi_output_and_consuming_recipes() {
-        let mut d = definition();
-        d.economy.life_support_burn_per_capita = Energy::ZERO;
-        d.goods.extend([
-            GoodDefinition {
-                id: id("core:alloy"),
-                name: "Alloy".into(),
-                category: GoodCategory::Primary,
-                bootstrap_cost: Energy(5),
-            },
-            GoodDefinition {
-                id: id("core:slag"),
-                name: "Slag".into(),
-                category: GoodCategory::Primary,
-                bootstrap_cost: Energy(1),
-            },
-            GoodDefinition {
-                id: id("core:machine"),
-                name: "Machine".into(),
-                category: GoodCategory::Secondary,
-                bootstrap_cost: Energy(9),
-            },
-        ]);
-        d.recipes.extend([
-            RecipeDefinition {
-                id: id("core:split"),
-                name: "Split".into(),
-                layer: RecipeLayer::Primary,
-                inputs: vec![GoodAmount {
-                    good: id("core:ore"),
-                    quantity: 1,
-                }],
-                outputs: vec![
-                    RecipeOutput {
-                        good: id("core:alloy"),
-                        quantity: 1,
-                        cost_weight: 1,
-                    },
-                    RecipeOutput {
-                        good: id("core:slag"),
-                        quantity: 1,
-                        cost_weight: 2,
-                    },
-                ],
-                operating_energy: Energy(2),
-                margin_percent: None,
-            },
-            RecipeDefinition {
-                id: id("core:forge"),
-                name: "Forge".into(),
-                layer: RecipeLayer::Secondary,
-                inputs: vec![GoodAmount {
-                    good: id("core:alloy"),
-                    quantity: 1,
-                }],
-                outputs: vec![RecipeOutput {
-                    good: id("core:machine"),
-                    quantity: 1,
-                    cost_weight: 1,
-                }],
-                operating_energy: Energy(3),
-                margin_percent: None,
-            },
-            RecipeDefinition {
-                id: id("core:consume"),
-                name: "Consume".into(),
-                layer: RecipeLayer::Tertiary,
-                inputs: vec![GoodAmount {
-                    good: id("core:machine"),
-                    quantity: 1,
-                }],
-                outputs: vec![],
-                operating_energy: Energy(1),
-                margin_percent: None,
-            },
-        ]);
-        d.systems[0].recipes = vec![id("core:split"), id("core:forge"), id("core:consume")];
-        d.systems[0].energy_output_per_tick = Energy::ZERO;
-        let mut s = GameSession::new(d).unwrap();
-        s.step().unwrap();
-        let snapshot = s.snapshot();
-        let market = &snapshot.markets[0];
-        assert_eq!(
-            market.cost_basis[&id("core:slag")].total_embodied_energy,
-            Energy(3)
-        );
-        assert_eq!(market.cost_basis[&id("core:alloy")].stock_quantity, 0);
-        assert_eq!(market.cost_basis[&id("core:machine")].stock_quantity, 0);
-        assert_eq!(market.energy_flow.production_burned, Energy(6));
-        assert_eq!(market.ledger.processor_input_cost, Energy(5));
-        assert_eq!(market.ledger.processor_operating_energy, Energy(5));
-    }
-
-    #[test]
-    fn recipe_margin_override_is_applied_to_runtime_quote() {
-        let mut d = definition();
-        d.goods.push(GoodDefinition {
-            id: id("core:alloy"),
-            name: "Alloy".into(),
-            category: GoodCategory::Primary,
-            bootstrap_cost: Energy(5),
-        });
-        d.recipes.push(RecipeDefinition {
-            id: id("core:smelt"),
-            name: "Smelt".into(),
-            layer: RecipeLayer::Primary,
-            inputs: vec![GoodAmount {
-                good: id("core:ore"),
-                quantity: 1,
-            }],
-            outputs: vec![RecipeOutput {
-                good: id("core:alloy"),
-                quantity: 1,
-                cost_weight: 1,
-            }],
-            operating_energy: Energy(1),
-            margin_percent: Some(50),
-        });
-        d.systems[0].recipes.push(id("core:smelt"));
-        d.systems[0].inventory.insert(id("core:alloy"), 10);
-        d.systems[0].targets.insert(id("core:alloy"), 10);
-        d.systems[0].policy.producer_margin_percent = 0;
-        let mut s = GameSession::new(d).unwrap();
-        assert_eq!(
-            s.quotes(&id("core:s0"), &id("core:alloy")).unwrap().1,
-            Energy(8)
-        );
-    }
-
-    #[test]
-    fn source_scaling_controls_runtime_output_burn_and_operating_reserve() {
-        let mut d = definition();
-        d.economy.source_output_percent = 50;
-        d.economy.life_support_burn_per_capita = Energy::ZERO;
-        d.systems[0].sources.push(SourceDefinition {
-            good: id("core:ore"),
-            quantity_per_tick: 3,
-            extraction_energy: Energy(1),
-        });
-        d.systems[0].energy_output_per_tick = Energy::ZERO;
-        d.systems[0].policy.operating_reserve_ticks = 1;
-        let mut s = GameSession::new(d).unwrap();
-        assert_eq!(s.snapshot().markets[0].operating_reserve, Energy(1));
-        s.step().unwrap();
-        let market = &s.snapshot().markets[0];
-        assert_eq!(market.inventory[&id("core:ore")], 101);
-        assert_eq!(market.energy_flow.source_burned, Energy(1));
-    }
-
-    #[test]
-    fn route_burn_sums_each_leg_ceiling_and_global_flow_never_clamps() {
-        let a = id("core:a");
-        let b = id("core:b");
-        let c = id("core:c");
-        let graph = SystemGraph {
-            positions: BTreeMap::new(),
-            edges: BTreeMap::from([
-                (a.clone(), vec![(b.clone(), 0.4)]),
-                (b.clone(), vec![(a.clone(), 0.4), (c.clone(), 0.4)]),
-                (c.clone(), vec![(b.clone(), 0.4)]),
-            ]),
-        };
-        assert_eq!(
-            route_travel_energy(&graph, &[a, b, c], Energy(1)).unwrap(),
-            Energy(2)
-        );
-        assert_eq!(travel_energy(0.8, Energy(1)).unwrap(), Energy(1));
-
-        let mut aggregate = GlobalEnergyFlowLedger::default();
-        let flow = EnergyFlowLedger {
-            generated: Energy(i64::MAX),
-            ..EnergyFlowLedger::default()
-        };
-        aggregate.add_market(flow);
-        aggregate.add_market(flow);
-        assert_eq!(
-            aggregate.generated,
-            WideEnergy(WideAmount(i128::from(i64::MAX) * 2))
-        );
-    }
-
-    #[test]
-    fn liquidation_contract_and_threshold_are_deterministic() {
-        let reference = Energy(7);
-        assert_eq!(liquidation_unit_price(reference, 50).unwrap(), Energy(3));
-        assert_eq!(
-            liquidation_target_energy(Energy(11), 150).unwrap(),
-            Energy(17)
-        );
-        let dynamic_adversarial_bid = Energy(i64::MAX / 100);
-        assert_ne!(
-            liquidation_unit_price(reference, 50).unwrap(),
-            liquidation_unit_price(dynamic_adversarial_bid, 50).unwrap()
-        );
-    }
-
-    #[test]
-    fn brownout_boundaries_shocks_and_recovery_are_deterministic() {
-        let config = BrownoutConfig::default();
-        let normal = BrownoutState::default();
-        for (runway, expected) in [
-            (u32::MAX, BrownoutStage::Normal),
-            (13, BrownoutStage::Normal),
-            (12, BrownoutStage::Throttled),
-            (7, BrownoutStage::Throttled),
-            (6, BrownoutStage::Emergency),
-            (2, BrownoutStage::Emergency),
-            (1, BrownoutStage::Starvation),
-            (0, BrownoutStage::Starvation),
-        ] {
-            assert_eq!(
-                classify_brownout(&normal, &config, runway, Energy::ZERO, 10).unwrap(),
-                expected,
-                "runway {runway}"
-            );
-        }
-        assert_eq!(
-            classify_brownout(&normal, &config, 100, Energy(1), 10).unwrap(),
-            BrownoutStage::Starvation,
-            "unsupplied life support directly crosses all bands"
-        );
-
-        let mut state = BrownoutState {
-            stage: BrownoutStage::Starvation,
-            entered_at_tick: 5,
-            ..BrownoutState::default()
-        };
-        assert_eq!(
-            classify_brownout(&state, &config, 100, Energy::ZERO, 5).unwrap(),
-            BrownoutStage::Starvation,
-            "minimum occupancy blocks same-tick recovery"
-        );
-        assert_eq!(
-            classify_brownout(&state, &config, 3, Energy::ZERO, 6).unwrap(),
-            BrownoutStage::Emergency
-        );
-        state.stage = BrownoutStage::Emergency;
-        state.entered_at_tick = 6;
-        assert_eq!(
-            classify_brownout(&state, &config, 8, Energy::ZERO, 7).unwrap(),
-            BrownoutStage::Throttled
-        );
-        state.stage = BrownoutStage::Throttled;
-        state.entered_at_tick = 7;
-        assert_eq!(
-            classify_brownout(&state, &config, 16, Energy::ZERO, 8).unwrap(),
-            BrownoutStage::Normal
-        );
-    }
-
-    #[test]
-    fn triangle_throughput_population_fleet_and_investment_helpers_cover_boundaries() {
-        assert_eq!(
-            (0..4)
-                .map(|tick| triangle_wave_output(Energy(100), 20, 4, 0, tick).unwrap())
-                .collect::<Vec<_>>(),
-            vec![Energy(80), Energy(100), Energy(120), Energy(100)]
-        );
-        assert_eq!(
-            triangle_wave_output(Energy(i64::MAX), 0, 2, 0, u64::MAX).unwrap(),
-            Energy(i64::MAX),
-            "zero amplitude is exactly fixed output without tick overflow"
-        );
-        assert!(triangle_wave_output(Energy(1), 101, 2, 0, 0).is_err());
-        assert!(
-            triangle_wave_output(Energy(100), 20, 3, 0, 0).is_err(),
-            "nonzero seasonal amplitude requires an even period"
-        );
-        assert_eq!(
-            triangle_wave_output(Energy(100), 0, 3, 0, 1).unwrap(),
-            Energy(100),
-            "odd periods remain harmless for fixed-output seasons"
-        );
-        let odd_state = SeasonalGenerationState {
-            base_output: Energy(100),
-            amplitude_percent: 20,
-            period_ticks: 3,
-            phase_ticks: 0,
-            current_effective_output: Energy(100),
-        };
-        assert_eq!(odd_state.validate(), Err(CoreError::InvalidWorldDynamics));
-        assert_eq!(
-            triangle_wave_output(Energy(100), 100, 4, 0, 0).unwrap(),
-            Energy::ZERO,
-            "the maximum permitted amplitude cannot produce negative generation"
-        );
-        assert_eq!(
-            (0..4)
-                .map(|tick| triangle_wave_output(Energy(100), 20, 4, 1, tick).unwrap())
-                .collect::<Vec<_>>(),
-            vec![Energy(100), Energy(120), Energy(100), Energy(80)],
-            "an even period reaches exact extrema at the phase-shifted turning points"
-        );
-        assert_eq!(
-            triangle_wave_output(Energy(100), 20, 4, 1, 3).unwrap(),
-            triangle_wave_output(Energy(100), 20, 4, 1, 7).unwrap(),
-            "phase-shifted output repeats exactly after one period"
-        );
-        assert_eq!(
-            triangle_wave_output(Energy(100), 20, 4, 0, u64::MAX).unwrap(),
-            triangle_wave_output(Energy(100), 20, 4, 0, u64::MAX % 4).unwrap(),
-            "large ticks wrap before phase addition"
-        );
-        assert!(triangle_wave_output(Energy(i64::MAX), 100, 2, 0, 1).is_err());
-        let phase = seasonal_phase(4, 0, 0).unwrap();
-        assert_eq!(phase.trend, SeasonalTrend::Rising);
-        assert_eq!(phase.next_turning_point_tick, Some(2));
-        assert_eq!(
-            seasonal_phase(4, 0, 2).unwrap().trend,
-            SeasonalTrend::Falling
-        );
-        assert_eq!(
-            seasonal_phase(4, 0, u64::MAX)
-                .unwrap()
-                .next_turning_point_tick,
-            None,
-            "a turning point beyond the clock range is explicit"
-        );
-
-        for (stage, labor, expected) in [(0, 100, 0), (1, 100, 1), (100, 100, 100)] {
-            let mut production_carry = 0;
-            let mut reserve_carry = 0;
-            let mut diagnostic_carry = 0;
-            assert_eq!(
-                composed_throughput(100, stage, labor, &mut production_carry).unwrap(),
-                expected
-            );
-            assert_eq!(
-                composed_throughput(100, stage, labor, &mut reserve_carry).unwrap(),
-                expected
-            );
-            assert_eq!(
-                composed_throughput(100, stage, labor, &mut diagnostic_carry).unwrap(),
-                expected
-            );
-        }
-        let mut carry = 0;
-        assert_eq!(
-            (0..4)
-                .map(|_| composed_throughput(1, 50, 50, &mut carry).unwrap())
-                .collect::<Vec<_>>(),
-            vec![0, 0, 0, 1],
-            "stage and labor are multiplied before one final carry"
-        );
-        assert_eq!(carry, 0);
-
-        let mut population_carry = LogisticGrowthCarry::default();
-        assert_eq!(
-            logistic_population_delta(90, 100, 1_000, 1, &mut population_carry).unwrap(),
-            9
-        );
-        assert_eq!(
-            logistic_population_delta(100, 100, 1_000, 1, &mut population_carry).unwrap(),
-            0
-        );
-        assert_eq!(update_opportunity_persistence(4, 10, 10).unwrap(), 5);
-        assert_eq!(update_opportunity_persistence(4, 9, 10).unwrap(), 0);
-        assert!(update_opportunity_persistence(0, 1, 0).is_err());
-
-        let shape = InvestmentShape {
-            enabled: true,
-            base_cost: Energy(100),
-            cost_growth_percent: 150,
-            maximum_level: 3,
-            cooldown_ticks: 1,
-            effect_per_level: 1,
-        };
-        assert_eq!(investment_cost(&shape, 0).unwrap(), Energy(100));
-        assert_eq!(investment_cost(&shape, 1).unwrap(), Energy(150));
-        assert_eq!(investment_cost(&shape, 2).unwrap(), Energy(225));
-        assert!(investment_cost(&shape, 3).is_err());
-    }
-
-    #[test]
-    fn investment_max_effect_validation_accepts_boundaries_and_rejects_first_invalid() {
-        let base_shape = |effect_per_level| InvestmentShape {
-            enabled: true,
-            base_cost: Energy(1),
-            cost_growth_percent: 100,
-            maximum_level: 1,
-            cooldown_ticks: 1,
-            effect_per_level,
-        };
-        let mut shapes = default_investment_shapes();
-        let mut population = PopulationConfig::default();
-
-        shapes.insert(InvestmentKind::RouteSubsidy, base_shape(u32::MAX - 100));
-        validate_investment_shapes(&shapes, &population).unwrap();
-        shapes.insert(InvestmentKind::RouteSubsidy, base_shape(u32::MAX - 99));
-        assert_eq!(
-            validate_investment_shapes(&shapes, &population),
-            Err(CoreError::InvalidWorldDynamics)
-        );
-
-        shapes.insert(InvestmentKind::RouteSubsidy, base_shape(1));
-        population.growth_per_thousand = 200;
-        let maximum_growth_bonus = u32::MAX / 2 - 100;
-        shapes.insert(
-            InvestmentKind::PopulationSupport,
-            base_shape(maximum_growth_bonus),
-        );
-        validate_investment_shapes(&shapes, &population).unwrap();
-        shapes.insert(
-            InvestmentKind::PopulationSupport,
-            base_shape(maximum_growth_bonus + 1),
-        );
-        assert_eq!(
-            validate_investment_shapes(&shapes, &population),
-            Err(CoreError::InvalidWorldDynamics)
-        );
-
-        population.growth_per_thousand = 1;
-        population.maximum_cap = u64::MAX / 1_000;
-        shapes.insert(
-            InvestmentKind::PopulationSupport,
-            base_shape(u32::MAX - 100),
-        );
-        assert_eq!(
-            validate_investment_shapes(&shapes, &population),
-            Err(CoreError::InvalidWorldDynamics),
-            "the maximum logistic numerator must remain within u128"
-        );
-
-        shapes.insert(InvestmentKind::PopulationSupport, base_shape(1));
-        shapes.insert(InvestmentKind::Collector, base_shape(1));
-        shapes.insert(InvestmentKind::Storage, base_shape(1));
-        let maximum_seasonal_base = i64::MAX / 2;
-        let seasonal = SeasonalGenerationState {
-            base_output: Energy(maximum_seasonal_base - 1),
-            amplitude_percent: 100,
-            period_ticks: 2,
-            phase_ticks: 0,
-            current_effective_output: Energy::ZERO,
-        };
-        validate_market_investment_bounds(&shapes, &seasonal, Energy(i64::MAX - 1)).unwrap();
-        let first_invalid_collector = SeasonalGenerationState {
-            base_output: Energy(maximum_seasonal_base),
-            ..seasonal.clone()
-        };
-        assert_eq!(
-            validate_market_investment_bounds(
-                &shapes,
-                &first_invalid_collector,
-                Energy(i64::MAX - 1),
-            ),
-            Err(CoreError::InvalidWorldDynamics)
-        );
-        assert_eq!(
-            validate_market_investment_bounds(&shapes, &seasonal, Energy(i64::MAX)),
-            Err(CoreError::InvalidWorldDynamics)
-        );
-    }
-
-    #[test]
-    fn maximum_valid_collector_purchase_executes_the_following_consuming_phase() {
-        let mut d = definition();
-        enable_investments(&mut d);
-        d.economy
-            .investments
-            .get_mut(&InvestmentKind::Collector)
-            .unwrap()
-            .cooldown_ticks = 1;
-        d.systems[0].investment_policy = InvestmentPolicy {
-            allocation_percent: BTreeMap::from([(InvestmentKind::Collector, 100)]),
-        };
-        let mut session = GameSession::new(d).unwrap();
-        session.step().unwrap();
-        session.step().unwrap();
-        assert_eq!(
-            session
-                .snapshot()
-                .markets
-                .into_iter()
-                .find(|market| market.system_id == id("core:s0"))
-                .unwrap()
-                .investment_state
-                .levels[&InvestmentKind::Collector],
-            2
-        );
-        session.step().unwrap();
-        let market = session
-            .snapshot()
-            .markets
-            .into_iter()
-            .find(|market| market.system_id == id("core:s0"))
-            .unwrap();
-        assert_eq!(
-            market.seasonal_generation.current_effective_output,
-            Energy(2)
-        );
-        assert_eq!(
-            market.investment_state.status[&InvestmentKind::Collector],
-            InvestmentStatus::MaximumLevel
-        );
-    }
-
-    #[test]
-    fn seasonal_generation_runs_before_life_support_and_is_projected() {
-        let mut d = definition();
-        d.systems[0].energy_output_per_tick = Energy(100);
-        d.systems[0].seasonal_generation = SeasonalGenerationState {
-            base_output: Energy(100),
-            amplitude_percent: 20,
-            period_ticks: 4,
-            phase_ticks: 0,
-            current_effective_output: Energy(100),
-        };
-        d.systems[0].energy_storage_cap = Energy(10_000);
-        d.systems[0].inventory.insert(id(ENERGY_ID), 1_000);
-        d.systems[0].population = 1;
-        let mut session = GameSession::new(d).unwrap();
-        session.step().unwrap();
-        let events = session.drain_events();
-        assert!(events.iter().any(|event| matches!(
-            event,
-            GameEvent::EnergyGenerated { system, amount: Energy(80), .. }
-                if system == &id("core:s0")
-        )));
-        let market = session
-            .snapshot()
-            .markets
-            .into_iter()
-            .find(|market| market.system_id == id("core:s0"))
-            .unwrap();
-        assert_eq!(market.energy_stock, Energy(1_079));
-        assert_eq!(market.seasonal_generation.base_output, Energy(100));
-        assert_eq!(
-            market.seasonal_generation.current_effective_output,
-            Energy(80)
-        );
-        assert_eq!(market.seasonal_phase.position_ticks, 0);
-        assert_eq!(market.seasonal_phase.next_turning_point_tick, Some(2));
-    }
-
-    #[test]
-    fn recorded_external_delivery_is_atomic_and_reconciles_a_stage_intervention() {
-        let mut d = definition();
-        d.systems[0].energy_output_per_tick = Energy::ZERO;
-        d.systems[0].seasonal_generation.base_output = Energy::ZERO;
-        d.systems[0].seasonal_generation.current_effective_output = Energy::ZERO;
-        d.systems[0].inventory.insert(id(ENERGY_ID), 7);
-        d.systems[0].population = 1;
-        let mut baseline = GameSession::new(d.clone()).unwrap();
-        let mut intervention = GameSession::new(d).unwrap();
-        let initial_physical = physical_energy(&intervention.snapshot());
-        intervention
-            .submit(GameCommand::RecordExternalDelivery {
-                system: id("core:s0"),
-                good: id(ENERGY_ID),
-                quantity: 10,
-            })
-            .unwrap();
-        baseline.step().unwrap();
-        intervention.step().unwrap();
-        let baseline_market = baseline.snapshot().markets.remove(0);
-        let intervention_snapshot = intervention.snapshot();
-        let intervention_market = intervention_snapshot.markets[0].clone();
-        assert_eq!(baseline_market.brownout.stage, BrownoutStage::Emergency);
-        assert_eq!(intervention_market.brownout.stage, BrownoutStage::Normal);
-        assert_eq!(
-            i128::from(intervention_snapshot.energy_flow.external_inflow.0),
-            10_i128
-        );
-        assert_eq!(
-            i128::from(intervention_snapshot.energy_flow.net_external_delta().0),
-            physical_energy(&intervention_snapshot) - initial_physical
-        );
-        assert_eq!(
-            intervention
-                .drain_events()
-                .iter()
-                .filter(|event| matches!(event, GameEvent::ExternalDeliveryRecorded { .. }))
-                .count(),
-            1
-        );
-
-        let before = intervention.snapshot().markets[0].energy_stock;
-        assert_eq!(
-            intervention.submit(GameCommand::RecordExternalDelivery {
-                system: id("core:s0"),
-                good: id(ENERGY_ID),
-                quantity: 20_000,
-            }),
-            Err(CoreError::InsufficientCapacity)
-        );
-        assert_eq!(intervention.snapshot().markets[0].energy_stock, before);
-        assert!(
-            !intervention
-                .drain_events()
-                .iter()
-                .any(|event| matches!(event, GameEvent::ExternalDeliveryRecorded { .. }))
-        );
-    }
-
-    #[test]
-    fn brownout_runtime_suppresses_demand_caps_price_and_preserves_reservations() {
-        let mut d = definition();
-        d.economy.brownouts.emergency_energy_bid_ceiling = Energy(10);
-        d.systems[0].energy_output_per_tick = Energy::ZERO;
-        d.systems[0].inventory.insert(id(ENERGY_ID), 7);
-        d.systems[0].population = 1;
-        let mut session = GameSession::new(d).unwrap();
-        let energy = id(ENERGY_ID);
-        let ore = id("core:ore");
-        let normal_energy_bid = session.quotes(&id("core:s0"), &energy).unwrap().0;
-        let player = session.player_entity().unwrap();
-        let reserved_quantity = session
-            .create_reservation(player, &id("core:s1"), &ore, 1)
-            .unwrap();
-        assert_eq!(reserved_quantity, 1);
-        let reservation_id = session
-            .world
-            .get::<Trader>(player)
-            .unwrap()
-            .reservation
-            .unwrap();
-        let reserved_before = session.snapshot().markets[1].reserved_energy;
-
-        session.step().unwrap();
-        let snapshot = session.snapshot();
-        let distressed = snapshot
-            .markets
-            .iter()
-            .find(|market| market.system_id == id("core:s0"))
-            .unwrap();
-        assert_eq!(distressed.brownout.stage, BrownoutStage::Emergency);
-        assert_eq!(distressed.operating_profile.throughput_percent, 0);
-        assert_eq!(
-            session.quotes(&id("core:s0"), &ore).unwrap().0,
-            Energy::ZERO
-        );
-        let emergency_bid = session.quotes(&id("core:s0"), &energy).unwrap().0;
-        assert!(emergency_bid >= normal_energy_bid);
-        assert!(emergency_bid <= Energy(10));
-        assert_eq!(distressed.unreserved_energy_for_purchases, Energy::ZERO);
-        assert_eq!(distressed.protected_liquidation_budget, Energy(20));
-        assert_eq!(snapshot.markets[1].reserved_energy, reserved_before);
-        assert_eq!(
-            snapshot
-                .reservations
-                .iter()
-                .find(|reservation| reservation.id == reservation_id)
-                .unwrap()
-                .status,
-            ReservationStatus::Active
-        );
-        let events = session.drain_events();
-        assert!(events.iter().any(|event| matches!(
-            event,
-            GameEvent::BrownoutTransition {
-                from: BrownoutStage::Normal,
-                to: BrownoutStage::Emergency,
-                ..
-            }
-        )));
-        assert!(!events.iter().any(|event| matches!(
-            event,
-            GameEvent::TraderSpawned { .. } | GameEvent::TraderRetired { .. }
-        )));
-
-        session.step().unwrap();
-        let steady_events = session.drain_events();
-        assert!(
-            !steady_events
-                .iter()
-                .any(|event| matches!(event, GameEvent::BrownoutTransition { .. }))
-        );
-        let steady = session.snapshot();
-        let distressed = steady
-            .markets
-            .iter()
-            .find(|market| market.system_id == id("core:s0"))
-            .unwrap();
-        assert_eq!(
-            distressed.brownout.occupancy_ticks[BrownoutStage::Emergency.index()],
-            2
-        );
-        assert_eq!(distressed.brownout.transition_count, 1);
-        assert_eq!(
-            steady
-                .dynamics_history
-                .stage_occupancy_ticks
-                .iter()
-                .sum::<u64>(),
-            4
-        );
-    }
-
-    #[test]
-    fn throttled_recipe_uses_one_deterministic_final_carry() {
-        let mut d = definition();
-        d.goods.push(GoodDefinition {
-            id: id("core:alloy"),
-            name: "Alloy".into(),
-            category: GoodCategory::Primary,
-            bootstrap_cost: Energy(5),
-        });
-        d.recipes.push(RecipeDefinition {
-            id: id("core:smelt"),
-            name: "Smelt".into(),
-            layer: RecipeLayer::Primary,
-            inputs: vec![GoodAmount {
-                good: id("core:ore"),
-                quantity: 1,
-            }],
-            outputs: vec![RecipeOutput {
-                good: id("core:alloy"),
-                quantity: 1,
-                cost_weight: 1,
-            }],
-            operating_energy: Energy(1),
-            margin_percent: None,
-        });
-        d.systems[0].recipes.push(id("core:smelt"));
-        d.systems[0].inventory.insert(id("core:alloy"), 0);
-        d.systems[0].energy_output_per_tick = Energy::ZERO;
-        d.systems[0].inventory.insert(id(ENERGY_ID), 130);
-        d.systems[0].population = 10;
-        let mut session = GameSession::new(d).unwrap();
-
-        session.step().unwrap();
-        let first = session.snapshot();
-        assert_eq!(first.markets[0].brownout.stage, BrownoutStage::Throttled);
-        assert_eq!(first.markets[0].inventory[&id("core:alloy")], 0);
-        session.step().unwrap();
-        let second = session.snapshot();
-        assert_eq!(second.markets[0].brownout.stage, BrownoutStage::Throttled);
-        assert_eq!(second.markets[0].inventory[&id("core:alloy")], 1);
-        assert_eq!(second.markets[0].energy_flow.production_burned, Energy(1));
-    }
-
-    #[test]
-    fn player_policy_changes_require_matching_governance_and_are_atomic() {
-        let mut definition = definition();
-        definition.systems[1].governance = Governance::default();
-        let mut session = GameSession::new(definition).unwrap();
-
-        let before = format!("{:?}", session.snapshot());
-        let unauthorized = MarketPolicy {
-            producer_margin_percent: 44,
-            ..MarketPolicy::default()
-        };
-        assert_eq!(
-            session.submit(GameCommand::SetMarketPolicy {
-                system: id("core:s1"),
-                policy: unauthorized,
-            }),
-            Err(CoreError::UnauthorizedMarketPolicy)
-        );
-        assert_eq!(format!("{:?}", session.snapshot()), before);
-
-        let authorized = MarketPolicy {
-            producer_margin_percent: 33,
-            ..MarketPolicy::default()
-        };
-        session
-            .submit(GameCommand::SetMarketPolicy {
-                system: id("core:s0"),
-                policy: authorized.clone(),
-            })
-            .unwrap();
-        assert_eq!(session.snapshot().markets[0].policy, authorized);
-    }
-
-    #[test]
-    fn canonical_market_demand_covers_normal_emergency_and_reserved_funding() {
-        let mut session = GameSession::new(definition()).unwrap();
-        let system = id("core:s1");
-        let ore = id("core:ore");
-        let energy = id(ENERGY_ID);
-
-        let normal = session.market_demand(&system, &ore).unwrap();
-        assert_eq!(normal.advertised, 10);
-        assert_eq!(session.snapshot().markets[1].demand[&ore], normal);
-
-        let entity = session.market_entity(&system).unwrap();
-        session
-            .world
-            .get_mut::<MarketPolicy>(entity)
-            .unwrap()
-            .operating_reserve_ticks = 0;
-        {
-            let mut market = session.world.get_mut::<Market>(entity).unwrap();
-            market.set_energy_stock(Energy(40)).unwrap();
-            market.reserved_energy = Energy(9);
-        }
-        let constrained = session.market_demand(&system, &ore).unwrap();
-        assert!(constrained.funded < constrained.advertised);
-        assert_eq!(session.snapshot().markets[1].demand[&ore], constrained);
-
-        {
-            let mut market = session.world.get_mut::<Market>(entity).unwrap();
-            market.operating_profile.stage = BrownoutStage::Emergency;
-            market.targets.insert(energy.clone(), 100);
-        }
-        assert_eq!(
-            session.market_demand(&system, &ore).unwrap(),
-            MarketDemandSnapshot::default()
-        );
-        assert!(session.market_demand(&system, &energy).unwrap().advertised > 0);
-        let snapshot = session.snapshot();
-        assert_eq!(snapshot.markets[1].demand[&ore].advertised, 0);
-        assert_eq!(
-            snapshot.markets[1].demand[&energy],
-            session.market_demand(&system, &energy).unwrap()
-        );
-    }
-
-    #[test]
-    fn operating_reserve_follows_distinct_source_and_recipe_carry_schedules() {
-        let mut definition = definition();
-        definition.economy.life_support_burn_per_capita = Energy::ZERO;
-        definition.systems[0].sources.push(SourceDefinition {
-            good: id("core:ore"),
-            quantity_per_tick: 1,
-            extraction_energy: Energy(5),
-        });
-        for (recipe, cost) in [("core:r1", 3), ("core:r2", 7)] {
-            definition.recipes.push(RecipeDefinition {
-                id: id(recipe),
-                name: recipe.into(),
-                layer: RecipeLayer::Tertiary,
-                inputs: vec![GoodAmount {
-                    good: id("core:ore"),
-                    quantity: 1,
-                }],
-                outputs: vec![],
-                operating_energy: Energy(cost),
-                margin_percent: None,
-            });
-            definition.systems[0].recipes.push(id(recipe));
-        }
-        let mut session = GameSession::new(definition).unwrap();
-        let entity = session.market_entity(&id("core:s0")).unwrap();
-        let mut policy = session.world.get::<MarketPolicy>(entity).unwrap().clone();
-        policy.operating_reserve_ticks = 4;
-
-        {
-            let mut market = session.world.get_mut::<Market>(entity).unwrap();
-            market.operating_profile.throughput_percent = 0;
-        }
-        assert_eq!(
-            session
-                .world
-                .get::<Market>(entity)
-                .unwrap()
-                .operating_reserve(&policy, Energy::ZERO)
-                .unwrap(),
-            Energy::ZERO
-        );
-        {
-            let mut market = session.world.get_mut::<Market>(entity).unwrap();
-            market.operating_profile.throughput_percent = 50;
-        }
-        assert_eq!(
-            session
-                .world
-                .get::<Market>(entity)
-                .unwrap()
-                .operating_reserve(&policy, Energy::ZERO)
-                .unwrap(),
-            Energy(30)
-        );
-        {
-            let mut market = session.world.get_mut::<Market>(entity).unwrap();
-            market.operating_profile.throughput_percent = 100;
-        }
-        assert_eq!(
-            session
-                .world
-                .get::<Market>(entity)
-                .unwrap()
-                .operating_reserve(&policy, Energy::ZERO)
-                .unwrap(),
-            Energy(60)
-        );
-
-        policy.operating_reserve_ticks = 1;
-        {
-            let mut market = session.world.get_mut::<Market>(entity).unwrap();
-            market.operating_profile.throughput_percent = 50;
-            market
-                .throughput_carry
-                .insert(ThroughputScheduleKey::Source(id("core:ore")), 5_000);
-            for recipe in ["core:r1", "core:r2"] {
-                market
-                    .throughput_carry
-                    .insert(ThroughputScheduleKey::Recipe(id(recipe)), 5_000);
-            }
-        }
-        assert_eq!(
-            session
-                .world
-                .get::<Market>(entity)
-                .unwrap()
-                .operating_reserve(&policy, Energy::ZERO)
-                .unwrap(),
-            Energy(15),
-            "reserve must begin from each persistent carry without mutating it"
-        );
-        assert!(
-            session
-                .world
-                .get::<Market>(entity)
-                .unwrap()
-                .throughput_carry
-                .values()
-                .all(|carry| *carry == 5_000)
-        );
-    }
-
-    #[test]
-    fn duplicate_market_schedules_are_rejected_by_core() {
-        let mut duplicate_source = definition();
-        let source = SourceDefinition {
-            good: id("core:ore"),
-            quantity_per_tick: 1,
-            extraction_energy: Energy(1),
-        };
-        duplicate_source.systems[0].sources = vec![source.clone(), source];
-        assert!(matches!(
-            GameSession::new(duplicate_source),
-            Err(CoreError::InvalidPhysicalDefinition)
-        ));
-
-        let mut duplicate_recipe = definition();
-        duplicate_recipe.systems[0].recipes = vec![id("core:r"), id("core:r")];
-        assert!(matches!(
-            GameSession::new(duplicate_recipe),
-            Err(CoreError::InvalidPhysicalDefinition)
-        ));
-    }
-
-    #[test]
-    fn emergency_ceiling_and_recovery_ladder_validation_are_ordered() {
-        let mut invalid_ceiling = definition();
-        invalid_ceiling.systems[0]
-            .policy
-            .import_priorities
-            .insert(id(ENERGY_ID), 2_000);
-        assert!(matches!(
-            GameSession::new(invalid_ceiling),
-            Err(CoreError::InvalidWorldDynamics)
-        ));
-
-        let mut session = GameSession::new(definition()).unwrap();
-        let mut invalid_policy = MarketPolicy::default();
-        invalid_policy
-            .import_priorities
-            .insert(id(ENERGY_ID), 2_000);
-        let before = format!("{:?}", session.snapshot());
-        assert_eq!(
-            session.submit(GameCommand::SetMarketPolicy {
-                system: id("core:s0"),
-                policy: invalid_policy,
-            }),
-            Err(CoreError::InvalidPolicy)
-        );
-        assert_eq!(format!("{:?}", session.snapshot()), before);
-
-        let mut invalid_recovery = BrownoutConfig::default();
-        invalid_recovery.starvation_recovery_ticks = invalid_recovery.emergency_recovery_ticks;
-        assert_eq!(
-            invalid_recovery.validate(),
-            Err(CoreError::InvalidWorldDynamics)
-        );
-        invalid_recovery = BrownoutConfig::default();
-        invalid_recovery.emergency_recovery_ticks = invalid_recovery.throttled_recovery_ticks;
-        assert_eq!(
-            invalid_recovery.validate(),
-            Err(CoreError::InvalidWorldDynamics)
-        );
-    }
-
-    #[test]
-    fn population_window_accepts_documented_maximum_and_rejects_first_value_above_it() {
-        let mut config = PopulationConfig {
-            sufficiency_window: MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS,
-            ..PopulationConfig::default()
-        };
-        assert_eq!(validate_population_config(&config), Ok(()));
-        config.sufficiency_window = MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS + 1;
-        assert_eq!(
-            validate_population_config(&config),
-            Err(CoreError::InvalidWorldDynamics)
-        );
-    }
-
-    #[test]
-    fn constructed_population_state_rejects_an_unpaired_growth_remainder() {
-        let mut invalid = definition();
-        invalid.systems[0].population_state.growth_carry = LogisticGrowthCarry {
-            remainder: 1,
-            denominator: 3,
-        };
-        assert!(matches!(
-            GameSession::new(invalid),
-            Err(CoreError::InvalidPhysicalDefinition)
-        ));
-    }
-
-    #[test]
-    fn incompatible_logistic_rebases_round_ties_to_even() {
-        assert_eq!(rebase_fraction_half_even(1, 4, 10).unwrap(), 2);
-        assert_eq!(rebase_fraction_half_even(3, 4, 10).unwrap(), 8);
-    }
-
-    #[test]
-    fn logistic_population_delta_rejects_invalid_inputs_without_mutating_carry() {
-        let mut carry = LogisticGrowthCarry {
-            remainder: 17,
-            denominator: 100_000,
-        };
-        assert_eq!(
-            logistic_population_delta(10, 100, 1, 0, &mut carry),
-            Err(CoreError::InvalidWorldDynamics)
-        );
-        assert_eq!(
-            carry,
-            LogisticGrowthCarry {
-                remainder: 17,
-                denominator: 100_000,
-            }
-        );
-
-        let mut invalid_carry = LogisticGrowthCarry {
-            remainder: 100_000,
-            denominator: 100_000,
-        };
-        let before = invalid_carry;
-        assert_eq!(
-            logistic_population_delta(10, 100, 1, 1, &mut invalid_carry),
-            Err(CoreError::InvalidWorldDynamics)
-        );
-        assert_eq!(invalid_carry, before);
-
-        let mut overflow_carry = LogisticGrowthCarry {
-            remainder: 23,
-            denominator: 1_000,
-        };
-        let before = overflow_carry;
-        assert_eq!(
-            logistic_population_delta(u64::MAX / 2, u64::MAX, u32::MAX, 1, &mut overflow_carry),
-            Err(CoreError::Overflow)
-        );
-        assert_eq!(overflow_carry, before);
-    }
-
-    #[test]
-    fn logistic_growth_rebases_track_exact_reference_without_capacity_jumps_or_stalls() {
-        const COMMON_CAPACITY: u64 = 10_000;
-        const COMMON_DENOMINATOR: u128 = 10_000_000;
-        const CASES: &[(&str, &[u64], usize)] = &[
-            ("alternating extremes", &[2, 10_000], 10_000),
-            ("intermittent low caps", &[20, 25, 40, 100], 10_000),
-            ("intermittent high caps", &[125, 200, 250, 500], 10_000),
-        ];
-
-        for &(name, capacities, ticks) in CASES {
-            let mut actual_population = 1_u64;
-            let mut actual_carry = LogisticGrowthCarry::default();
-            let mut reference_population = 1_u64;
-            // All table capacities divide COMMON_CAPACITY, so this is an exact
-            // rational accumulator rather than a floating-point approximation.
-            let mut reference_remainder = 0_u128;
-
-            for tick in 0..ticks {
-                let capacity = capacities[tick % capacities.len()];
-                assert_eq!(COMMON_CAPACITY % capacity, 0, "{name}");
-                let before = actual_population;
-                let raw_numerator =
-                    u128::from(before) * u128::from(capacity.saturating_sub(before));
-                let delta =
-                    logistic_population_delta(before, capacity, 1, 1, &mut actual_carry).unwrap();
-                if before >= capacity {
-                    assert_eq!(delta, 0, "capacity changes cannot move population: {name}");
-                } else {
-                    let denominator = u128::from(capacity) * 1_000;
-                    let maximum_tick_growth = raw_numerator.div_ceil(denominator);
-                    assert!(
-                        u128::from(delta) <= maximum_tick_growth,
-                        "capacity rebase caused a discontinuous jump in {name} at tick {tick}"
-                    );
-                }
-                actual_population = actual_population.checked_add(delta).unwrap();
-
-                if reference_population < capacity {
-                    reference_remainder += u128::from(reference_population)
-                        * u128::from(capacity - reference_population)
-                        * u128::from(COMMON_CAPACITY / capacity);
-                    let reference_delta = u64::try_from(reference_remainder / COMMON_DENOMINATOR)
-                        .unwrap()
-                        .min(capacity - reference_population);
-                    reference_remainder %= COMMON_DENOMINATOR;
-                    reference_population += reference_delta;
-                }
-            }
-
-            assert!(
-                actual_population > 1,
-                "growth permanently stalled in {name}"
-            );
-            assert!(
-                actual_population.abs_diff(reference_population) <= 1,
-                "{name}: actual={actual_population}, exact={reference_population}"
-            );
-        }
-    }
-
-    #[test]
-    fn alternating_two_and_four_capacity_matches_exact_fraction_and_settlement_tick() {
-        const COMMON_DENOMINATOR: u128 = 4_000;
-        const EXACT_FIRST_SETTLEMENT_TICK: usize = 1_600;
-        const MAX_SETTLEMENT_TICK_ERROR: usize = 1;
-
-        let mut actual_population = 1_u64;
-        let mut actual_carry = LogisticGrowthCarry::default();
-        let mut exact_population = 1_u64;
-        let mut exact_remainder = 0_u128;
-        let mut actual_first_settlement = None;
-        let mut exact_first_settlement = None;
-        let mut maximum_cumulative_population_error = 0_u64;
-
-        for tick in 1..=2_000 {
-            let capacity = if tick % 2 == 1 { 2 } else { 4 };
-            let actual_delta =
-                logistic_population_delta(actual_population, capacity, 1, 1, &mut actual_carry)
-                    .unwrap();
-            actual_population += actual_delta;
-            if actual_population > 1 && actual_first_settlement.is_none() {
-                actual_first_settlement = Some(tick);
-            }
-
-            if exact_population < capacity {
-                let active_denominator = u128::from(capacity) * 1_000;
-                exact_remainder += u128::from(exact_population)
-                    * u128::from(capacity - exact_population)
-                    * (COMMON_DENOMINATOR / active_denominator);
-                let exact_delta = u64::try_from(exact_remainder / COMMON_DENOMINATOR)
-                    .unwrap()
-                    .min(capacity - exact_population);
-                exact_remainder %= COMMON_DENOMINATOR;
-                exact_population += exact_delta;
-                if exact_population > 1 && exact_first_settlement.is_none() {
-                    exact_first_settlement = Some(tick);
-                }
-            }
-
-            assert_eq!(
-                COMMON_DENOMINATOR % u128::from(actual_carry.denominator),
-                0,
-                "tick {tick}: owner carry cannot be compared exactly"
-            );
-            let owner_progress = u128::from(actual_population) * COMMON_DENOMINATOR
-                + u128::from(actual_carry.remainder)
-                    * (COMMON_DENOMINATOR / u128::from(actual_carry.denominator));
-            let exact_progress =
-                u128::from(exact_population) * COMMON_DENOMINATOR + exact_remainder;
-            assert_eq!(
-                owner_progress, exact_progress,
-                "tick {tick}: owner population/fraction diverged from exact rational progress"
-            );
-            maximum_cumulative_population_error = maximum_cumulative_population_error
-                .max(actual_population.abs_diff(exact_population));
-        }
-
-        assert!(
-            maximum_cumulative_population_error <= 1,
-            "owner cumulative population error exceeded one: {maximum_cumulative_population_error}"
-        );
-        assert_eq!(exact_first_settlement, Some(EXACT_FIRST_SETTLEMENT_TICK));
-        let actual_first_settlement = actual_first_settlement.unwrap();
-        assert!(
-            actual_first_settlement.abs_diff(EXACT_FIRST_SETTLEMENT_TICK)
-                <= MAX_SETTLEMENT_TICK_ERROR,
-            "owner settled at tick {actual_first_settlement}, exact tick is {EXACT_FIRST_SETTLEMENT_TICK}"
-        );
-    }
-
-    #[test]
-    fn tiny_population_remainder_progress_survives_repeated_rebases() {
-        let mut carry = LogisticGrowthCarry::default();
-        let first_growth_tick = (1..=2_000).find(|tick| {
-            let capacity = if tick % 2 == 0 { 10_000 } else { 2 };
-            logistic_population_delta(1, capacity, 1, 1, &mut carry).unwrap() > 0
-        });
-        assert!(
-            first_growth_tick.is_some(),
-            "alternating denominator rebases must not erase tiny-population progress"
-        );
-    }
-
-    #[test]
-    fn logistic_growth_carry_rebases_atomically_across_capacity_changes() {
-        let mut carry = LogisticGrowthCarry {
-            remainder: 50_000,
-            denominator: 100_000,
-        };
-        assert_eq!(
-            logistic_population_delta(5, 10, 1, 1, &mut carry).unwrap(),
-            0,
-            "a downward cap change accepts an old remainder larger than the new denominator"
-        );
-        assert_eq!(carry.denominator, 100_000);
-        assert_eq!(carry.remainder, 50_250);
-
-        assert_eq!(
-            logistic_population_delta(5, 200, 1, 1, &mut carry).unwrap(),
-            0,
-            "an upward cap change preserves the rebased fractional carry"
-        );
-        assert_eq!(carry.denominator, 200_000);
-        assert_eq!(carry.remainder, 101_475);
-    }
-
-    #[test]
-    fn population_helpers_cover_rates_remainders_caps_and_zero() {
-        assert_eq!(population_labor_percent(0, 10).unwrap(), 0);
-        assert_eq!(population_labor_percent(5, 10).unwrap(), 50);
-        assert_eq!(population_labor_percent(20, 10).unwrap(), 100);
-        assert_eq!(population_demand_target(60, 4, 8, 1).unwrap(), 30);
-        assert_eq!(population_demand_target(0, 1, 1, 1).unwrap(), 1);
-        assert_eq!(population_tier(0, &[1, 5, 10]), 0);
-        assert_eq!(population_tier(5, &[1, 5, 10]), 2);
-
-        let mut decline_remainder = 0;
-        let declines = (0..100)
-            .map(|_| proportional_population_delta(1, 10, &mut decline_remainder).unwrap())
-            .sum::<u64>();
-        assert_eq!(
-            declines, 1,
-            "tiny populations progress through carried decline"
-        );
-        assert_eq!(decline_remainder, 0);
-        let mut zero_remainder = 0;
-        assert_eq!(
-            proportional_population_delta(0, 10, &mut zero_remainder).unwrap(),
-            0,
-            "an empty market stays empty"
-        );
-
-        let mut growth_carry = LogisticGrowthCarry::default();
-        let growth = (0..2)
-            .map(|_| logistic_population_delta(10, 20, 100, 1, &mut growth_carry).unwrap())
-            .sum::<u64>();
-        assert_eq!(growth, 1);
-        assert_eq!(growth_carry.remainder, 0);
-        let mut cap_carry = LogisticGrowthCarry::default();
-        assert_eq!(
-            (0..2)
-                .map(|_| logistic_population_delta(19, 20, 1_000, 1, &mut cap_carry).unwrap())
-                .sum::<u64>(),
-            1
-        );
-        assert_eq!(
-            logistic_population_delta(20, 20, 1_000, 1, &mut cap_carry).unwrap(),
-            0,
-            "logistic growth never overshoots its cap"
-        );
-    }
-
-    #[test]
-    fn moving_sufficiency_window_gates_slow_growth_and_evicts_oldest() {
-        let mut d = definition();
-        d.economy.population.static_population = false;
-        d.economy.population.sufficiency_window = 2;
-        d.economy.population.essential_goods = BTreeSet::from([id(ENERGY_ID)]);
-        d.economy.population.tertiary_demand_per_thousand.clear();
-        d.economy.population.decline_per_thousand = 500;
-        d.economy.population.growth_per_thousand = 100;
-        d.economy.population.logistic_scale = 1;
-        d.systems[0].population = 10;
-        d.systems[0].population_state = PopulationState {
-            current: 10,
-            reference: 10,
-            carrying_capacity: 20,
-            support_capacity: 20,
-            ..PopulationState::default()
-        };
-        let mut session = GameSession::new(d).unwrap();
-        let entity = session.market_entity(&id("core:s0")).unwrap();
-
-        session.update_populations().unwrap();
-        assert_eq!(session.world.get::<Market>(entity).unwrap().population, 10);
-        assert_eq!(
-            session
-                .world
-                .get::<Market>(entity)
-                .unwrap()
-                .population_state
-                .sufficiency_samples,
-            VecDeque::from([100])
-        );
-        session.update_populations().unwrap();
-        assert_eq!(session.world.get::<Market>(entity).unwrap().population, 10);
-        session.update_populations().unwrap();
-        let state = &session
-            .world
-            .get::<Market>(entity)
-            .unwrap()
-            .population_state;
-        assert_eq!(
-            state.current, 11,
-            "growth waits for a full long-average window"
-        );
-        assert_eq!(state.sufficiency_samples, VecDeque::from([100, 100]));
-        assert_eq!(state.sufficiency_sum, 200);
-
-        {
-            let mut market = session.world.get_mut::<Market>(entity).unwrap();
-            market.last_life_support_unsupplied = Energy(11);
-        }
-        session.update_populations().unwrap();
-        let state = &session
-            .world
-            .get::<Market>(entity)
-            .unwrap()
-            .population_state;
-        assert_eq!(state.sufficiency_samples, VecDeque::from([100, 0]));
-        assert_eq!(state.sufficiency_sum, 100);
-        assert_eq!(state.sufficiency_average_percent, 50);
-        assert_eq!(state.trend, PopulationTrend::Stable);
-    }
-
-    #[test]
-    fn population_change_drives_next_tick_burn_labor_and_tertiary_demand() {
-        let mut d = definition();
-        d.economy.population.static_population = false;
-        d.economy.population.sufficiency_window = 2;
-        d.economy.population.essential_goods = BTreeSet::from([id(ENERGY_ID)]);
-        d.economy
-            .population
-            .tertiary_demand_per_thousand
-            .insert(id("core:ore"), 1_000);
-        d.economy.population.decline_per_thousand = 100;
-        d.economy.population.growth_per_thousand = 20;
-        d.economy.population.logistic_scale = 1;
-        d.economy.population.tier_thresholds = vec![1, 50, 100];
-        d.systems[0].population = 100;
-        d.systems[0].population_state = PopulationState {
-            current: 100,
-            reference: 100,
-            carrying_capacity: 120,
-            support_capacity: 120,
-            ..PopulationState::default()
-        };
-        d.systems[0].inventory.insert(id(ENERGY_ID), 0);
-        d.systems[0].inventory.insert(id("core:ore"), 100);
-        d.systems[0].targets.insert(id("core:ore"), 100);
-        d.systems[0].sources = vec![SourceDefinition {
-            good: id("core:ore"),
-            quantity_per_tick: 100,
-            extraction_energy: Energy::ZERO,
-        }];
-        d.systems[0].energy_output_per_tick = Energy::ZERO;
-        d.systems[0].seasonal_generation.base_output = Energy::ZERO;
-        d.systems[0].seasonal_generation.current_effective_output = Energy::ZERO;
-        let mut session = GameSession::new(d).unwrap();
-        let entity = session.market_entity(&id("core:s0")).unwrap();
-        {
-            let mut market = session.world.get_mut::<Market>(entity).unwrap();
-            market.brownout.stage = BrownoutStage::Starvation;
-            market.operating_profile.stage = BrownoutStage::Starvation;
-            market.last_life_support_unsupplied = Energy(100);
-        }
-        session.update_populations().unwrap();
-        {
-            let market = session.world.get::<Market>(entity).unwrap();
-            assert_eq!(market.population, 90);
-            assert_eq!(market.population_state.current, 90);
-            assert_eq!(market.operating_profile.labor_percent, 90);
-            assert_eq!(market.targets[&id("core:ore")], 90);
-        }
-
-        {
-            let mut market = session.world.get_mut::<Market>(entity).unwrap();
-            market.seasonal_generation.base_output = Energy(1_000);
-            market.energy_output_per_tick = Energy(1_000);
-            market.brownout.stage = BrownoutStage::Normal;
-            market.brownout.entered_at_tick = 0;
-        }
-        session.step().unwrap();
-        let market = session.world.get::<Market>(entity).unwrap();
-        assert_eq!(market.energy_flow.life_support_burned, Energy(90));
-        assert_eq!(market.operating_profile.labor_percent, 90);
-        assert_eq!(market.targets[&id("core:ore")], 90);
-        assert_eq!(market.inventory[&id("core:ore")], 145);
-        assert_eq!(market.brownout.stage, BrownoutStage::Throttled);
-    }
-
-    #[test]
-    fn population_updates_are_atomic_and_insertion_order_invariant() {
-        let mut d = definition();
-        d.economy.population.static_population = false;
-        d.economy.population.sufficiency_window = 1;
-        d.economy.population.essential_goods = BTreeSet::from([id(ENERGY_ID)]);
-        d.economy.population.tertiary_demand_per_thousand.clear();
-        d.economy.population.decline_per_thousand = 10;
-        d.economy.population.growth_per_thousand = 1;
-        for system in &mut d.systems {
-            system.population = 10;
-            system.population_state = PopulationState {
-                current: 10,
-                reference: 10,
-                carrying_capacity: 10,
-                support_capacity: 10,
-                ..PopulationState::default()
-            };
-        }
-        let mut reversed = d.clone();
-        reversed.systems.reverse();
-        let mut left = GameSession::new(d).unwrap();
-        let mut right = GameSession::new(reversed).unwrap();
-        for _ in 0..100 {
-            left.step().unwrap();
-            right.step().unwrap();
-            left.drain_events();
-            right.drain_events();
-        }
-        let left_population = left
-            .snapshot()
-            .markets
-            .into_iter()
-            .map(|market| (market.system_id, market.population_state))
-            .collect::<Vec<_>>();
-        let right_population = right
-            .snapshot()
-            .markets
-            .into_iter()
-            .map(|market| (market.system_id, market.population_state))
-            .collect::<Vec<_>>();
-        assert_eq!(left_population, right_population);
-
-        let entity = left.market_entity(&id("core:s0")).unwrap();
-        {
-            let mut market = left.world.get_mut::<Market>(entity).unwrap();
-            market.brownout.stage = BrownoutStage::Starvation;
-            market.last_life_support_unsupplied = Energy(10);
-            market.population_state.decline_remainder = 990;
-        }
-        left.world
-            .resource_mut::<AggregateDynamicsHistory>()
-            .population_changes = u64::MAX;
-        let before = format!("{:?}", left.snapshot());
-        assert_eq!(left.update_populations(), Err(CoreError::Overflow));
-        assert_eq!(format!("{:?}", left.snapshot()), before);
-        assert!(left.drain_events().is_empty());
-    }
-
-    fn enable_investments(definition: &mut GameDefinition) {
-        definition.economy.life_support_burn_per_capita = Energy::ZERO;
-        for (kind, effect) in [
-            (InvestmentKind::Collector, 1),
-            (InvestmentKind::Storage, 100),
-            (InvestmentKind::PopulationSupport, 5),
-            (InvestmentKind::RouteSubsidy, 10),
-        ] {
-            definition.economy.investments.insert(
-                kind,
-                InvestmentShape {
-                    enabled: true,
-                    base_cost: Energy(100),
-                    cost_growth_percent: 150,
-                    maximum_level: 2,
-                    cooldown_ticks: 2,
-                    effect_per_level: effect,
-                },
-            );
-        }
-        for system in &mut definition.systems {
-            system.energy_output_per_tick = Energy::ZERO;
-            system.seasonal_generation.base_output = Energy::ZERO;
-            system.seasonal_generation.current_effective_output = Energy::ZERO;
-        }
-    }
-
-    #[test]
-    fn autonomous_investments_use_stable_ties_exact_costs_cooldowns_caps_and_protection() {
-        let mut d = definition();
-        enable_investments(&mut d);
-        d.systems[0].investment_policy = InvestmentPolicy {
-            allocation_percent: BTreeMap::from([
-                (InvestmentKind::Collector, 50),
-                (InvestmentKind::Storage, 50),
-            ]),
-        };
-        let mut session = GameSession::new(d).unwrap();
-        let entity = session.market_entity(&id("core:s0")).unwrap();
-
-        session.execute_autonomous_investments().unwrap();
-        let first = session.world.get::<Market>(entity).unwrap();
-        assert_eq!(first.investment_state.levels[&InvestmentKind::Collector], 1);
-        assert!(
-            !first
-                .investment_state
-                .levels
-                .contains_key(&InvestmentKind::Storage)
-        );
-        assert_eq!(first.energy_stock().unwrap(), Energy(900));
-        assert_eq!(first.seasonal_generation.base_output, Energy(1));
-
-        session.execute_autonomous_investments().unwrap();
-        let second = session.world.get::<Market>(entity).unwrap();
-        assert_eq!(second.investment_state.levels[&InvestmentKind::Storage], 1);
-        assert_eq!(second.energy_storage_cap, Energy(2_100));
-        assert_eq!(second.energy_stock().unwrap(), Energy(800));
-        session.world.resource_mut::<Clock>().0 = 2;
-        session.execute_autonomous_investments().unwrap();
-        let third = session.world.get::<Market>(entity).unwrap();
-        assert_eq!(third.investment_state.levels[&InvestmentKind::Collector], 2);
-        assert_eq!(third.energy_stock().unwrap(), Energy(650));
-        assert_eq!(third.seasonal_generation.base_output, Energy(2));
-        session.world.resource_mut::<Clock>().0 = 4;
-        session.execute_autonomous_investments().unwrap();
-        assert_eq!(
-            session
-                .world
-                .get::<Market>(entity)
-                .unwrap()
-                .investment_state
-                .status[&InvestmentKind::Collector],
-            InvestmentStatus::MaximumLevel
-        );
-
-        let mut constrained = definition();
-        enable_investments(&mut constrained);
-        constrained.systems[0].inventory.insert(id(ENERGY_ID), 119);
-        constrained.systems[0].investment_policy = InvestmentPolicy {
-            allocation_percent: BTreeMap::from([(InvestmentKind::Collector, 100)]),
-        };
-        let mut constrained = GameSession::new(constrained).unwrap();
-        let constrained_entity = constrained.market_entity(&id("core:s0")).unwrap();
-        constrained.execute_autonomous_investments().unwrap();
-        let market = constrained.world.get::<Market>(constrained_entity).unwrap();
-        assert_eq!(market.energy_stock().unwrap(), Energy(119));
-        assert_eq!(market.protected_liquidation_budget, Energy(20));
-        assert_eq!(
-            market.investment_state.status[&InvestmentKind::Collector],
-            InvestmentStatus::InsufficientFunds {
-                available: Energy(99),
-                cost: Energy(100),
-            }
-        );
-
-        {
-            let mut market = constrained
-                .world
-                .get_mut::<Market>(constrained_entity)
-                .unwrap();
-            market.set_energy_stock(Energy(1_000)).unwrap();
-            market.operating_profile.stage = BrownoutStage::Emergency;
-            market.operating_profile.investment_allowed = false;
-        }
-        constrained.execute_autonomous_investments().unwrap();
-        let market = constrained.world.get::<Market>(constrained_entity).unwrap();
-        assert_eq!(market.energy_stock().unwrap(), Energy(1_000));
-        assert_eq!(
-            market.investment_state.status[&InvestmentKind::Collector],
-            InvestmentStatus::DisabledByStage(BrownoutStage::Emergency)
-        );
-    }
-
-    #[test]
-    fn selected_investment_spend_recomputes_other_ready_statuses() {
-        let mut d = definition();
-        enable_investments(&mut d);
-        d.systems[0].investment_policy = InvestmentPolicy {
-            allocation_percent: BTreeMap::from([
-                (InvestmentKind::Collector, 50),
-                (InvestmentKind::Storage, 50),
-            ]),
-        };
-        let mut session = GameSession::new(d).unwrap();
-        let entity = session.market_entity(&id("core:s0")).unwrap();
-        {
-            let mut market = session.world.get_mut::<Market>(entity).unwrap();
-            market.protected_liquidation_budget = Energy::ZERO;
-            market.set_energy_stock(Energy(100)).unwrap();
-        }
-
-        session.execute_autonomous_investments().unwrap();
-        let market = session.world.get::<Market>(entity).unwrap();
-        assert_eq!(market.energy_stock().unwrap(), Energy::ZERO);
-        assert!(matches!(
-            market.investment_state.status[&InvestmentKind::Collector],
-            InvestmentStatus::Completed {
-                tick: 0,
-                cost: Energy(100)
-            }
-        ));
-        assert_eq!(
-            market.investment_state.status[&InvestmentKind::Storage],
-            InvestmentStatus::InsufficientFunds {
-                available: Energy::ZERO,
-                cost: Energy(100),
-            }
-        );
-    }
-
-    #[test]
-    fn investment_effects_are_atomic_and_subsidy_suppression_resumes_without_reauthorization() {
-        let mut d = definition();
-        enable_investments(&mut d);
-        d.economy
-            .investments
-            .get_mut(&InvestmentKind::Collector)
-            .unwrap()
-            .effect_per_level = 10;
-        d.systems[0].seasonal_generation.amplitude_percent = 20;
-        d.systems[0].seasonal_generation.period_ticks = 4;
-        d.systems[0].investment_policy = InvestmentPolicy {
-            allocation_percent: BTreeMap::from([(InvestmentKind::Collector, 100)]),
-        };
-        let mut session = GameSession::new(d).unwrap();
-        session.step().unwrap();
-        let first = session.snapshot().markets.remove(0);
-        assert_eq!(first.seasonal_generation.base_output, Energy(10));
-        assert_eq!(
-            first.seasonal_generation.current_effective_output,
-            Energy::ZERO
-        );
-        session.step().unwrap();
-        let second = session.snapshot().markets.remove(0);
-        assert_eq!(
-            second.seasonal_generation.current_effective_output,
-            Energy(10)
-        );
-
-        let mut population = definition();
-        enable_investments(&mut population);
-        population.systems[0].investment_policy = InvestmentPolicy {
-            allocation_percent: BTreeMap::from([(InvestmentKind::PopulationSupport, 100)]),
-        };
-        let mut population = GameSession::new(population).unwrap();
-        let population_entity = population.market_entity(&id("core:s0")).unwrap();
-        let before_population = population
-            .world
-            .get::<Market>(population_entity)
-            .unwrap()
-            .population;
-        population.execute_autonomous_investments().unwrap();
-        let supported = population.world.get::<Market>(population_entity).unwrap();
-        assert_eq!(supported.population, before_population);
-        assert_eq!(supported.population_state.support_capacity, 6);
-        assert_eq!(supported.population_state.growth_rate_bonus_percent, 5);
-        assert_eq!(supported.population_state.carrying_capacity, 1);
-
-        let mut subsidy = definition();
-        enable_investments(&mut subsidy);
-        subsidy.economy.life_support_burn_per_capita = Energy(1);
-        let mut subsidy = GameSession::new(subsidy).unwrap();
-        let destination = subsidy.market_entity(&id("core:s1")).unwrap();
-        let ore = id("core:ore");
-        let normal_bid = subsidy.quotes(&id("core:s1"), &ore).unwrap().0;
-        {
-            let mut market = subsidy.world.get_mut::<Market>(destination).unwrap();
-            market
-                .investment_state
-                .levels
-                .insert(InvestmentKind::RouteSubsidy, 1);
-        }
-        let premium_bid = subsidy.quotes(&id("core:s1"), &ore).unwrap().0;
-        assert!(premium_bid > normal_bid);
-        {
-            let mut market = subsidy.world.get_mut::<Market>(destination).unwrap();
-            market.set_energy_stock(Energy(6)).unwrap();
-        }
-        subsidy.classify_brownouts().unwrap();
-        assert_eq!(
-            subsidy
-                .world
-                .get::<Market>(destination)
-                .unwrap()
-                .brownout
-                .stage,
-            BrownoutStage::Emergency
-        );
-        assert_eq!(
-            subsidy.quotes(&id("core:s1"), &ore).unwrap().0,
-            Energy::ZERO
-        );
-        assert_eq!(
-            subsidy.market_demand(&id("core:s1"), &ore).unwrap(),
-            MarketDemandSnapshot::default()
-        );
-        assert_eq!(
-            subsidy
-                .world
-                .get::<Market>(destination)
-                .unwrap()
-                .reserved_energy,
-            Energy::ZERO
-        );
-        {
-            let mut market = subsidy.world.get_mut::<Market>(destination).unwrap();
-            market.set_energy_stock(Energy(1_000)).unwrap();
-        }
-        subsidy.world.resource_mut::<Clock>().0 = 1;
-        subsidy.classify_brownouts().unwrap();
-        assert_eq!(
-            subsidy
-                .world
-                .get::<Market>(destination)
-                .unwrap()
-                .brownout
-                .stage,
-            BrownoutStage::Throttled
-        );
-        assert_eq!(subsidy.quotes(&id("core:s1"), &ore).unwrap().0, premium_bid);
-        let player = subsidy.player_entity().unwrap();
-        let quantity = subsidy
-            .create_reservation(player, &id("core:s1"), &ore, 2)
-            .unwrap();
-        assert_eq!(
-            subsidy
-                .world
-                .get::<Market>(destination)
-                .unwrap()
-                .reserved_energy,
-            premium_bid.checked_mul(u64::from(quantity)).unwrap()
-        );
-
-        let mut opportunity_definition = definition();
-        enable_investments(&mut opportunity_definition);
-        opportunity_definition.fleet = dynamic_fleet(0, 2, 1, 2);
-        let mut without_subsidy = GameSession::new(opportunity_definition.clone()).unwrap();
-        let mut with_subsidy = GameSession::new(opportunity_definition).unwrap();
-        let opportunity_destination = with_subsidy.market_entity(&id("core:s1")).unwrap();
-        with_subsidy
-            .world
-            .get_mut::<Market>(opportunity_destination)
-            .unwrap()
-            .investment_state
-            .levels
-            .insert(InvestmentKind::RouteSubsidy, 1);
-        without_subsidy.collect_automated_trader_requests().unwrap();
-        with_subsidy.collect_automated_trader_requests().unwrap();
-        assert!(
-            with_subsidy
-                .world
-                .resource::<FleetDynamics>()
-                .normalized_unserved_opportunity
-                > without_subsidy
-                    .world
-                    .resource::<FleetDynamics>()
-                    .normalized_unserved_opportunity
-        );
-
-        let mut overflow = definition();
-        enable_investments(&mut overflow);
-        overflow.systems[0].seasonal_generation.base_output = Energy(i64::MAX);
-        overflow.systems[0]
-            .seasonal_generation
-            .current_effective_output = Energy(i64::MAX);
-        overflow.systems[0].energy_output_per_tick = Energy(i64::MAX);
-        overflow.systems[0].investment_policy = InvestmentPolicy {
-            allocation_percent: BTreeMap::from([(InvestmentKind::Collector, 100)]),
-        };
-        assert!(matches!(
-            GameSession::new(overflow),
-            Err(CoreError::InvalidWorldDynamics)
-        ));
-    }
-
-    #[test]
-    fn population_scaled_targets_are_effective_in_the_initial_snapshot() {
-        let ore = id("core:ore");
-        let mut dynamic = definition();
-        dynamic.economy.population.static_population = false;
-        dynamic
-            .economy
-            .population
-            .tertiary_demand_per_thousand
-            .insert(ore.clone(), 2);
-        dynamic.systems[0].population = 10;
-        dynamic.systems[0].population_state.current = 10;
-        dynamic.systems[0].population_state.reference = 5;
-        dynamic.systems[0].population_state.carrying_capacity = 10;
-        dynamic.systems[0].population_state.support_capacity = 10;
-        dynamic.systems[1].population = 10;
-        dynamic.systems[1].population_state.current = 10;
-        dynamic.systems[1].population_state.reference = 5;
-        dynamic.systems[1].population_state.carrying_capacity = 10;
-        dynamic.systems[1].population_state.support_capacity = 10;
-        dynamic.systems[1].targets.remove(&ore);
-        let mut session = GameSession::new(dynamic).unwrap();
-        let snapshot = session.snapshot();
-        assert_eq!(snapshot.markets[0].authored_targets[&ore], 10);
-        assert_eq!(snapshot.markets[0].targets[&ore], 20);
-        assert!(!snapshot.markets[1].authored_targets.contains_key(&ore));
-        assert_eq!(snapshot.markets[1].targets[&ore], 1);
-
-        let mut static_definition = definition();
-        static_definition
-            .economy
-            .population
-            .tertiary_demand_per_thousand
-            .insert(ore.clone(), 2);
-        static_definition.systems[0].targets.remove(&ore);
-        static_definition.systems[0].population = 10;
-        let mut static_session = GameSession::new(static_definition).unwrap();
-        assert_eq!(static_session.snapshot().markets[0].targets[&ore], 1);
-
-        let mut zero_population = definition();
-        zero_population.economy.population.static_population = false;
-        zero_population
-            .economy
-            .population
-            .tertiary_demand_per_thousand
-            .insert(ore.clone(), 2);
-        zero_population.systems[0].targets.remove(&ore);
-        zero_population.systems[0].population = 0;
-        zero_population.systems[0].population_state.current = 0;
-        zero_population.systems[0].population_state.reference = 1;
-        zero_population.systems[0]
-            .population_state
-            .carrying_capacity = 0;
-        zero_population.systems[0].population_state.support_capacity = 0;
-        let mut zero_session = GameSession::new(zero_population).unwrap();
-        assert_eq!(zero_session.snapshot().markets[0].targets[&ore], 0);
-        assert!(zero_session.quotes(&id("core:s0"), &ore).is_ok());
-        zero_session.step().unwrap();
-    }
-
-    #[test]
-    fn governor_market_targets_are_authorized_immediate_and_persistent() {
-        let ore = id("core:ore");
-        let mut definition = definition();
-        definition.systems[1].governance = Governance::default();
-        definition
-            .economy
-            .population
-            .tertiary_demand_per_thousand
-            .insert(ore.clone(), 1);
-        let mut session = GameSession::new(definition).unwrap();
-
-        session
-            .submit(GameCommand::SetGovernorMarketTarget {
-                system: id("core:s0"),
-                good: ore.clone(),
-                target: 200,
-            })
-            .unwrap();
-        let market = session
-            .snapshot()
-            .markets
-            .into_iter()
-            .find(|market| market.system_id == id("core:s0"))
-            .unwrap();
-        assert_eq!(market.targets[&ore], 200);
-        assert_eq!(market.demand[&ore].advertised, 100);
-        assert!(session.drain_events().iter().any(|event| matches!(
-            event,
-            GameEvent::MarketTargetChanged { system, good, target }
-                if system == &id("core:s0") && good == &ore && *target == 200
-        )));
-
-        session.step().unwrap();
-        let after_step = session
-            .snapshot()
-            .markets
-            .into_iter()
-            .find(|market| market.system_id == id("core:s0"))
-            .unwrap();
-        assert_eq!(after_step.targets[&ore], 200);
-
-        let before = session.snapshot();
-        assert_eq!(
-            session.submit(GameCommand::SetGovernorMarketTarget {
-                system: id("core:s0"),
-                good: ore.clone(),
-                target: 0,
-            }),
-            Err(CoreError::InvalidMarketTarget)
-        );
-        assert_eq!(
-            session.submit(GameCommand::SetGovernorMarketTarget {
-                system: id("core:s1"),
-                good: ore,
-                target: 50,
-            }),
-            Err(CoreError::UnauthorizedMarketPolicy)
-        );
-        assert!(matches!(
-            session.submit(GameCommand::SetGovernorMarketTarget {
-                system: id("core:s0"),
-                good: id("core:missing"),
-                target: 50,
-            }),
-            Err(CoreError::Unknown { kind: "good", .. })
-        ));
-        assert!(session.drain_events().iter().any(|event| matches!(
-            event,
-            GameEvent::GovernorPolicyRejected {
-                reason: GovernorRejectionReason::UnknownGood,
-                ..
-            }
-        )));
-        assert_eq!(session.snapshot().markets, before.markets);
-    }
-
-    #[test]
-    fn governor_policy_edits_merge_only_approved_fields() {
-        let mut d = definition();
-        d.systems[0].policy.pricing_mode = PricingMode::Scarcity;
-        d.systems[0].policy.liquidation_threshold_percent = 175;
-        d.systems[0].policy.liquidation_discount_percent = 40;
-        d.systems[0].policy.default_target = 77;
-        let mut session = GameSession::new(d).unwrap();
-        session
-            .submit(GameCommand::SetGovernorMarketPolicy {
-                system: id("core:s0"),
-                policy: GovernorMarketPolicy {
-                    producer_margin_percent: 25,
-                    operating_reserve_ticks: 4,
-                    import_priorities: BTreeMap::from([(id("core:ore"), 125)]),
-                },
-            })
-            .unwrap();
-        let policy = &session.snapshot().markets[0].policy;
-        assert_eq!(policy.producer_margin_percent, 25);
-        assert_eq!(policy.operating_reserve_ticks, 4);
-        assert_eq!(policy.import_priorities[&id("core:ore")], 125);
-        assert_eq!(policy.pricing_mode, PricingMode::Scarcity);
-        assert_eq!(policy.liquidation_threshold_percent, 175);
-        assert_eq!(policy.liquidation_discount_percent, 40);
-        assert_eq!(policy.default_target, 77);
-    }
-
-    #[test]
-    fn governor_authorization_is_typed_and_ai_and_player_use_the_same_executor() {
-        let mut d = definition();
-        enable_investments(&mut d);
-        d.systems[1].governance = Governance::default();
-        for system in &mut d.systems {
-            system.investment_policy = InvestmentPolicy {
-                allocation_percent: BTreeMap::from([(InvestmentKind::Storage, 100)]),
-            };
-        }
-        let mut session = GameSession::new(d).unwrap();
-        assert_eq!(
-            session.submit(GameCommand::SetInvestmentPolicy {
-                system: id("core:s1"),
-                policy: InvestmentPolicy::default(),
-            }),
-            Err(CoreError::UnauthorizedMarketPolicy)
-        );
-        assert!(matches!(
-            session.drain_events().as_slice(),
-            [GameEvent::GovernorPolicyRejected {
-                reason: GovernorRejectionReason::Unauthorized,
-                ..
-            }]
-        ));
-        session
-            .submit(GameCommand::SetInvestmentPolicy {
-                system: id("core:s0"),
-                policy: InvestmentPolicy {
-                    allocation_percent: BTreeMap::from([(InvestmentKind::Storage, 100)]),
-                },
-            })
-            .unwrap();
-        session.drain_events();
-        session.execute_autonomous_investments().unwrap();
-        let snapshot = session.snapshot();
-        assert!(snapshot.markets.iter().all(|market| {
-            market.investment_state.levels.get(&InvestmentKind::Storage) == Some(&1)
-        }));
-        assert_eq!(
-            session
-                .drain_events()
-                .iter()
-                .filter(|event| matches!(event, GameEvent::InvestmentCompleted { .. }))
-                .count(),
-            2
-        );
-    }
-
-    #[test]
-    fn brownout_history_overflow_is_atomic() {
-        let mut session = GameSession::new(definition()).unwrap();
-        session
-            .world
-            .resource_mut::<AggregateDynamicsHistory>()
-            .stage_occupancy_ticks[BrownoutStage::Normal.index()] = u64::MAX;
-        let before = format!("{:?}", session.snapshot());
-        assert_eq!(session.classify_brownouts(), Err(CoreError::Overflow));
-        assert_eq!(format!("{:?}", session.snapshot()), before);
-        assert!(session.drain_events().is_empty());
-    }
-}
+mod tests;

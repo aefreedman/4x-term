@@ -9,6 +9,7 @@ pub enum Activity {
     #[default]
     Systems,
     Trade,
+    Logistics,
     Governance,
     Intelligence,
     Encyclopedia,
@@ -170,8 +171,7 @@ fn route_ticks_cmp(left: Option<u32>, right: Option<u32>, direction: SortDirecti
 pub enum InputLayer {
     #[default]
     Root,
-    Quantity,
-    Order,
+    Amount,
     Help,
     Detail,
 }
@@ -191,11 +191,40 @@ pub enum TradeRegion {
     Destinations,
 }
 
-/// The side of a focused, one-transaction trade order.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TradeOrderSide {
-    Buy,
-    Sell,
+/// The operation whose exact amount is being entered.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AmountAction {
+    Buy { good: ContentId },
+    Sell { good: ContentId },
+    OwnedBulkToTank,
+    OwnedBulkToMarket,
+}
+
+/// The focused region on the Energy Logistics activity.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LogisticsRegion {
+    #[default]
+    Opportunities,
+    ActiveContract,
+    Storage,
+}
+
+impl LogisticsRegion {
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Opportunities => Self::ActiveContract,
+            Self::ActiveContract => Self::Storage,
+            Self::Storage => Self::Opportunities,
+        }
+    }
+
+    pub const fn previous(self) -> Self {
+        match self {
+            Self::Opportunities => Self::Storage,
+            Self::ActiveContract => Self::Opportunities,
+            Self::Storage => Self::ActiveContract,
+        }
+    }
 }
 
 /// All state local to the terminal adapter.
@@ -223,10 +252,13 @@ pub struct UiState {
     pub event_follow_tail: bool,
     pub newer_events_available: bool,
     pub event_scroll: u16,
-    pub trade_quantity: u32,
-    pub quantity_input: Option<String>,
-    pub trade_order_side: Option<TradeOrderSide>,
-    pub trade_order_good: Option<ContentId>,
+    pub amount_input: Option<String>,
+    pub amount_action: Option<AmountAction>,
+    pub logistics_region: LogisticsRegion,
+    pub logistics_opportunity_index: usize,
+    pub selected_logistics_source: Option<ContentId>,
+    pub selected_logistics_destination: Option<ContentId>,
+    pub logistics_storage_index: usize,
     pub message: String,
 }
 
@@ -255,10 +287,13 @@ impl Default for UiState {
             event_follow_tail: true,
             newer_events_available: false,
             event_scroll: 0,
-            trade_quantity: 1,
-            quantity_input: None,
-            trade_order_side: None,
-            trade_order_good: None,
+            amount_input: None,
+            amount_action: None,
+            logistics_region: LogisticsRegion::Opportunities,
+            logistics_opportunity_index: 0,
+            selected_logistics_source: None,
+            selected_logistics_destination: None,
+            logistics_storage_index: 0,
             message: String::new(),
         }
     }
