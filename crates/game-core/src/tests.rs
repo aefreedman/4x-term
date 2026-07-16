@@ -2352,6 +2352,202 @@ fn unsupplied_life_support_has_one_exhaustive_logistics_attribution() {
 }
 
 #[test]
+fn same_tick_acceptance_does_not_reclassify_phase3_starvation() {
+    let mut configured = local_energy_contract_definition();
+    configured.systems[1].energy_output_per_tick = Energy::ZERO;
+    configured.systems[1].seasonal_generation.base_output = Energy::ZERO;
+    configured.systems[1]
+        .seasonal_generation
+        .current_effective_output = Energy::ZERO;
+    configured.systems[1].inventory.insert(id(ENERGY_ID), 0);
+    let mut session = GameSession::new(configured).unwrap();
+    session
+        .submit(GameCommand::AcceptEnergyContract {
+            source: id("core:s0"),
+            destination: id("core:s1"),
+            gross_payload: Energy(300),
+        })
+        .unwrap();
+
+    session.step().unwrap();
+
+    let accepted_same_tick = session.snapshot();
+    assert_eq!(
+        accepted_same_tick.energy_starvation.get(&id("core:s1")),
+        Some(&EnergyStarvationCause::ViableButUnaccepted)
+    );
+    assert_eq!(accepted_same_tick.energy_logistics.viable_but_unaccepted, 1);
+    assert_eq!(
+        accepted_same_tick
+            .energy_logistics
+            .accepted_delivery_pending,
+        0
+    );
+    assert!(matches!(
+        accepted_same_tick.energy_contracts[0].contract.state,
+        EnergyContractState::InTransit { .. }
+    ));
+
+    session.step().unwrap();
+
+    let accepted_previous_tick = session.snapshot();
+    assert_eq!(
+        accepted_previous_tick.energy_starvation.get(&id("core:s1")),
+        Some(&EnergyStarvationCause::AcceptedDeliveryPending)
+    );
+    assert_eq!(
+        accepted_previous_tick
+            .energy_logistics
+            .accepted_delivery_pending,
+        1
+    );
+}
+
+#[test]
+fn ordinary_local_trade_is_blocked_until_energy_contract_completion() {
+    let ore = id("core:ore");
+    let cases = [
+        (
+            remote_energy_contract_definition(),
+            id("core:s1"),
+            id("core:s0"),
+            Energy(3_000),
+            EnergyContractState::DeadheadingToSource {
+                source_claim: Energy(3_000),
+                accepted_tick: 0,
+            },
+        ),
+        (
+            local_energy_contract_definition(),
+            id("core:s0"),
+            id("core:s1"),
+            Energy(300),
+            EnergyContractState::Arrived {
+                arrived_tick: 0,
+                settlement_deadline: 0,
+            },
+        ),
+    ];
+
+    for (mut configured, source, destination, gross_payload, expected_state) in cases {
+        configured.systems[1].inventory.insert(ore.clone(), 100);
+        configured.systems[1].targets.insert(ore.clone(), 200);
+        let mut session = GameSession::new(configured).unwrap();
+        session
+            .submit(GameCommand::AcceptEnergyContract {
+                source,
+                destination,
+                gross_payload,
+            })
+            .unwrap();
+        session.step().unwrap();
+        session.advance_travel().unwrap();
+        session.mark_energy_contract_arrivals().unwrap();
+
+        let actual_state = session
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .values()
+            .next()
+            .unwrap()
+            .state;
+        assert_eq!(
+            std::mem::discriminant(&actual_state),
+            std::mem::discriminant(&expected_state)
+        );
+        let player = session.player_entity().unwrap();
+        let system = session.world.get::<Trader>(player).unwrap().system.clone();
+        let market = session.market_entity(&system).unwrap();
+        {
+            let mut trader = session.world.get_mut::<Trader>(player).unwrap();
+            trader.cargo.insert(ore.clone(), 1);
+            trader.cargo_cost_basis.insert(
+                ore.clone(),
+                CostBasis {
+                    stock_quantity: 1,
+                    total_embodied_energy: Energy(3),
+                },
+            );
+        }
+        assert!(
+            session
+                .player_local_trade_limits(&ore)
+                .unwrap()
+                .sell
+                .maximum
+                >= 1
+        );
+        let before_trader = format!("{:?}", session.world.get::<Trader>(player).unwrap());
+        let before_market = format!("{:?}", session.world.get::<Market>(market).unwrap());
+
+        assert_eq!(
+            session.submit(GameCommand::Buy {
+                good: ore.clone(),
+                quantity: 1,
+            }),
+            Err(CoreError::ActiveEnergyContract)
+        );
+        assert_eq!(
+            format!("{:?}", session.world.get::<Trader>(player).unwrap()),
+            before_trader
+        );
+        assert_eq!(
+            format!("{:?}", session.world.get::<Market>(market).unwrap()),
+            before_market
+        );
+        assert_eq!(
+            session.submit(GameCommand::Sell {
+                good: ore.clone(),
+                quantity: 1,
+            }),
+            Err(CoreError::ActiveEnergyContract)
+        );
+        assert_eq!(
+            format!("{:?}", session.world.get::<Trader>(player).unwrap()),
+            before_trader
+        );
+        assert_eq!(
+            format!("{:?}", session.world.get::<Market>(market).unwrap()),
+            before_market
+        );
+    }
+
+    let mut configured = local_energy_contract_definition();
+    configured.systems[1].inventory.insert(ore.clone(), 100);
+    configured.systems[1].targets.insert(ore.clone(), 200);
+    let mut completed = GameSession::new(configured).unwrap();
+    completed
+        .submit(GameCommand::AcceptEnergyContract {
+            source: id("core:s0"),
+            destination: id("core:s1"),
+            gross_payload: Energy(300),
+        })
+        .unwrap();
+    completed.step().unwrap();
+    completed.step().unwrap();
+    assert!(
+        completed
+            .world
+            .resource::<EnergyContracts>()
+            .active
+            .is_empty()
+    );
+    completed
+        .submit(GameCommand::Buy {
+            good: ore.clone(),
+            quantity: 1,
+        })
+        .unwrap();
+    completed
+        .submit(GameCommand::Sell {
+            good: ore,
+            quantity: 1,
+        })
+        .unwrap();
+}
+
+#[test]
 fn full_energy_delivery_settles_net_and_allocation_exactly_once() {
     let mut session = GameSession::new(local_energy_contract_definition()).unwrap();
     let initial = session.snapshot();

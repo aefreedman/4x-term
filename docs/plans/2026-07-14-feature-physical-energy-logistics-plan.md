@@ -327,7 +327,7 @@ claim_capacity = max(0,
 - On source arrival, loading and loaded-route departure execute as one prepared atomic transition. Success subtracts source stock, creates the locked lot, and releases the source claim in the same apply step.
 - `RejectedBeforeLoad` is reserved for route/state/integrity validation failure after claim safety passes. Failure releases the claim and leaves the carrier docked with no locked cargo. Acceptance fuel validation guarantees the carrier retained at least the planned loaded-route burn after deadheading, preserving an escape budget.
 
-From loading onward cancellation is rejected. Manual travel to a non-contract destination, locked transfer, liquidation, rerouting, and dynamic retirement are rejected while a carrier owns an active contract or locked lot.
+From loading onward cancellation is rejected. Ordinary local buy and sell, manual travel to a non-contract destination, locked transfer, liquidation, rerouting, and dynamic retirement are rejected while a carrier owns an active contract or locked lot.
 
 ### D7. Destination headroom is soft and partial settlement preserves recovery
 

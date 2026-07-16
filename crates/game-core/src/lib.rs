@@ -3971,6 +3971,8 @@ impl GameSession {
         }
         let (system, tank, travel, used, cap) = {
             let t = self.world.get::<Trader>(trader_entity).unwrap();
+            let trader_id = self.world.get::<StableId>(trader_entity).unwrap();
+            self.ensure_carrier_contract_free(&trader_id.0, t)?;
             (
                 t.system.clone(),
                 t.energy_tank,

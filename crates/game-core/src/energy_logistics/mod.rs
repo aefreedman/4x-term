@@ -2059,21 +2059,12 @@ impl GameSession {
     }
 
     pub(super) fn finalize_energy_starvation_attribution(&mut self) -> Result<(), CoreError> {
-        let active_pending = self
-            .world
-            .resource::<EnergyContracts>()
-            .active
-            .values()
-            .filter(|contract| !matches!(contract.state, EnergyContractState::Recovering { .. }))
-            .map(|contract| contract.destination.clone())
-            .collect::<BTreeSet<_>>();
         let capture = self.world.resource::<EnergyLogisticsTickCapture>().clone();
         let mut current = BTreeMap::new();
         for destination in &capture.unsupplied {
             let cause = starvation_cause(
                 capture.arrived_blocked.contains(destination),
-                capture.accepted_pending.contains(destination)
-                    || active_pending.contains(destination),
+                capture.accepted_pending.contains(destination),
                 capture.reachable_surplus.contains(destination),
                 capture.viable_candidate.contains(destination),
             );
