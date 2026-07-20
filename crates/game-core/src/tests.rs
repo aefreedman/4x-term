@@ -116,6 +116,20 @@ fn definition() -> GameDefinition {
         economy: EconomyConfig::default(),
     }
 }
+
+#[test]
+fn canonical_energy_good_accepts_non_numeraire_bootstrap_cost() {
+    let mut configured = definition();
+    configured
+        .goods
+        .iter_mut()
+        .find(|good| good.id.as_str() == ENERGY_ID)
+        .unwrap()
+        .bootstrap_cost = Energy(2);
+
+    GameSession::new(configured).expect("physical Energy identity must not require price parity");
+}
+
 fn local_energy_contract_definition() -> GameDefinition {
     let mut definition = definition();
     let energy = id(ENERGY_ID);
@@ -167,6 +181,20 @@ fn three_loaded_energy_contract_session(permutation: [&str; 3]) -> GameSession {
     }
     session.resolve_pending_energy_contract_intents().unwrap();
     assert_eq!(session.world.resource::<EnergyContracts>().active.len(), 3);
+    let loaded = session.snapshot();
+    assert_eq!(
+        loaded
+            .traders
+            .iter()
+            .filter(|trader| trader.id.as_str().starts_with("core:ai_"))
+            .filter(|trader| trader
+                .bulk_energy
+                .locked
+                .is_some_and(|lot| lot.amount > Energy::ZERO))
+            .count(),
+        3,
+        "conditional ordering evidence requires three nonzero locked lots"
+    );
     session
 }
 
