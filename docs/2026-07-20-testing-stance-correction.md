@@ -6,7 +6,7 @@ This is a high-level transition direction, not a single implementation
 plan. It corrects how the simulation is tested and describes the staged
 move from the current authored market-trading prototype toward the strategy
 and map-expansion game defined by the
-[Governance Sandbox design direction](../design-direction-governance-sandbox.md),
+[Governance Sandbox design direction](2026-07-20-design-direction-governance-sandbox.md),
 especially G2 and G16–G22.
 
 The stages below must be carved into focused plans or todos before
@@ -142,6 +142,10 @@ that must share one branch or plan. Each stage should leave the repository
 coherent and should produce the evidence needed to scope the next stage.
 
 ### Stage 1 — Record the direction and audit the migration surface
+
+**Status:** recorded on 2026-07-20 in the
+[authored market-world migration audit](2026-07-20-authored-market-world-migration-audit.md).
+This records migration decisions only; Stages 2–8 remain future work.
 
 - Add the testing stance and norms to `AGENTS.md` and architecture notes.
 - Mark obsolete product assumptions clearly, including trader-first play,
@@ -287,4 +291,4 @@ This transition is complete when:
   delegation without pretending that empty locations are live markets.
 
 [slice-1]:
-  ../../todos/006-complete-p1-slice-1-energy-denominated-economy-foundation.md
+  ../todos/006-complete-p1-slice-1-energy-denominated-economy-foundation.md

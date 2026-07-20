@@ -261,7 +261,7 @@ Requirements:
 - Content definitions are immutable after compilation unless explicit hot-reload support is added.
 - Format-specific parsing is isolated behind loader adapters.
 
-A registry resource in the ECS world can hold compiled definitions and map stable content IDs to runtime templates. Population-level parameters that designers tune together—such as NPC trader count, common speed, starting tank energy/capacity, cargo capacity, travel burn, naming, and distribution—belong in dedicated validated configuration files such as `content/traders.ron`, rather than being duplicated across individual entity definitions.
+A registry resource in the ECS world can hold compiled definitions and map stable content IDs to runtime templates. The current prototype keeps NPC trader count, speed, tank and cargo capacities, travel burn, naming, and distribution in `content/traders.ron`. That market-fleet schema is migration input, not a durable architecture requirement; future content should continue to use dedicated validated configuration only for responsibilities retained by the governance-and-expansion game.
 
 ## Persistence
 
@@ -305,18 +305,35 @@ Perfect cross-platform determinism is not an initial requirement, but replayable
 
 ## Testing strategy
 
+Testing has two deterministic tiers. It does not treat the authored 20-system market world as a global-stability benchmark.
+
+### Tier 1: authored micro-fixtures
+
+- Construct small, hand-computable worlds—normally 3–6 locations with minimal actors—to test one or a few mechanisms exactly.
+- Submit commands and execute schedules without a TUI.
+- Assert exact component/resource state, emitted events, arithmetic, ordering, and rejection atomicity.
+- Gameplay-facing behavior must have short deterministic fixture coverage; a soak alone is not gameplay acceptance.
+- Retain generated-world failure classes as focused fixtures where possible.
+
+### Tier 2: generated worlds
+
+- Use fixed generation identity and seeds for exact, repeatable checks.
+- Fail only on a named engine invariant with an exact oracle and applicability rule, or on a constructive G18 guarantee.
+- Require non-vacuous setup for conditional invariants such as automated-logistics liveness.
+- Never use seed pass percentages, reject/reroll screening, local survival, universal stability, or authored-world activity as acceptance criteria.
+
+Local collapse and unusual frontier outcomes are expected texture unless they violate one of those explicit contracts. Distribution shape and emergent behavior belong in descriptive diagnostics for human tuning; descriptive diagnostics have no pass/fail semantics and must not become CI gates.
+
 ### Core tests
 
-- Construct a `World` with minimal fixtures.
-- Submit commands and execute schedules without a TUI.
-- Assert component/resource state and emitted events.
-- Use fixed seeds for repeatable simulation tests.
+- Preserve deterministic scheduling, checked physical-resource accounting, exact reconciliation, stable identifiers, and validate-before-mutate where applicable.
+- Markets, pricing, independent traders, NPC fleet ecology, universal market populations, commercial contracts, and metastability are prototype responsibilities, not architecture contracts. Any successor must be justified by an accepted governance-and-expansion requirement; current code remains only until its staged cutover or retirement.
 
 ### Content tests
 
-- Validate all repository content in CI.
-- Test duplicate IDs, unresolved references, and invalid values.
-- Snapshot compiled definitions where useful.
+- Validate reusable schema rules, duplicate IDs, unresolved references, invalid values, and source-aware diagnostics.
+- Treat exact-20, market-per-system, authored-fleet, and repository-world activity assertions as temporary migration surface rather than durable content contracts.
+- Snapshot compiled definitions only where the snapshot expresses an intentional current contract.
 
 ### Application tests
 

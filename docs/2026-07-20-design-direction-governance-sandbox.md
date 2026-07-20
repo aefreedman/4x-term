@@ -209,7 +209,7 @@ collapsed. Consequences:
 ## Testing implications
 
 - Two tiers, both cheap and deterministic (see
-  [Testing and Worldgen Direction Shift](plans/2026-07-20-testing-stance-correction.md)
+  [Testing and Worldgen Direction Shift](2026-07-20-testing-stance-correction.md)
   for the full direction):
   1. **Authored micro-fixtures** (3–6 systems, hand-computable outcomes)
      test mechanisms exactly.
