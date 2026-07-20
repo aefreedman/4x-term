@@ -5,9 +5,9 @@ pub mod state;
 
 pub use input::{InputAction, route_key};
 pub use state::{
-    Activity, AmountAction, InputLayer, LayoutClass, LogisticsRegion, SortDirection,
-    SystemDetailKind, SystemOrderItem, SystemSortKey, TradeRegion, UiState, classify_layout,
-    order_systems,
+    Activity, AmountAction, InputLayer, LayoutClass, LogisticsRegion, LogisticsRequestView,
+    SortDirection, SystemDetailKind, SystemOrderItem, SystemSortKey, TradeRegion, UiState,
+    classify_layout, order_systems,
 };
 
 use anyhow::Result;
@@ -452,6 +452,30 @@ async fn handle_key_for_layout(
         }
         InputAction::ActivateLogistics => match ui.logistics_region {
             LogisticsRegion::Opportunities => {
+                if ui.logistics_request_view == LogisticsRequestView::AllRequests {
+                    let Some(request) = focused_energy_request(view, ui) else {
+                        ui.message = "No Energy request is currently posted".into();
+                        return Ok(false);
+                    };
+                    let serviceable = view
+                        .energy_logistics
+                        .opportunities
+                        .iter()
+                        .filter(|opportunity| opportunity.destination.id == request.system.id)
+                        .count();
+                    ui.message = if serviceable == 0 {
+                        format!(
+                            "{} requests Energy, but the player has no serviceable contract for it",
+                            request.system.name
+                        )
+                    } else {
+                        format!(
+                            "{} has {serviceable} serviceable contract option(s); use ←/→ to view them",
+                            request.system.name
+                        )
+                    };
+                    return Ok(false);
+                }
                 let Some(opportunity) = focused_energy_opportunity(view, ui) else {
                     ui.message = "No Energy delivery opportunity is available".into();
                     return Ok(false);
@@ -506,6 +530,9 @@ async fn handle_key_for_layout(
                 ui.message.clear();
             }
         },
+        InputAction::ToggleLogisticsRequestView => {
+            ui.logistics_request_view = ui.logistics_request_view.toggled();
+        }
         InputAction::BeginTravel => {
             if view.player.traveling {
                 ui.message =
@@ -789,18 +816,28 @@ fn move_selection(ui: &mut UiState, view: &ApplicationView, delta: isize) {
         },
         Activity::Logistics => match ui.logistics_region {
             LogisticsRegion::Opportunities => {
-                ui.logistics_opportunity_index = shifted(
-                    ui.logistics_opportunity_index,
-                    view.energy_logistics.opportunities.len(),
-                    delta,
-                );
-                if let Some(opportunity) = view
-                    .energy_logistics
-                    .opportunities
-                    .get(ui.logistics_opportunity_index)
-                {
-                    ui.selected_logistics_source = Some(opportunity.source.id.clone());
-                    ui.selected_logistics_destination = Some(opportunity.destination.id.clone());
+                if ui.logistics_request_view == LogisticsRequestView::AllRequests {
+                    let requests = energy_request_markets(view);
+                    ui.logistics_request_index =
+                        shifted(ui.logistics_request_index, requests.len(), delta);
+                    ui.selected_logistics_request = requests
+                        .get(ui.logistics_request_index)
+                        .map(|request| request.system.id.clone());
+                } else {
+                    ui.logistics_opportunity_index = shifted(
+                        ui.logistics_opportunity_index,
+                        view.energy_logistics.opportunities.len(),
+                        delta,
+                    );
+                    if let Some(opportunity) = view
+                        .energy_logistics
+                        .opportunities
+                        .get(ui.logistics_opportunity_index)
+                    {
+                        ui.selected_logistics_source = Some(opportunity.source.id.clone());
+                        ui.selected_logistics_destination =
+                            Some(opportunity.destination.id.clone());
+                    }
                 }
             }
             LogisticsRegion::ActiveContract => {}
@@ -971,6 +1008,20 @@ fn sync_system_row(ui: &mut UiState, view: &ApplicationView) {
 }
 
 fn clamp_logistics_selection(ui: &mut UiState, view: &ApplicationView) {
+    let requests = energy_request_markets(view);
+    let retained_request = ui.selected_logistics_request.as_ref().and_then(|selected| {
+        requests
+            .iter()
+            .position(|request| &request.system.id == selected)
+    });
+    ui.logistics_request_index = retained_request.unwrap_or_else(|| {
+        ui.logistics_request_index
+            .min(requests.len().saturating_sub(1))
+    });
+    ui.selected_logistics_request = requests
+        .get(ui.logistics_request_index)
+        .map(|request| request.system.id.clone());
+
     let opportunities = &view.energy_logistics.opportunities;
     let retained = ui
         .selected_logistics_source
@@ -2169,6 +2220,35 @@ fn render_regular_trade_core(
     render_trade_player(frame, right[2], view, ui);
 }
 
+fn energy_request_markets(view: &ApplicationView) -> Vec<&game_app::EnergyMarketLogisticsView> {
+    view.energy_logistics
+        .markets
+        .iter()
+        .filter(|market| market.requested > game_app::Energy::ZERO)
+        .collect()
+}
+
+fn focused_energy_request<'a>(
+    view: &'a ApplicationView,
+    ui: &UiState,
+) -> Option<&'a game_app::EnergyMarketLogisticsView> {
+    let requests = energy_request_markets(view);
+    ui.selected_logistics_request
+        .as_ref()
+        .and_then(|selected| {
+            requests
+                .iter()
+                .position(|request| &request.system.id == selected)
+        })
+        .or_else(|| {
+            (!requests.is_empty()).then_some(
+                ui.logistics_request_index
+                    .min(requests.len().saturating_sub(1)),
+            )
+        })
+        .and_then(|index| requests.get(index).copied())
+}
+
 fn focused_energy_opportunity<'a>(
     view: &'a ApplicationView,
     ui: &UiState,
@@ -2235,6 +2315,90 @@ fn logistics_title(label: &str, focused: bool, action: &str) -> String {
     }
 }
 
+fn render_all_energy_requests(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &ApplicationView,
+    ui: &UiState,
+    layout_class: LayoutClass,
+    focused: bool,
+) {
+    let requests = energy_request_markets(view);
+    let mut lines = vec![Line::from(
+        "All posted requests are shown even when the player cannot currently serve them.",
+    )];
+    if requests.is_empty() {
+        lines.push(Line::from("No system currently posts an Energy request."));
+    } else {
+        let selected = ui
+            .logistics_request_index
+            .min(requests.len().saturating_sub(1));
+        let list_capacity = if layout_class == LayoutClass::Regular {
+            4
+        } else {
+            2
+        };
+        let (start, end) = viewport(requests.len(), selected, list_capacity);
+        for (offset, request) in requests[start..end].iter().enumerate() {
+            let index = start + offset;
+            let serviceable = view
+                .energy_logistics
+                .opportunities
+                .iter()
+                .filter(|opportunity| opportunity.destination.id == request.system.id)
+                .count();
+            let status = if serviceable > 0 {
+                format!("{serviceable} serviceable")
+            } else {
+                "not serviceable".into()
+            };
+            lines.push(Line::styled(
+                format!(
+                    "{} {} · requests {} E · inbound {} E · runway {} · {status}",
+                    if index == selected { ">" } else { " " },
+                    request.system.name,
+                    format_energy(request.requested),
+                    format_energy(request.inbound),
+                    request.runway,
+                ),
+                selected_style(index == selected && focused),
+            ));
+        }
+        if let Some(request) = focused_energy_request(view, ui) {
+            lines.push(Line::from(format!(
+                "Selected: stock {}/{} E · target {} E · stage {}",
+                format_energy(request.stock),
+                format_energy(request.capacity),
+                format_energy(request.target),
+                request.stage.label(),
+            )));
+            if !view
+                .energy_logistics
+                .opportunities
+                .iter()
+                .any(|opportunity| opportunity.destination.id == request.system.id)
+            {
+                lines.push(Line::from(format!(
+                    "Why unavailable: {}",
+                    request.blocker.as_deref().unwrap_or(
+                        "no viable source, route, payload, or positive-profit player contract"
+                    )
+                )));
+            }
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(Block::bordered().title(logistics_title(
+                &format!("1 Energy Requests — {}", ui.logistics_request_view.label()),
+                focused,
+                "←/→ serviceable · ↑/↓ select",
+            ))),
+        area,
+    );
+}
+
 fn render_logistics_opportunities(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -2243,8 +2407,12 @@ fn render_logistics_opportunities(
     layout_class: LayoutClass,
 ) {
     let focused = ui.logistics_region == LogisticsRegion::Opportunities;
+    if ui.logistics_request_view == LogisticsRequestView::AllRequests {
+        render_all_energy_requests(frame, area, view, ui, layout_class, focused);
+        return;
+    }
     let mut lines = vec![Line::from(
-        "Destinations request physical Energy. Accepting commits your carrier; loading, delivery, settlement, and recovery advance with simulation steps.",
+        "Serviceable requests have a viable source, route, payload, and positive-profit contract for the player right now.",
     )];
     if view.energy_logistics.opportunities.is_empty() {
         lines.push(Line::from(
@@ -2326,9 +2494,9 @@ fn render_logistics_opportunities(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
             .block(Block::bordered().title(logistics_title(
-                "1 Opportunities",
+                &format!("1 Energy Requests — {}", ui.logistics_request_view.label()),
                 focused,
-                "↑/↓ select · Enter accept displayed maximum",
+                "←/→ all requests · ↑/↓ select · Enter accept displayed maximum",
             ))),
         area,
     );
@@ -3811,7 +3979,9 @@ fn help_text(activity: Activity) -> Vec<Line<'static>> {
         Activity::Logistics => Line::from(vec![
             Span::raw("Logistics: "),
             shortcut_span("Tab/Shift-Tab"),
-            Span::raw(" opportunities/contract/storage · "),
+            Span::raw(" requests/contract/storage · "),
+            shortcut_span("←/→"),
+            Span::raw(" all/serviceable requests · "),
             shortcut_span("↑/↓"),
             Span::raw(" select · "),
             shortcut_span("Enter"),
@@ -4489,12 +4659,13 @@ mod tests {
         };
         let ui = UiState {
             activity: Activity::Logistics,
+            logistics_request_view: LogisticsRequestView::Serviceable,
             ..UiState::default()
         };
 
         let regular = rendered_at(160, 45, &view, &ui);
         for fact in [
-            "1 Opportunities",
+            "1 Energy Requests — SERVICEABLE",
             "max 4,000 E",
             "empty 10 E/1t",
             "loaded 20 E/2t",
@@ -4518,18 +4689,59 @@ mod tests {
                 ..UiState::default()
             },
         );
-        assert!(!trade.contains("1 Opportunities"));
+        assert!(!trade.contains("1 Energy Requests"));
         assert!(!trade.contains("Active Contract"));
 
         let compact = rendered_at(80, 30, &view, &ui);
         for fact in [
-            "1 Opportunities",
+            "1 Energy Requests",
             "2 Active Contract",
             "3 Storage",
             "Tank 100/250 E",
             "Locked contract bulk 1,940 E",
         ] {
             assert!(compact.contains(fact), "missing {fact:?} in:\n{compact}");
+        }
+
+        view.energy_logistics
+            .markets
+            .push(game_app::EnergyMarketLogisticsView {
+                system: SystemIdentityView {
+                    id: id("core:s2"),
+                    name: "Dustfall".into(),
+                },
+                stock: Energy(5),
+                capacity: Energy(1_000),
+                target: Energy(800),
+                offered: Energy::ZERO,
+                requested: Energy(795),
+                inbound: Energy::ZERO,
+                runway: 1,
+                stage: BrownoutStage::Starvation,
+                cause: Some(game_core::EnergyStarvationCause::NoViableCandidate),
+                blocker: Some("no viable candidate".into()),
+            });
+        let all_requests = rendered_at(
+            160,
+            45,
+            &view,
+            &UiState {
+                activity: Activity::Logistics,
+                ..UiState::default()
+            },
+        );
+        for fact in [
+            "1 Energy Requests — ALL REQUESTS",
+            "Brasshaven",
+            "1 serviceable",
+            "Dustfall",
+            "requests 795 E",
+            "not serviceable",
+        ] {
+            assert!(
+                all_requests.contains(fact),
+                "missing {fact:?} in:\n{all_requests}"
+            );
         }
     }
 
