@@ -26,9 +26,9 @@ is slow because correctness is dominated by long-run soak modeling.
 - **Not anti-expansion, but anti-displacement**: no fully populated map
   where growth means combat over occupied systems. The frontier is
   empty-because-broken. Conflict exists eventually but is not the focus.
-- **Scope**: governance mode is the game. The single-ship trader mode is a
-  terrain testbed and may spin off as a separate game. Play starts as a
-  governor; no trader→governor progression.
+- **Scope**: governance mode is the game. Play starts as a governor; there is
+  no trader→governor progression and no retained single-ship trader mode or
+  compatibility harness in this repository.
 - **Mechanics-first**: design the mechanic; fiction develops alongside and
   may trail it. No mechanics that require pretending.
 
@@ -209,7 +209,7 @@ collapsed. Consequences:
 ## Testing implications
 
 - Two tiers, both cheap and deterministic (see
-  [Testing and Worldgen Direction Shift](plans/2026-07-20-testing-stance-correction.md)
+  [Testing and Worldgen Direction Shift](2026-07-20-testing-stance-correction.md)
   for the full direction):
   1. **Authored micro-fixtures** (3–6 systems, hand-computable outcomes)
      test mechanisms exactly.
@@ -286,10 +286,9 @@ collapsed. Consequences:
 - [Slice 1 (006)][slice-1] decisions D1–D5 stand. [Todo 007][slice-2] is
   obsolete (G19); its surviving ideas are re-derived from this document.
   Future todos are carved from Q1–Q10 and cite G-numbers.
-- The single-ship trader mode may still serve as a cheap harness for
-  prototyping G10 information freshness, with the caveat that under G17
-  there is no NPC market network for it to trade against — freshness
-  prototyping targets the player's own remote systems and scouted sites.
+- Prototype G10 information freshness directly with a small deterministic
+  origin/remote-community or scouted-site fixture. Do not retain trader startup,
+  market content, or trader UI as a speculative harness.
 
 [slice-1]:
   ../todos/006-complete-p1-slice-1-energy-denominated-economy-foundation.md

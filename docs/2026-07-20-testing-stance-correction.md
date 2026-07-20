@@ -6,7 +6,7 @@ This is a high-level transition direction, not a single implementation
 plan. It corrects how the simulation is tested and describes the staged
 move from the current authored market-trading prototype toward the strategy
 and map-expansion game defined by the
-[Governance Sandbox design direction](../design-direction-governance-sandbox.md),
+[Governance Sandbox design direction](2026-07-20-design-direction-governance-sandbox.md),
 especially G2 and G16–G22.
 
 The stages below must be carved into focused plans or todos before
@@ -138,10 +138,17 @@ into CI as gates.
 ## Transition stages
 
 These are dependency-ordered direction stages, not implementation phases
-that must share one branch or plan. Each stage should leave the repository
-coherent and should produce the evidence needed to scope the next stage.
+that must share one branch or plan. Each stage should leave retained code
+buildable, retained contracts tested, and current documentation truthful. The
+legacy game need not remain playable between stages. Obsolete implementation,
+content, tests, diagnostics, and UI should be deleted rather than bridged to a
+replacement or copied into a working-tree archive; Git history preserves them.
 
 ### Stage 1 — Record the direction and audit the migration surface
+
+**Status:** recorded on 2026-07-20 in the
+[authored market-world migration audit](2026-07-20-authored-market-world-migration-audit.md).
+This records migration decisions only; Stages 2–8 remain future work.
 
 - Add the testing stance and norms to `AGENTS.md` and architecture notes.
 - Mark obsolete product assumptions clearly, including trader-first play,
@@ -156,22 +163,31 @@ coherent and should produce the evidence needed to scope the next stage.
 This stage changes governance and documents the migration; it should avoid
 prematurely redesigning the world model.
 
-### Stage 2 — Establish the two-tier test boundary
+### Stage 2 — Establish the two-tier test boundary and remove obsolete gates
 
-- Extract hand-computable mechanism coverage into Tier 1 micro-fixtures.
+- Extract hand-computable mechanism coverage into Tier 1 micro-fixtures only
+  for responsibilities that are cheaper to retain than re-engineer.
 - Define a named invariant registry with an exact oracle and applicability
   rule for each invariant. Do not count vacuous checks as coverage.
-- Separate descriptive world/economy reports from pass/fail validation.
-- Remove statistical, metastability, and authored-map quality assertions.
-  Preserve their mechanism or invariant coverage only when the underlying
-  behavior remains part of the new game; otherwise delete that coverage
-  with the obsolete feature.
+- Delete legacy economy diagnostics, pricing/player-impact probes,
+  metastability validation, authored-world acceptance, and obsolete tests;
+  do not preserve descriptive tooling for a world model being removed.
+- Remove arbitrary authored-world content predicates that obstruct small
+  fixtures, including exact cardinality and global ecology-quality rules.
+- Remove content/headless CI acceptance when it tests the legacy product.
+  Keep formatting, compilation, linting, and focused retained-contract tests.
+- Do not require current content, normal startup, headless play, the TUI, or
+  the full legacy workspace test inventory to remain operational.
 
-This stage protects refactoring work without requiring the destination
-world model to exist yet.
+This stage protects only retained foundations. It deliberately permits a
+buildable but non-playable repository while the destination model is absent.
 
-### Stage 3 — Separate map geography from living economic actors
+### Stage 3 — Remove the obsolete product surface and introduce the substrate
 
+- Delete trader-first identity, independent NPC fleet ecology, pricing,
+  wallets, commercial market behavior, authored market startup/content, and
+  obsolete application/TUI surfaces as their retained low-level mechanisms
+  are isolated. Do not add adapters or placeholders that mimic old gameplay.
 - Introduce a world model capable of representing locations without live
   markets or populations.
 - Represent one living origin separately from empty geography, extractable
@@ -202,7 +218,7 @@ by G17 and G18.
 Later world axes should have explicit extension and versioning rules rather
 than an unsupported promise that all additions preserve old seed output.
 
-### Stage 5 — Cut runtime startup over to the origin-and-frontier paradigm
+### Stage 5 — Restore playable startup with the origin-and-frontier paradigm
 
 - Decide how a generated world is selected and composed for normal play,
   tests, diagnostics, and replay.
@@ -213,8 +229,9 @@ than an unsupported promise that all additions preserve old seed output.
 - Update application and CLI startup boundaries while keeping the
   simulation headless and frontend-independent.
 
-This is the product-paradigm cutover. It should not be hidden inside a test
-or generator implementation task.
+This is the first stage required to restore a truthful playable executable.
+It should not be hidden inside a test or generator implementation task and
+needs no compatibility path from the deleted trader game.
 
 ### Stage 6 — Add generated-world invariant soaks and replay tooling
 
@@ -229,18 +246,19 @@ or generator implementation task.
 - Keep distribution and frontier-texture summaries descriptive and outside
   CI pass/fail semantics.
 
-### Stage 7 — Complete retirement of the obsolete market-network surface
+### Stage 7 — Verify retirement of the obsolete market-network surface
 
-Conflicting behavior may and should be removed in any earlier stage when it
-blocks the migration. This stage is the final cleanup and proof that no
-obsolete product assumptions remain.
+Deletion belongs primarily to Stages 2–3. This stage is a final search and
+proof that no obsolete product assumptions or accidental compatibility paths
+remain; it is not a holding area for deferred demolition.
 
-- Delete or quarantine the legacy 20-system authored world once retained
-  mechanism coverage has moved to appropriate fixtures.
-- Remove independent NPC trader ecology, obsolete startup paths, and tests
-  whose premise conflicts with G17/G19.
-- Remove or rewrite CI and diagnostic gates that require global stability,
-  trade churn, universal market health, or other world-quality outcomes.
+- Confirm the legacy 20-system content, independent NPC trader ecology,
+  obsolete startup paths, diagnostics, tests, and UI are absent from the
+  working tree unless a current responsibility explicitly justifies them.
+- Confirm no content or implementation copy was quarantined in `archive/`;
+  use Git history for archaeology.
+- Confirm CI contains no global stability, trade churn, universal market
+  health, or other legacy world-quality gate.
 - Reassess market/economy code by gameplay responsibility: retain what the
   origin and future daughter communities need, reshape trade into
   player-owned logistics where appropriate, and remove the rest.
@@ -262,14 +280,17 @@ sandbox; they are not bundled into this testing/worldgen transition.
   ordering. Any stronger cross-platform or spatial determinism contract
   must be specified by the stage that owns it.
 - Preserve validate-before-mutate, source-aware diagnostics, stable domain
-  identifiers, and the headless simulation boundary where those contracts
-  remain applicable.
+  identifiers, and frontend-independent simulation boundaries where those
+  contracts remain applicable. A legacy headless command or playable loop is
+  not itself a retained contract.
 - Do not add reject/reroll generation, seed screening, or statistical world
   quality gates in any intermediate stage.
 - Markets, traders, pricing, and NPC behavior have no compatibility
-  guarantee. Keep them only when a stage demonstrates their role in the
-  new gameplay pressure; do not preserve them solely to minimize code
-  change.
+  guarantee. Delete them as soon as retained responsibilities are isolated;
+  do not preserve them to minimize code change, keep tests green, or maintain
+  interim playability.
+- Do not copy removed source, content, tests, diagnostics, UI, or superseded
+  migration docs into a working-tree archive. Git history is sufficient.
 - The unrelated untracked `.obsidian/` directory must remain untouched.
 
 ## Direction-level completion
@@ -287,4 +308,4 @@ This transition is complete when:
   delegation without pretending that empty locations are live markets.
 
 [slice-1]:
-  ../../todos/006-complete-p1-slice-1-energy-denominated-economy-foundation.md
+  ../todos/006-complete-p1-slice-1-energy-denominated-economy-foundation.md

@@ -6,9 +6,9 @@ direction.
 
 Current direction lives in:
 
-- `docs/design-direction-governance-sandbox.md`
-- `docs/plans/2026-07-20-testing-stance-correction.md`
-- `docs/architecture.md`
+- [`docs/2026-07-20-design-direction-governance-sandbox.md`](../docs/2026-07-20-design-direction-governance-sandbox.md)
+- [`docs/2026-07-20-testing-stance-correction.md`](../docs/2026-07-20-testing-stance-correction.md)
+- [`docs/architecture.md`](../docs/architecture.md)
 
 ## `market-trading-prototype/`
 
