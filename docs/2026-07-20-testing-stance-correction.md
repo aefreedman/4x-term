@@ -89,8 +89,8 @@ N-of-M seed thresholds, no viability screening or reject/reroll**:
    - **Origin solvency with surplus margin**: the origin system alone
      covers its life-support burn through the worst seasonal phase, with
      authored margin above subsistence. This is a direct inequality check
-     against the generated configuration using the solvency math established
-     by [Slice 1][slice-1] — no simulation required.
+     against the generated configuration using G22's checked physical-resource
+     arithmetic and the exact Stage 4 contract — no simulation required.
    - **Neighborhood affordance**: within starting expedition/scouting
      range, extractable resources meet an authored floor and at least one
      reclaimable site exists.
@@ -148,7 +148,8 @@ replacement or copied into a working-tree archive; Git history preserves them.
 
 **Status:** recorded on 2026-07-20 in the
 [authored market-world migration audit](2026-07-20-authored-market-world-migration-audit.md).
-This records migration decisions only; Stages 2–8 remain future work.
+This records migration decisions only. Stage 2 is complete below; Stages 3–8
+remain future work.
 
 - Add the testing stance and norms to `AGENTS.md` and architecture notes.
 - Mark obsolete product assumptions clearly, including trader-first play,
@@ -164,6 +165,14 @@ This stage changes governance and documents the migration; it should avoid
 prematurely redesigning the world model.
 
 ### Stage 2 — Establish the two-tier test boundary and remove obsolete gates
+
+**Status:** completed on 2026-07-20. The implementation established the
+registry and direct three-location source fixtures, removed authored-world
+quality predicates and repository acceptance, deleted legacy diagnostic and
+acceptance CLI modes, reduced CI to retained workspace gates, and removed
+working-tree prototype archives and completed prototype todos. The workspace
+passes formatting, check, Clippy with warnings denied, and all 201 retained
+tests with no ignored tests; playability is intentionally not acceptance.
 
 The reviewed [Engine Invariant Registry](2026-07-20-engine-invariant-registry.md)
 records each active contract's exact oracle, applicability rule, non-vacuity
@@ -310,6 +319,3 @@ This transition is complete when:
   longer define product behavior or acceptance; and
 - subsequent gameplay work can build scouting, reclamation, expansion, and
   delegation without pretending that empty locations are live markets.
-
-[slice-1]:
-  ../todos/006-complete-p1-slice-1-energy-denominated-economy-foundation.md

@@ -16,10 +16,10 @@ classifies responsibilities, not whole files, as **keep**, **reshape**,
 **replace**, or **remove**. A file appears in more than one row when it contains
 both durable contracts and obsolete product assumptions.
 
-The current executable remains coherent and unchanged. These decisions guide
-Stages 2–7 of the
+At the time of this Stage 1 record, the executable remained unchanged. The
+current implementation status is maintained in the
 [Testing Stance and Constructive Worldgen transition](2026-07-20-testing-stance-correction.md);
-they do not claim that the destination model already exists.
+these decisions do not claim that the destination model already exists.
 
 ## Classification rules
 
@@ -220,9 +220,25 @@ This audit deliberately performs no destination implementation:
 - Executable/target distinction: `README.md`
 - Transition source of truth:
   `docs/2026-07-20-testing-stance-correction.md`
-- Obsolete todo link correction:
-  `todos/007-complete-p1-slice-2-world-dynamics-population-and-player-progression.md`
 
-Implementation and CI behavior are intentionally unchanged. Each later stage
-must re-read the cited code before acting because line numbers and coupling can
-change after this audit date.
+At Stage 1 completion, implementation and CI behavior were intentionally
+unchanged. Stage 2 subsequently moved current durable contracts into the
+[Engine Invariant Registry](2026-07-20-engine-invariant-registry.md) and deleted
+superseded working-tree history. Later stages must re-read the cited code before
+acting because line numbers and coupling can change after this audit date.
+
+## Stage 2 completion evidence
+
+- Active and reserved contracts:
+  [Engine Invariant Registry](2026-07-20-engine-invariant-registry.md)
+- Direct Tier 1 content fixtures and retained provenance checks:
+  `crates/game-content/src/lib.rs`
+- Focused reconciliation, ordering, atomicity, and identifier evidence:
+  `crates/game-core/src/tests.rs` and
+  `crates/game-core/src/energy_logistics/tests.rs`
+- Retained CI boundary: `.github/workflows/ci.yml`
+- Removed surfaces: repository acceptance and ignored soaks, legacy CLI
+  diagnostics/acceptance, authored-world quality predicates, prototype archive,
+  completed prototype todos, and the completed Stage 1 implementation plan.
+- Validation: formatting, workspace check, Clippy with warnings denied, and 201
+  retained tests passed with zero ignored tests.

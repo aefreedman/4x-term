@@ -2,9 +2,9 @@
 
 ## Purpose
 
-High-level design direction for where the gameplay lives on top of the
-economic terrain from [Slice 1][slice-1] and the now-obsolete
-[Slice 2 direction][slice-2].
+High-level design direction for where gameplay lives after the authored market
+prototype. G22 restates its durable physical-resource contracts; Git history
+preserves the superseded slice documents.
 This is a reference document, not a work item: it records the diagnosis,
 genre framing, settled decisions, and open questions. Individual plans and
 todos should be carved out of the open directions below and cite decisions
@@ -164,7 +164,7 @@ collapsed. Consequences:
   texture are emergent consequences of expansion, never generation-time
   guarantees. No reject/reroll, no viability screening, no statistical
   acceptance criteria over seed batches.
-- **G19. [Todo 007][slice-2] is obsolete.** Surviving ideas are re-derived
+- **G19. The former Slice 2 direction is obsolete.** Surviving ideas are re-derived
   from this
   document rather than inherited: the brownout ladder (now the *player's*
   failure mechanic, and more central for it), seasonal variability, and
@@ -283,14 +283,10 @@ collapsed. Consequences:
 
 ## Notes
 
-- [Slice 1 (006)][slice-1] decisions D1–D5 stand. [Todo 007][slice-2] is
-  obsolete (G19); its surviving ideas are re-derived from this document.
-  Future todos are carved from Q1–Q10 and cite G-numbers.
+- G22 is the current authority for the durable physical-resource contracts
+  extracted from the completed prototype. The former Slice 2 direction is
+  obsolete (G19); its surviving ideas are re-derived here. Future todos are
+  carved from Q1–Q10 and cite G-numbers.
 - Prototype G10 information freshness directly with a small deterministic
   origin/remote-community or scouted-site fixture. Do not retain trader startup,
   market content, or trader UI as a speculative harness.
-
-[slice-1]:
-  ../todos/006-complete-p1-slice-1-energy-denominated-economy-foundation.md
-[slice-2]:
-  ../todos/007-complete-p1-slice-2-world-dynamics-population-and-player-progression.md

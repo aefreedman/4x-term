@@ -300,149 +300,150 @@ Validation:
 
 ### Phase 2: Move durable evidence to focused Tier 1 coverage
 
-- [ ] In `crates/game-core/src/tests.rs` and
+- [x] In `crates/game-core/src/tests.rs` and
       `crates/game-core/src/energy_logistics/tests.rs`, inventory and retain the
       existing focused tests for reconciliation, deterministic ordering,
       atomicity, checked arithmetic, identifier allocation, D10 attribution,
       and bounded recovery; add tests only for a registry field with no current
       exact evidence.
-- [ ] Add explicit setup assertions to conditional invariant tests where a test
+- [x] Add explicit setup assertions to conditional invariant tests where a test
       could otherwise pass without contention, an active contract, a locked
       resource, or an actual flow.
-- [ ] In `crates/game-content/src/lib.rs`, remove the exact-20 error and
+- [x] In `crates/game-content/src/lib.rs`, remove the exact-20 error and
       cardinality-gated graph construction, then add direct 3–6-location source
       fixtures for reusable schema/provenance tests.
-- [ ] Remove authored-world quality predicates that block those fixtures:
+- [x] Remove authored-world quality predicates that block those fixtures:
       nonuniform distances, exporter/importer/knife-edge role composition,
       source/solar anti-correlation, bootstrap solvency/runway, and commercial
       liquidation adequacy. Preserve generic arithmetic helpers only where a
       retained exact test consumes them.
-- [ ] Permit a fixed zero-NPC content definition without archetypes or a bulk
+- [x] Permit a fixed zero-NPC content definition without archetypes or a bulk
       hauler; keep dynamic fleet checks conditional on dynamic fleet
       applicability, and remove `validate_archetype_route_capacity` without
       redesigning topology.
-- [ ] Decouple the canonical Energy identity/category rule from the obsolete
+- [x] Decouple the canonical Energy identity/category rule from the obsolete
       `bootstrap_cost == 1` numeraire rule in both content compilation and core
       session validation.
-- [ ] Remove `repository_content_loads_with_structural_roles`,
+- [x] Remove `repository_content_loads_with_structural_roles`,
       `repository_economy_short_smoke_is_deterministic_and_active`, and the
       ignored 1,000-tick repository acceptance after mapping their durable
       assertions to the registry's focused evidence.
-- [ ] Add a small content fixture whose optional archetype cannot cross its
+- [x] Add a small content fixture whose optional archetype cannot cross its
       shortest adjacent edge and prove compilation is not rejected solely for
       fleet-route ecology; route Energy arithmetic remains covered separately.
-- [ ] Remove or narrow repository-backed balance tests whose premises are
+- [x] Remove or narrow repository-backed balance tests whose premises are
       commercial liquidation, universal market activity, or mutable authored
       tuning; preserve only exact reusable arithmetic/source-validation
       coverage.
-- [ ] In `crates/game-cli/src/main.rs`, replace repository-loaded reconciliation
-      tests with a minimal local diagnostic fixture and pure formatter inputs.
-- [ ] Remove the repository-bound insertion-permutation test because focused
+- [x] Remove repository-loaded CLI reconciliation tests and rely on the focused
+      core external-inflow/reconciliation fixtures; do not retain a diagnostic
+      formatter solely to host the contract.
+- [x] Remove the repository-bound insertion-permutation test because focused
       non-vacuous core insertion-order tests already own that contract.
-- [ ] Remove `player_completes_a_multi_hop_headless_trade`. Keep
+- [x] Remove `player_completes_a_multi_hop_headless_trade`. Keep
       `public_crate_boundaries_compose` only if it still exercises retained APIs
       without compatibility work; otherwise delete it and let Stage 5 add the
       distinct origin-first boundary.
 
 Validation:
-- [ ] Run newly focused tests by exact name during development, then rely on the
+- [x] Run newly focused tests by exact name during development, then rely on the
       final workspace suite rather than duplicating every per-crate run.
-- [ ] Deliberately break and restore only new or materially changed conditional
+- [x] Deliberately break and restore only new or materially changed conditional
       tests whose non-vacuity is uncertain; retain representative failure
       evidence rather than mutation-checking every oracle.
-- [ ] Verify no default or ignored test name/content asserts repository trade,
+- [x] Verify no default or ignored test name/content asserts repository trade,
       production churn, fleet activity, universal survival, population ratchets,
       or exact authored counts as a quality outcome.
 
 ### Phase 3: Delete legacy tooling and acceptance, then finish documentation
 
-- [ ] Remove player-impact, pricing-comparison, economy-diagnostic,
+- [x] Remove player-impact, pricing-comparison, economy-diagnostic,
       metastability, legacy content-validation, and authored headless execution
       modes with their parsers, reports, trackers, formatters, and tests.
-- [ ] Retain exact external-inflow/reconciliation evidence only in focused
+- [x] Retain exact external-inflow/reconciliation evidence only in focused
       non-legacy tests; do not preserve a CLI mode or output format to host it.
-- [ ] Remove the content-validation and headless-acceptance CI steps. Keep
+- [x] Remove the content-validation and headless-acceptance CI steps. Keep
       format, check, clippy, and tests for retained contracts.
-- [ ] Delete obsolete operational README sections rather than rewriting them as
+- [x] Delete obsolete operational README sections rather than rewriting them as
       interim legacy instructions. State plainly that the game may be
       non-playable until Stage 5.
-- [ ] Move any still-current durable contract stated only in completed prototype
+- [x] Move any still-current durable contract stated only in completed prototype
       todos/plans (for example checked physical Energy accounting) into the
       invariant registry or current direction docs, then delete those completed
       artifacts rather than retaining them as working-tree history.
-- [ ] Remove `archive/market-trading-prototype/`, `archive/README.md`, the
+- [x] Remove `archive/market-trading-prototype/`, `archive/README.md`, the
       completed Stage 1 implementation plan, and obsolete/completed prototype
       todos after repairing current links; do not copy newly removed files
       anywhere in the working tree.
-- [ ] Update `CHANGELOG.md` under `Unreleased` for the removed legacy diagnostic
+- [x] Update `CHANGELOG.md` under `Unreleased` for the removed legacy diagnostic
       mode and corrected test boundary.
-- [ ] Mark Stage 2 complete in
+- [x] Mark Stage 2 complete in
       `docs/2026-07-20-testing-stance-correction.md` and add completion evidence
       without implying that Stages 3–8 are complete.
-- [ ] Update the Stage 1 audit's Stage 2 backlog/evidence links if needed; retain
+- [x] Update the Stage 1 audit's Stage 2 backlog/evidence links if needed; retain
       its original migration decisions.
 
 Validation:
-- [ ] Search executable Rust, current README guidance, CI, and the working tree
+- [x] Search executable Rust, current README guidance, CI, and the working tree
       for active definitions, invocations, or copies of removed diagnostics,
       legacy acceptance, authored-world tests, and archive material. Historical
       references remain available through Git, not current files.
-- [ ] Confirm CI contains only gates justified by retained code/contracts.
-- [ ] Confirm failure of normal startup, authored content loading, headless play,
+- [x] Confirm CI contains only gates justified by retained code/contracts.
+- [x] Confirm failure of normal startup, authored content loading, headless play,
       or legacy TUI flows is not treated as a Stage 2 regression.
 
 ## Acceptance Criteria
 
 ### Functional Requirements
 
-- [ ] The invariant registry records an exact oracle, applicability rule,
+- [x] The invariant registry records an exact oracle, applicability rule,
       non-vacuity witness, failure evidence, and resolvable test names for every
       active invariant.
-- [ ] No active registry entry or automated test treats local collapse,
+- [x] No active registry entry or automated test treats local collapse,
       universal survival, population shape, trade/production churn, fleet
       profitability/activity, or required player-impact divergence as success.
-- [ ] Existing focused coverage proves deterministic ordering, exact physical
+- [x] Existing focused coverage proves deterministic ordering, exact physical
       Energy reconciliation, checked arithmetic, atomic rejection, stable IDs,
       source-aware validation, and applicable bounded logistics recovery.
-- [ ] Removed repository-scale tests contribute no hidden default or ignored
+- [x] Removed repository-scale tests contribute no hidden default or ignored
       acceptance gate.
-- [ ] Legacy economy diagnostics, player-impact, pricing comparison,
+- [x] Legacy economy diagnostics, player-impact, pricing comparison,
       metastability, content-validation acceptance, and authored headless play
       are removed without aliases or compatibility layers.
-- [ ] CI does not require current repository content, normal startup, headless
+- [x] CI does not require current repository content, normal startup, headless
       play, or legacy TUI flows to work.
-- [ ] The retained workspace is buildable around retained contracts; no
+- [x] The retained workspace is buildable around retained contracts; no
       playable interim executable is required.
-- [ ] G18 values, generated-world seeds, replay identity, geography/community
+- [x] G18 values, generated-world seeds, replay identity, geography/community
       schema, and startup cutover remain deferred to their owning stages.
 
 ### Quality Requirements
 
-- [ ] `cargo fmt --all -- --check` passes.
-- [ ] `cargo check --workspace --all-targets --all-features` passes.
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [x] `cargo fmt --all -- --check` passes.
+- [x] `cargo check --workspace --all-targets --all-features` passes.
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
       passes.
-- [ ] `cargo test --workspace --all-features` passes for the retained workspace
+- [x] `cargo test --workspace --all-features` passes for the retained workspace
       with no ignored legacy repository acceptance remaining.
-- [ ] Test names and failure messages identify the contract and report expected
+- [x] Test names and failure messages identify the contract and report expected
       versus actual values or the rejected mutation surface.
-- [ ] No gameplay or visual acceptance is required during the non-playable
+- [x] No gameplay or visual acceptance is required during the non-playable
       migration interval, even if obsolete TUI surfaces are deleted.
-- [ ] No save, authored-content, command, or UI compatibility is promised.
+- [x] No save, authored-content, command, or UI compatibility is promised.
 
 ## Validation Plan
 
 ### Automated Validation
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo check --workspace --all-targets --all-features`
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- [ ] `cargo test --workspace --all-features`
-- [ ] Run exact affected tests only as targeted diagnosis when developing or
+- [x] `cargo fmt --all -- --check`
+- [x] `cargo check --workspace --all-targets --all-features`
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [x] `cargo test --workspace --all-features`
+- [x] Run exact affected tests only as targeted diagnosis when developing or
       investigating a workspace failure; do not duplicate all crate suites in
       final evidence.
-- [ ] `git diff --check`
-- [ ] Use `grep` or available repository search tooling to verify that
+- [x] `git diff --check`
+- [x] Use `grep` or available repository search tooling to verify that
       executable Rust, README command guidance, and CI contain no active
       `validate_metastability`, `metastability_acceptance`, removed player-impact
       or pricing-comparison modes, repository activity smoke, or ignored
@@ -453,14 +454,14 @@ Validation:
 
 ### Manual Validation
 
-- [ ] Review each registry row against its cited test and confirm the fixture
+- [x] Review each registry row against its cited test and confirm the fixture
       enters the applicability condition.
-- [ ] Confirm exact reconciliation tests still report expected, actual,
+- [x] Confirm exact reconciliation tests still report expected, actual,
       difference, and named transfer channels without depending on a legacy CLI
       command.
-- [ ] Confirm the default and ignored test lists contain no authored-world
+- [x] Confirm the default and ignored test lists contain no authored-world
       quality benchmark.
-- [ ] Confirm no task or review treats broken/removed startup, authored content,
+- [x] Confirm no task or review treats broken/removed startup, authored content,
       headless play, or TUI behavior as a Stage 2 regression.
 
 ### Evidence to Capture
@@ -505,36 +506,36 @@ Validation:
 
 ### Documentation to Update
 
-- [ ] Add `docs/2026-07-20-engine-invariant-registry.md`.
-- [ ] Update `docs/architecture.md` with the registry link and contribution rule.
-- [ ] Update `docs/2026-07-20-testing-stance-correction.md` with Stage 2 status and
+- [x] Add `docs/2026-07-20-engine-invariant-registry.md`.
+- [x] Update `docs/architecture.md` with the registry link and contribution rule.
+- [x] Update `docs/2026-07-20-testing-stance-correction.md` with Stage 2 status and
       evidence.
-- [ ] Update `docs/2026-07-20-authored-market-world-migration-audit.md` and the
+- [x] Update `docs/2026-07-20-authored-market-world-migration-audit.md` and the
       Stage 2/3 wording in `docs/2026-07-20-testing-stance-correction.md` to record
       the planning correction: arbitrary authored-world validation predicates
       are removed in Stage 2 when they obstruct truthful micro-fixtures; Stage 3
       still owns the geography/community schema split.
-- [ ] Replace legacy operational README guidance with migration status; do not
+- [x] Replace legacy operational README guidance with migration status; do not
       document commands that are intentionally removed or broken.
-- [ ] Update `CHANGELOG.md` under `Unreleased`.
+- [x] Update `CHANGELOG.md` under `Unreleased`.
 
 ### Intentional Follow-up
 
-- [ ] **Stage 3:** finish all planned demolition, including dynamic-fleet rules,
+- **Stage 3:** finish all planned demolition, including dynamic-fleet rules,
       trader identity, market/trader helpers, and obsolete app/TUI surfaces;
       separate geography from living actors, remove the one-market-per-system
       requirement, and re-derive population, brownout, and investment validation
       so current tuning ratios or “all four shapes” rules do not become
       accidental destination contracts.
-- [ ] **Stage 4:** define exact G18 units, inequalities, parameter provenance,
+- **Stage 4:** define exact G18 units, inequalities, parameter provenance,
       generator version, and constructive per-output tests; explicitly decide
       connectivity/topology rather than inheriting the current nearest-three,
       universally connected graph rule.
-- [ ] **Stage 5:** introduce origin-first composition, headless execution, and
+- **Stage 5:** introduce origin-first composition, headless execution, and
       startup acceptance from the new model without a trader compatibility path.
-- [ ] **Stage 6:** add generated-world invariant soaks and replay identity only
+- **Stage 6:** add generated-world invariant soaks and replay identity only
       for active, applicable registry entries.
-- [ ] **Stage 7:** run final code/content/docs/CI searches and prove that no
+- **Stage 7:** run final code/content/docs/CI searches and prove that no
       unjustified legacy surface or compatibility copy remains. Discovery of
       one fails the Stage 2–3 prerequisite; it is not scheduled demolition.
 
