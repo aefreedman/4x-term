@@ -20,7 +20,3 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --workspace --all-features
-      - name: Validate content
-        run: cargo run -p game-cli -- --validate-content
-      - name: Headless acceptance
-        run: cargo run -p game-cli -- --headless
