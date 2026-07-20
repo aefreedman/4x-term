@@ -309,7 +309,7 @@ During the governance-sandbox migration, repository coherence means that retaine
 
 ## Testing strategy
 
-Testing has two deterministic tiers. It does not treat the authored 20-system market world as a global-stability benchmark.
+Testing has two deterministic tiers. It does not treat the authored 20-system market world as a global-stability benchmark. The reviewed source of truth for active, conditional, and reserved engine contracts is the [Engine Invariant Registry](2026-07-20-engine-invariant-registry.md); changing an invariant requires updating its exact oracle, applicability rule, non-vacuity witness, and focused evidence there.
 
 ### Tier 1: authored micro-fixtures
 

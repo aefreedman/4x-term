@@ -165,6 +165,10 @@ prematurely redesigning the world model.
 
 ### Stage 2 — Establish the two-tier test boundary and remove obsolete gates
 
+The reviewed [Engine Invariant Registry](2026-07-20-engine-invariant-registry.md)
+records each active contract's exact oracle, applicability rule, non-vacuity
+witness, failure evidence, and focused tests.
+
 - Extract hand-computable mechanism coverage into Tier 1 micro-fixtures only
   for responsibilities that are cheaper to retain than re-engineer.
 - Define a named invariant registry with an exact oracle and applicability

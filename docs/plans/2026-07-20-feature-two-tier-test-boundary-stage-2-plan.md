@@ -278,24 +278,24 @@ screens are deleted in Stage 3.
 
 ### Phase 1: Establish the registry and classification boundary
 
-- [ ] Create `docs/2026-07-20-engine-invariant-registry.md` with the required
+- [x] Create `docs/2026-07-20-engine-invariant-registry.md` with the required
       fields, canonical initial entries, active/conditional/reserved statuses,
       and exact existing test evidence.
-- [ ] Add a migration matrix for every current test/diagnostic family identified
+- [x] Add a migration matrix for every current test/diagnostic family identified
       by the Stage 1 audit: keep as Tier 1, register as invariant evidence,
       descriptive-only, remove as obsolete, or defer to a named later stage.
-- [ ] Record that registry updates require a reviewed oracle, applicability rule,
+- [x] Record that registry updates require a reviewed oracle, applicability rule,
       and non-vacuity witness; a test name containing “invariant” is not enough.
-- [ ] Link the registry from `docs/architecture.md` and the Stage 2 section of
+- [x] Link the registry from `docs/architecture.md` and the Stage 2 section of
       `docs/2026-07-20-testing-stance-correction.md`.
-- [ ] Reserve, but do not specify, G18 and generated-world entries for Stages 4
+- [x] Reserve, but do not specify, G18 and generated-world entries for Stages 4
       and 6.
 
 Validation:
-- [ ] Manually trace every active registry entry to at least one existing or
+- [x] Manually trace every active registry entry to at least one existing or
       planned exact test and verify conditional entries have a non-vacuity
       witness.
-- [ ] Confirm no active entry uses survival, activity, profitability, population
+- [x] Confirm no active entry uses survival, activity, profitability, population
       shape, or one authored universe as its oracle.
 
 ### Phase 2: Move durable evidence to focused Tier 1 coverage
