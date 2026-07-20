@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.1 - 2026-07-16
+
+### Changed
+
+- Logistics defaults to every posted Energy request and can switch to player-serviceable contracts, making unserviceable demand and its blocker visible.
+- Added an implementation-ready plan for replacing authored Energy participation switches with need-derived requests and safe-surplus offers.
+
 ## 0.7.0 - 2026-07-16
 
 ### Added

@@ -1,6 +1,6 @@
 //! Pure keyboard routing for TUI-local interaction state.
 
-use crate::state::{Activity, InputLayer, UiState};
+use crate::state::{Activity, InputLayer, LogisticsRegion, UiState};
 use crossterm::event::KeyCode;
 
 /// Intent produced by [`route_key`]. Application requests remain outside this
@@ -26,6 +26,7 @@ pub enum InputAction {
     OpenBuyAmount,
     OpenSellAmount,
     ActivateLogistics,
+    ToggleLogisticsRequestView,
     OpenDetail,
     OpenMarketDetail,
     NextSection,
@@ -116,6 +117,11 @@ pub fn route_key(code: KeyCode, ui: &UiState, layout_supported: bool) -> InputAc
         Activity::Logistics => match code {
             KeyCode::Up | KeyCode::Char('k') => InputAction::MoveUp,
             KeyCode::Down | KeyCode::Char('j') => InputAction::MoveDown,
+            KeyCode::Left | KeyCode::Right
+                if ui.logistics_region == LogisticsRegion::Opportunities =>
+            {
+                InputAction::ToggleLogisticsRequestView
+            }
             KeyCode::Tab => InputAction::NextSection,
             KeyCode::BackTab => InputAction::PreviousSection,
             KeyCode::Enter => InputAction::ActivateLogistics,
@@ -213,6 +219,21 @@ mod tests {
             InputAction::ActivateLogistics
         );
         assert_eq!(route_key(KeyCode::Tab, &ui, true), InputAction::NextSection);
+        for key in [KeyCode::Left, KeyCode::Right] {
+            assert_eq!(
+                route_key(key, &ui, true),
+                InputAction::ToggleLogisticsRequestView
+            );
+        }
+        let contract_focused = UiState {
+            activity: Activity::Logistics,
+            logistics_region: LogisticsRegion::ActiveContract,
+            ..UiState::default()
+        };
+        assert_eq!(
+            route_key(KeyCode::Left, &contract_focused, true),
+            InputAction::None
+        );
         assert_eq!(
             route_key(KeyCode::F(3), &UiState::default(), true),
             InputAction::Switch(Activity::Logistics)

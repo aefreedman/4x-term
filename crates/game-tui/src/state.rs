@@ -200,6 +200,30 @@ pub enum AmountAction {
     OwnedBulkToMarket,
 }
 
+/// Which Energy-request rows are visible in the Logistics activity.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LogisticsRequestView {
+    #[default]
+    AllRequests,
+    Serviceable,
+}
+
+impl LogisticsRequestView {
+    pub const fn toggled(self) -> Self {
+        match self {
+            Self::AllRequests => Self::Serviceable,
+            Self::Serviceable => Self::AllRequests,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::AllRequests => "ALL REQUESTS",
+            Self::Serviceable => "SERVICEABLE",
+        }
+    }
+}
+
 /// The focused region on the Energy Logistics activity.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum LogisticsRegion {
@@ -255,6 +279,9 @@ pub struct UiState {
     pub amount_input: Option<String>,
     pub amount_action: Option<AmountAction>,
     pub logistics_region: LogisticsRegion,
+    pub logistics_request_view: LogisticsRequestView,
+    pub logistics_request_index: usize,
+    pub selected_logistics_request: Option<ContentId>,
     pub logistics_opportunity_index: usize,
     pub selected_logistics_source: Option<ContentId>,
     pub selected_logistics_destination: Option<ContentId>,
@@ -290,6 +317,9 @@ impl Default for UiState {
             amount_input: None,
             amount_action: None,
             logistics_region: LogisticsRegion::Opportunities,
+            logistics_request_view: LogisticsRequestView::AllRequests,
+            logistics_request_index: 0,
+            selected_logistics_request: None,
             logistics_opportunity_index: 0,
             selected_logistics_source: None,
             selected_logistics_destination: None,
