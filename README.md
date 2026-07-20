@@ -1,22 +1,26 @@
 # 4x-term
 
-A data-driven 4X terminal game written in Rust.
+A Rust 4X project in an origin-and-frontier migration.
 
-The planned architecture keeps the headless ECS simulation independent from
-terminal rendering so other frontends remain possible. See
-[docs/architecture.md](docs/architecture.md) for the current design.
+> **Current status:** Stage 3 is complete. The workspace contains only the
+> headless `game-core` and source-compilation `game-content` crates. It has no
+> playable application, CLI, TUI, or production content bundle. Stage 5 will
+> own a new truthful startup and terminal boundary; it will not restore the
+> retired trader-market prototype.
 
-> **Transition status:** The authored market-trading prototype is being removed
-> before its origin-and-frontier replacement exists. During Stages 2–4 the
-> workspace is required to compile and preserve focused engine contracts, but no
-> playable CLI/TUI, repository-content acceptance, or legacy command is
-> promised. Git history—not compatibility code or a working-tree archive—keeps
-> the former prototype available for archaeology.
+`game-core` owns a format-independent `WorldState` substrate: resources,
+neutral locations, exactly one living origin community and its physical stocks,
+resource deposits, reclaimable sites, and explicit topology. Topology may be
+empty or disconnected. `game-content` compiles one RON world source and returns
+deterministically ordered, source-aware aggregated diagnostics before any world
+is instantiated.
 
-Current direction is defined by the
-[Governance Sandbox](docs/2026-07-20-design-direction-governance-sandbox.md),
-the [Testing Stance and Constructive Worldgen transition](docs/2026-07-20-testing-stance-correction.md),
-and the [Engine Invariant Registry](docs/2026-07-20-engine-invariant-registry.md).
+See [docs/architecture.md](docs/architecture.md) for the current boundaries.
+The [Governance Sandbox](docs/2026-07-20-design-direction-governance-sandbox.md),
+[Testing Stance](docs/2026-07-20-testing-stance-correction.md), and
+[Engine Invariant Registry](docs/2026-07-20-engine-invariant-registry.md) define
+the broader direction and active evidence policy. Git history, not compatibility
+code or an archive, retains the removed prototype.
 
 ## Development setup
 
@@ -29,9 +33,14 @@ On macOS, run:
 
 See [setup/README.md](setup/README.md) for prerequisites and details.
 
-## Validation during migration
+## Validation
 
-The supported repository gates cover retained code and contracts only:
+The current acceptance surface is buildability plus 15 focused deterministic
+tests. They cover stable IDs, checked Energy arithmetic, normalized world
+instantiation and permutations, neutral frontier locations, valid empty or
+disconnected topology, invalid definition/topology rejection, exact resource
+reconciliation and atomic transfer rejection, and strict source-aware content
+compilation diagnostics.
 
 ```bash
 cargo fmt --all -- --check
@@ -40,5 +49,5 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-Do not restore deleted gameplay commands, authored-world acceptance, diagnostics,
-or broad tests merely to make the legacy prototype runnable.
+Do not reintroduce gameplay commands, a frontend shell, authored-world
+acceptance, or production content merely to make the former prototype runnable.

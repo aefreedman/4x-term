@@ -18,8 +18,14 @@ both durable contracts and obsolete product assumptions.
 
 At the time of this Stage 1 record, the executable remained unchanged. The
 current implementation status is maintained in the
-[Testing Stance and Constructive Worldgen transition](2026-07-20-testing-stance-correction.md);
-these decisions do not claim that the destination model already exists.
+[Testing Stance and Constructive Worldgen transition](2026-07-20-testing-stance-correction.md).
+Stage 3 subsequently completed on 2026-07-20; the original decisions below are
+preserved as historical authority rather than rewritten as if their destination
+already existed during Stage 1.
+
+All file/line citations and pre-cutover type or test names in the inventory are
+historical evidence from the Stage 1 repository snapshot. They are not current
+implementation pointers after the Stage 3 replacement.
 
 ## Classification rules
 
@@ -38,6 +44,18 @@ boundaries, Stage 3 separates geography from living actors, Stage 4 owns
 constructive generation, Stage 5 restores startup/player identity, Stage 6
 owns generated-world invariant/replay tooling, and Stage 7 verifies that
 Stages 2–3 completed retirement.
+
+## Implementation status after Stage 3
+
+Stage 3 completed the destructive substrate cutover on 2026-07-20. The current
+workspace contains only `game-core` and `game-content`; its 15 focused tests
+(nine core and six content) have no ignored tests. The runtime now represents
+stable resources and locations, exactly one living origin community, physical
+stocks and deposits, reclaimable sites, and explicit topology without markets.
+The app, TUI, CLI, production authored content, trader/fleet ecology, pricing,
+wallets, commercial contracts, and legacy acceptance surface are absent.
+Stages 4–8 remain future work, so this boundary is intentionally headless and
+non-playable.
 
 ## Migration inventory
 
@@ -135,7 +153,10 @@ Stages 2–3 completed retirement.
 | `archive/market-trading-prototype/` and `archive/README.md` | Duplicates former plans, specs, evidence, and captures in the working tree. | **Remove.** Git history is sufficient for archaeology; a migration archive creates another surface to curate. | 2–3 | Do not quarantine deleted implementation/content/docs. Remove legacy archive material after current links no longer depend on it. |
 | Contributor and architecture guidance — `AGENTS.md`, `docs/architecture.md` | Previously lacked the complete generated-world failure policy. | **Keep.** These are the durable entry points for preventing accidental authored-world tuning. | 1 onward | Review later plans against both documents. Generator range changes and new invariants require explicit, reviewed contracts. |
 
-## Stage 2 test-development backlog
+## Stage 2 test-development backlog (historical)
+
+This backlog records the Stage 1 handoff to Stage 2; it is not a current todo
+list after Stages 2–3 completion.
 
 Stage 1 changes no tests. Stage 2 should use the inventory above to identify
 focused retained evidence before deleting obsolete modules. This is not a
@@ -197,10 +218,12 @@ This audit deliberately performs no destination implementation:
 - **Stage 2:** Which current focused tests are genuinely non-vacuous named
   invariants, and what canonical names, exact oracles, and applicability rules
   belong in the invariant registry?
-- **Stage 3:** What is the minimum geography/community substrate that represents
-  dead locations, one living origin, extractable resources, and minimally typed
-  reclaimable sites without prematurely designing bodies, slots, ruin internals,
-  surveys, or information layers?
+- **Stage 3 (closed 2026-07-20):** The minimum substrate is stable resources and
+  finite locations; exactly one origin community with nonzero population and
+  physical stocks; separately referenced nonzero deposits and minimally typed
+  reclaimable sites; and explicit normalized topology that permits empty or
+  disconnected graphs. Bodies, slots, site internals, surveys, information
+  layers, and generation guarantees remain deferred.
 - **Stage 4:** What map connectivity rule, origin surplus margin, starting
   range, extractable-resource floor, and reclaimable-site placement make both
   G18 guarantees exact and constructive?
@@ -229,6 +252,9 @@ acting because line numbers and coupling can change after this audit date.
 
 ## Stage 2 completion evidence
 
+This section is historical Stage 2 evidence. Paths and test names that Stage 3
+later deleted are not current registry evidence.
+
 - Active and reserved contracts:
   [Engine Invariant Registry](2026-07-20-engine-invariant-registry.md)
 - Direct Tier 1 content fixtures and retained provenance checks:
@@ -243,3 +269,34 @@ acting because line numbers and coupling can change after this audit date.
   staged-migration record.
 - Validation: formatting, workspace check, Clippy with warnings denied, and 201
   retained tests passed with zero ignored tests.
+
+## Stage 3 completion evidence
+
+- Accepted implementation plan:
+  `docs/plans/2026-07-20-feature-origin-frontier-substrate-stage-3-plan.md`.
+- Retained workspace: `game-core` and `game-content` only. `game-app`,
+  `game-tui`, `game-cli`, and production `content/` are absent; no compatibility
+  shells or translated authored market universe remain.
+- Core substrate: `crates/game-core/src/lib.rs` defines stable resources and
+  locations, one origin community, physical stores/deposits, reclaimable sites,
+  explicit topology, normalized snapshots, checked Energy arithmetic, and
+  atomic resource transfer accounting.
+- Content substrate: `crates/game-content/src/lib.rs` compiles one source-aware
+  Stage 3 RON world and aggregates deterministic diagnostics before returning a
+  definition. Its fixtures are test-only Tier 1 worlds.
+- Current exact registry evidence includes
+  `input_permutations_produce_equal_snapshots`, `normalizes_permuted_input`,
+  `energy_transfer_reconciles_exactly`,
+  `resource_transfer_rejections_are_atomic_on_every_path`,
+  `energy_arithmetic_is_checked`,
+  `content_id_validation_and_display_are_stable`,
+  `compiles_a_dead_isolated_location_and_instantiates_world_state`,
+  `aggregates_exact_source_aware_diagnostics`,
+  `parse_errors_include_document_provenance`,
+  `unknown_fields_are_rejected_in_top_level_and_nested_sources`, and
+  `location_diagnostics_are_complete_and_permutation_independent`. No legacy
+  market/trader test is current evidence, and automated logistics is reserved
+  because no such domain exists.
+- Validation on 2026-07-20: `cargo test --workspace --all-features -- --list`
+  resolved nine `game-core` and six `game-content` tests (15 total), zero doc
+  tests, and no ignored test attributes in the retained crates.

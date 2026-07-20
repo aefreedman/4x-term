@@ -4,17 +4,38 @@
 
 ### Added
 
-- A reviewed engine-invariant registry with exact oracles, applicability rules, non-vacuity witnesses, and focused test evidence.
+- Stage 3's headless origin-and-frontier substrate: resources, neutral
+  locations, exactly one living origin community with physical stocks, resource
+  deposits, reclaimable sites, and explicit topology.
+- Deterministic `WorldState` snapshots, normalized topology and input ordering,
+  and checked physical-resource transfer/reconciliation evidence.
+- One-source strict RON world compilation with deterministic, source-aware
+  aggregated diagnostics and focused Tier 1 fixtures.
+- A reviewed engine-invariant registry with exact oracles, applicability rules,
+  non-vacuity witnesses, and focused test evidence.
 
 ### Changed
 
-- Content compilation accepts small equal-distance fixtures, fixed zero-NPC fleets, and non-numeraire Energy costs while retaining source-aware structural validation.
-- Migration CI now gates formatting, compilation, linting, and retained workspace tests instead of legacy product acceptance.
+- The workspace now contains only `game-core` and `game-content`; the retained
+  acceptance surface is headless buildability and 15 focused deterministic
+  tests.
+- Topology is explicit and may be empty or disconnected; locations do not gain
+  living state from deposits, sites, or topology.
+- Content compilation validates one schema-specific source instead of a fixed
+  repository bundle.
+- Migration CI gates formatting, compilation, linting, and retained workspace
+  tests instead of legacy product acceptance.
 
 ### Removed
 
-- Authored-world cardinality, ecology-role, bootstrap-solvency, liquidation-adequacy, fleet-route, and repository-activity quality gates.
-- Legacy economy diagnostics, pricing comparison, player-impact, metastability, content-validation, and authored headless CLI modes and tests.
+- The playable app, CLI, and terminal UI boundaries, along with their terminal
+  and async dependency chain.
+- Production authored market content and its fixed repository loader.
+- Markets, pricing, wallets, commercial reservations and Energy contracts,
+  player/NPC traders, fleets, market-per-location state, and related gameplay
+  acceptance and diagnostics.
+- Authored-world cardinality, ecology-role, bootstrap-solvency,
+  liquidation-adequacy, fleet-route, and repository-activity quality gates.
 
 ## 0.7.1 - 2026-07-20
 

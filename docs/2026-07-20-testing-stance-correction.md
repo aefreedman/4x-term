@@ -4,7 +4,7 @@
 
 This is a high-level transition direction, not a single implementation
 plan. It corrects how the simulation is tested and describes the staged
-move from the current authored market-trading prototype toward the strategy
+move from the former authored market-trading prototype toward the strategy
 and map-expansion game defined by the
 [Governance Sandbox design direction](2026-07-20-design-direction-governance-sandbox.md),
 especially G2 and G16–G22.
@@ -15,9 +15,15 @@ at that time and supply their own exact contracts, migration inventories,
 and acceptance commands rather than treating this document as an
 executable specification.
 
+**Current migration boundary (2026-07-20):** Stages 1–3 are complete. The
+workspace retains only the headless `game-core` substrate and the
+schema-specific `game-content` compiler. It has 15 focused tests and no ignored
+tests; the app, TUI, CLI, and production authored content are absent. Stages 4–8
+remain future work, and playability is intentionally not restored yet.
+
 ## The problem being corrected
 
-The current test universe (the authored ~20-system world) serves as both
+The pre-cutover test universe (the authored ~20-system world) served as both
 *fixture* and *benchmark*. This invites a failure mode: treating every
 local wobble in that specific universe as a defect, and tuning simulation
 constants until that one map behaves placidly.
@@ -34,9 +40,9 @@ irrelevant everywhere else** (G18). The world starts dead except for the
 player's origin community (G17); there is no NPC market network whose
 health needs guaranteeing.
 
-## Relationship to the current implementation
+## Relationship to the pre-cutover implementation
 
-The existing game and codebase are inputs to a migration, not constraints
+The pre-cutover game and codebase were inputs to a migration, not constraints
 on the destination. The authored 20-system market network, independent NPC
 traders, trader-first player flow, market-per-system model, diagnostics,
 and acceptance gates may be incompatible with the governance sandbox. A
@@ -148,8 +154,8 @@ replacement or copied into a working-tree archive; Git history preserves them.
 
 **Status:** recorded on 2026-07-20 in the
 [authored market-world migration audit](2026-07-20-authored-market-world-migration-audit.md).
-This records migration decisions only. Stage 2 is complete below; Stages 3–8
-remain future work.
+This records migration decisions only. Stages 2 and 3 are complete below;
+Stages 4–8 remain future work.
 
 - Add the testing stance and norms to `AGENTS.md` and architecture notes.
 - Mark obsolete product assumptions clearly, including trader-first play,
@@ -170,9 +176,10 @@ prematurely redesigning the world model.
 registry and direct three-location source fixtures, removed authored-world
 quality predicates and repository acceptance, deleted legacy diagnostic and
 acceptance CLI modes, reduced CI to retained workspace gates, and removed
-working-tree prototype archives and completed prototype todos. The workspace
-passes formatting, check, Clippy with warnings denied, and all 201 retained
-tests with no ignored tests; playability is intentionally not acceptance.
+working-tree prototype archives and completed prototype todos. At the Stage 2
+boundary, the workspace passed formatting, check, Clippy with warnings denied,
+and all 201 then-retained tests with no ignored tests; playability was
+intentionally not acceptance.
 
 The reviewed [Engine Invariant Registry](2026-07-20-engine-invariant-registry.md)
 records each active contract's exact oracle, applicability rule, non-vacuity
@@ -196,6 +203,15 @@ This stage protects only retained foundations. It deliberately permits a
 buildable but non-playable repository while the destination model is absent.
 
 ### Stage 3 — Remove the obsolete product surface and introduce the substrate
+
+**Status:** completed on 2026-07-20. Stage 3 replaced the trader/market model
+with a deterministic headless substrate for stable resources and locations, one
+living origin community, deposits, reclaimable sites, and explicit topology.
+The retained `game-core` and `game-content` workspace has nine core tests and
+six content tests (15 total), with no ignored tests. Production authored
+content and the app, TUI, and CLI crates were removed rather than preserved as
+compatibility shells. Current contract evidence is recorded in the
+[Engine Invariant Registry](2026-07-20-engine-invariant-registry.md).
 
 - Delete trader-first identity, independent NPC fleet ecology, pricing,
   wallets, commercial market behavior, authored market startup/content, and
