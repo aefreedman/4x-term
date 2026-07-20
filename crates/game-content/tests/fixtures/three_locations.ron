@@ -1,0 +1,22 @@
+(
+    resources: [
+        (id: "core:energy", name: "Energy"),
+        (id: "core:water", name: "Water"),
+    ],
+    locations: [
+        (id: "core:origin", name: "Origin", position: (x: 0.0, y: 0.0, z: 0.0)),
+        (id: "frontier:site", name: "Site", position: (x: 3.0, y: 4.0, z: 0.0)),
+        (id: "frontier:isolated", name: "Isolated", position: (x: 12.0, y: 0.0, z: 0.0)),
+    ],
+    origin: (
+        id: "core:community",
+        location: "core:origin",
+        population: 12,
+        stocks: [(resource: "core:energy", quantity: 8)],
+    ),
+    deposits: [
+        (id: "frontier:water", location: "frontier:site", resource: "core:water", quantity: 5),
+    ],
+    sites: [(id: "frontier:ruin", location: "frontier:site")],
+    topology: (edges: [(from: "core:origin", to: "frontier:site")]),
+)
