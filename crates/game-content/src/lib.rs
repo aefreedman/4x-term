@@ -48,6 +48,7 @@ impl ContentErrors {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WorldSource {
     resources: Vec<ResourceSource>,
     locations: Vec<LocationSource>,
@@ -61,12 +62,14 @@ struct WorldSource {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ResourceSource {
     id: String,
     name: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LocationSource {
     id: String,
     name: String,
@@ -74,6 +77,7 @@ struct LocationSource {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PositionSource {
     x: f64,
     y: f64,
@@ -81,6 +85,7 @@ struct PositionSource {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OriginSource {
     id: String,
     location: String,
@@ -90,12 +95,14 @@ struct OriginSource {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ResourceAmountSource {
     resource: String,
     quantity: u64,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DepositSource {
     id: String,
     location: String,
@@ -104,18 +111,21 @@ struct DepositSource {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SiteSource {
     id: String,
     location: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TopologySource {
     #[serde(default)]
     edges: Vec<EdgeSource>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EdgeSource {
     from: String,
     to: String,
@@ -190,19 +200,7 @@ fn compile_world(
     let mut locations = BTreeMap::new();
     for (index, item) in source.locations.into_iter().enumerate() {
         let definition = definition_name("locations", index, &item.id);
-        let Some(id) = parse_id(&source_name, &definition, "id", &item.id, &mut diagnostics) else {
-            continue;
-        };
-        if locations.contains_key(&id) {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition,
-                "id",
-                format!("duplicate id {id}"),
-            );
-            continue;
-        }
+        let id = parse_id(&source_name, &definition, "id", &item.id, &mut diagnostics);
         let position = Position3 {
             x: item.position.x,
             y: item.position.y,
@@ -216,6 +214,19 @@ fn compile_world(
                 "position",
                 "coordinates must be finite",
             );
+        }
+        let Some(id) = id else {
+            continue;
+        };
+        if locations.contains_key(&id) {
+            push(
+                &mut diagnostics,
+                &source_name,
+                definition,
+                "id",
+                format!("duplicate id {id}"),
+            );
+            continue;
         }
         locations.insert(
             id.clone(),
@@ -592,6 +603,93 @@ mod tests {
         assert_eq!(errors.diagnostics()[0].source, "broken.ron");
         assert_eq!(errors.diagnostics()[0].definition, "document");
         assert_eq!(errors.diagnostics()[0].field, "parse");
+    }
+
+    #[test]
+    fn unknown_fields_are_rejected_in_top_level_and_nested_sources() {
+        let top_level = VALID.replacen("resources:", "depostis: [], resources:", 1);
+        let nested = VALID.replacen("population: 12,", "population: 12, stock: [],", 1);
+
+        for (source, text, unknown) in [
+            ("top_level.ron", top_level, "depostis"),
+            ("nested.ron", nested, "stock"),
+        ] {
+            let errors = compile_str(source, &text).expect_err("unknown field must be rejected");
+            assert_eq!(errors.diagnostics()[0].source, source);
+            assert_eq!(errors.diagnostics()[0].definition, "document");
+            assert_eq!(errors.diagnostics()[0].field, "parse");
+            assert!(errors.diagnostics()[0].message.contains(unknown));
+        }
+    }
+
+    #[test]
+    fn location_diagnostics_are_complete_and_permutation_independent() {
+        fn invalid_locations(first_is_nonfinite: bool) -> String {
+            let finite =
+                r#"(id: "core:origin", name: "Finite", position: (x: 0.0, y: 0.0, z: 0.0))"#;
+            let nonfinite =
+                r#"(id: "core:origin", name: "Invalid", position: (x: NaN, y: 0.0, z: 0.0))"#;
+            let locations = if first_is_nonfinite {
+                format!("{nonfinite}, {finite}")
+            } else {
+                format!("{finite}, {nonfinite}")
+            };
+            format!(
+                r#"(
+                    resources: [],
+                    locations: [{locations}],
+                    origin: (id: "core:community", location: "core:origin", population: 1),
+                )"#
+            )
+        }
+
+        let diagnostics = |source: &str| {
+            compile_str("locations.ron", source)
+                .expect_err("duplicate non-finite locations must fail")
+                .diagnostics()
+                .iter()
+                .map(|diagnostic| {
+                    (
+                        diagnostic.definition.clone(),
+                        diagnostic.field.clone(),
+                        diagnostic.message.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let first = diagnostics(&invalid_locations(true));
+        let second = diagnostics(&invalid_locations(false));
+        assert_eq!(first, second);
+        assert_eq!(
+            first,
+            vec![
+                (
+                    "locations:core:origin".into(),
+                    "id".into(),
+                    "duplicate id core:origin".into(),
+                ),
+                (
+                    "locations:core:origin".into(),
+                    "position".into(),
+                    "coordinates must be finite".into(),
+                ),
+            ]
+        );
+
+        let malformed = invalid_locations(true).replace("core:origin", "BAD ID");
+        let malformed_diagnostics = diagnostics(&malformed);
+        assert!(
+            malformed_diagnostics
+                .iter()
+                .any(|(_, field, message)| field == "id" && message.contains("invalid content id"))
+        );
+        assert!(
+            malformed_diagnostics
+                .iter()
+                .any(|(_, field, message)| field == "position"
+                    && message == "coordinates must be finite")
+        );
     }
 
     #[test]

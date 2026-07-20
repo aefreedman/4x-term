@@ -248,7 +248,7 @@ pub struct TopologyEdgeSnapshot {
     pub distance: f64,
 }
 
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Topology {
     pub edges: Vec<TopologyEdgeSnapshot>,
     adjacency: BTreeMap<ContentId, Vec<(ContentId, f64)>>,
@@ -356,8 +356,6 @@ impl WorldState {
             OriginMarker,
             definition.origin.stocks.clone(),
         ));
-        world.insert_resource(definition.topology.clone());
-
         Ok(Self {
             world,
             resources: definition.resources,
@@ -1088,10 +1086,10 @@ mod tests {
     }
 
     #[test]
-    fn resource_transfer_succeeds_and_conserves_total() {
-        let resource = id("core:ore");
-        let mut source = store(&[("core:ore", 9)]);
-        let mut destination = store(&[("core:ore", 4)]);
+    fn energy_transfer_reconciles_exactly() {
+        let resource = id(ENERGY_ID);
+        let mut source = store(&[(ENERGY_ID, 9)]);
+        let mut destination = store(&[(ENERGY_ID, 4)]);
         let mut ledger = ResourceFlowLedger::default();
         let before =
             u128::from(source.quantity(&resource)) + u128::from(destination.quantity(&resource));
