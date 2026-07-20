@@ -371,10 +371,10 @@ Validation:
       todos/plans (for example checked physical Energy accounting) into the
       invariant registry or current direction docs, then delete those completed
       artifacts rather than retaining them as working-tree history.
-- [x] Remove `archive/market-trading-prototype/`, `archive/README.md`, the
-      completed Stage 1 implementation plan, and obsolete/completed prototype
-      todos after repairing current links; do not copy newly removed files
-      anywhere in the working tree.
+- [x] Remove `archive/market-trading-prototype/`, `archive/README.md`, and
+      obsolete/completed prototype todos after repairing current links; retain
+      the Stage 1 plan as part of the active staged-migration record and do not
+      copy newly removed implementation history anywhere in the working tree.
 - [x] Update `CHANGELOG.md` under `Unreleased` for the removed legacy diagnostic
       mode and corrected test boundary.
 - [x] Mark Stage 2 complete in

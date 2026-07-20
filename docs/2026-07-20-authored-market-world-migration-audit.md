@@ -239,6 +239,7 @@ acting because line numbers and coupling can change after this audit date.
 - Retained CI boundary: `.github/workflows/ci.yml`
 - Removed surfaces: repository acceptance and ignored soaks, legacy CLI
   diagnostics/acceptance, authored-world quality predicates, prototype archive,
-  completed prototype todos, and the completed Stage 1 implementation plan.
+  and completed prototype todos. The Stage 1 plan remains part of the active
+  staged-migration record.
 - Validation: formatting, workspace check, Clippy with warnings denied, and 201
   retained tests passed with zero ignored tests.
