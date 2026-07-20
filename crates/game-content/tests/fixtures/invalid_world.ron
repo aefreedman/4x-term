@@ -1,0 +1,29 @@
+(
+    resources: [
+        (id: "BAD ID", name: "Malformed"),
+        (id: "core:water", name: "Water"),
+        (id: "core:water", name: "Duplicate water"),
+    ],
+    locations: [
+        (id: "core:origin", name: "Origin", position: (x: NaN, y: 0.0, z: 0.0)),
+        (id: "core:outpost", name: "Outpost", position: (x: 1.0, y: 0.0, z: 0.0)),
+    ],
+    origin: (
+        id: "core:community",
+        location: "frontier:missing",
+        population: 0,
+        stocks: [(resource: "frontier:missing", quantity: 1)],
+    ),
+    deposits: [
+        (id: "frontier:ore", location: "frontier:missing", resource: "frontier:missing", quantity: 0),
+    ],
+    sites: [(id: "frontier:ruin", location: "frontier:missing")],
+    topology: (
+        edges: [
+            (from: "core:origin", to: "core:origin"),
+            (from: "core:origin", to: "frontier:missing"),
+            (from: "core:origin", to: "core:outpost"),
+            (from: "core:outpost", to: "core:origin"),
+        ],
+    ),
+)
