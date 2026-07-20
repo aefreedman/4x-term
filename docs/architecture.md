@@ -116,7 +116,10 @@ Stage 5 may introduce a new application/session, CLI, and terminal rendering
 adapter around the headless core. If added, those are future adapters: terminal
 input and rendering must remain outside `game-core`, and they must not expose
 unrestricted ECS mutation. They are not present or implied by the current
-workspace.
+workspace. The retained
+[Frontend Architecture Lessons](2026-07-20-frontend-architecture-lessons.md)
+record useful prototype patterns and removed dependencies for consideration,
+not compatibility requirements.
 
 Later work may add persistence, actions, extraction and reclamation, community
 dynamics, and player-owned logistics only when their concrete contracts exist.

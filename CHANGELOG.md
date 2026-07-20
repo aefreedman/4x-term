@@ -13,6 +13,8 @@
   aggregated diagnostics and focused Tier 1 fixtures.
 - A reviewed engine-invariant registry with exact oracles, applicability rules,
   non-vacuity witnesses, and focused test evidence.
+- Retained frontend architecture, terminal UX, testing, and removed-dependency
+  lessons for the future Stage 5 playable-surface rebuild.
 
 ### Changed
 
