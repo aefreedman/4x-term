@@ -4,6 +4,13 @@ A data-driven 4X terminal game written in Rust.
 
 The planned architecture keeps the headless ECS simulation independent from terminal rendering so other frontends remain possible. See [docs/architecture.md](docs/architecture.md) for the current design.
 
+> **Transition status:** The runnable build described below is the legacy authored
+> market-trading prototype. It remains operational while the project migrates,
+> but its trader-first flow, independent NPC ecology, and metastability targets
+> are not current product or compatibility requirements. Current direction is
+> defined by the [Governance Sandbox](docs/2026-07-20-design-direction-governance-sandbox.md)
+> and [Testing Stance and Constructive Worldgen](docs/2026-07-20-testing-stance-correction.md).
+
 ## Development setup
 
 On macOS, run:
@@ -50,19 +57,21 @@ Runtime content is stored under `content/`.
 
 The dynamic production fleet begins with nine evenly spaced NPC traders and adapts slowly to persistent normalized unserved profitable opportunity.
 
-## Economy diagnostics
+## Legacy economy diagnostics
+
+These commands inspect the runnable market prototype. Their world-health, fleet-activity, player-impact, and metastability thresholds are historical diagnostics, not current product acceptance policy; exact reconciliation remains useful evidence independently of those thresholds.
 
 Run `cargo run -p game-cli -- --economy-diagnostics 500` to inspect 50-tick and final per-system net flow, storage, brownout history, seasonal phase/output, network stage percentages, cycle amplitudes, fleet size/backlog/persistence/spawn/retirement state, physical-energy reconciliation, NPC cargo/travel/profitability state, Energy offers/requests, contract outcomes, timeout/recovery, starvation causes, and per-archetype activity.
 
-An identical-session `--player-impact` probe remains available as a controlled diagnostic when a specifically tuned bounded external-delivery intervention is needed; it is not a routine player logistics command. The probe requires a stage or population divergence within its horizon and reconciles intervention inflow separately. The fast controlled unit fixture is the routine gate; repository-scale probe parameters must be chosen from the current diagnostics rather than copied from historical tuning.
+An identical-session `--player-impact` probe remains available as a controlled legacy diagnostic when a specifically tuned bounded external-delivery intervention is needed; it is not a routine player logistics command or a current quality gate. The probe requires a stage or population divergence within its horizon and reconciles intervention inflow separately. The fast controlled unit fixture exercises the mechanism; repository-scale probe parameters must be chosen from current diagnostics rather than copied from historical tuning.
 
-The 10,000-tick population/metastability harness is an explicit acceptance run, not a routine test/CI path:
+The 10,000-tick population/metastability harness is an explicit legacy diagnostic run, not a routine test/CI path or current acceptance gate:
 
 ```bash
 cargo run -p game-cli --release -- --economy-diagnostics 10000
 ```
 
-The 1,000- and 10,000-tick commands are explicit long acceptance runs, not routine/default tests; their presence here does not claim they were run. The 1,000-tick content acceptance is ignored by default. Run it explicitly with:
+The 1,000- and 10,000-tick commands are explicit long legacy runs, not routine/default tests; their presence here does not claim they were run or make their authored-world thresholds current requirements. The 1,000-tick content acceptance is ignored by default. Run it explicitly with:
 
 ```bash
 cargo test -p game-content tests::repository_energy_economy_remains_active_and_deterministic_for_1000_ticks -- --ignored --exact

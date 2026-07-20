@@ -6,15 +6,15 @@ issue_id: 007
 tags: [economy, worldbuilding, population, npc-traders, player, simulation, design]
 dependencies: [006]
 superseded_by:
-  - docs/design-direction-governance-sandbox.md
-  - docs/plans/2026-07-20-testing-stance-correction.md
+  - docs/2026-07-20-design-direction-governance-sandbox.md
+  - docs/2026-07-20-testing-stance-correction.md
 ---
 # Slice 2: World Dynamics, Population, and Player Progression
 
 > **Obsolete:** Closed without further implementation. Its NPC market-network,
 > trader-first progression, and metastability premises conflict with G17,
 > G19, and G21 of the current
-> [Governance Sandbox direction](../docs/design-direction-governance-sandbox.md).
+> [Governance Sandbox direction](../docs/2026-07-20-design-direction-governance-sandbox.md).
 > Brownout, seasons, and population ideas may return only when re-derived for
 > the governance-and-expansion game.
 
