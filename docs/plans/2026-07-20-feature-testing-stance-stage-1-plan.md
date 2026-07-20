@@ -5,6 +5,12 @@ date: 2026-07-20
 ---
 # Testing Stance Correction — Stage 1 Governance and Migration Audit
 
+> **Completion context:** This plan remains part of the active staged-migration
+> record. References below to the prototype archive and completed prototype todos
+> describe the working tree when Stage 1 was completed; Stage 2 later removed
+> those artifacts in favor of Git history. They are not current retention
+> requirements.
+
 ## Overview
 
 Record the corrected two-tier testing stance in the repository’s contributor and architecture guidance, clearly label the authored market-trading game as a migration input rather than the product target, and create an evidence-backed migration audit. The audit will classify affected content, startup, runtime/data-model, frontend, tests, diagnostics, and CI responsibilities as **keep**, **reshape**, **replace**, or **remove**.

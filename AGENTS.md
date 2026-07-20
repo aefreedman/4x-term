@@ -23,4 +23,4 @@
 - Treat generator parameter ranges as reviewed design decisions. Flag range changes for design review and version the generator when reproducibility requires it.
 - When a generated-world failure occurs, reproduce and retain the failure class as a Tier 1 fixture where possible before fixing it.
 
-The current trader-first authored market network is a full replacement target, not a compatibility contract. Preserve historical evidence in `archive/`, but do not add compatibility layers solely to retain obsolete gameplay.
+The current trader-first authored market network is a full replacement target, not a compatibility contract. During the migration, the workspace must remain buildable around retained contracts but need not remain playable. Delete obsolete code, content, tests, diagnostics, and docs instead of preserving compatibility or copying them into an archive; Git history is the recovery path.

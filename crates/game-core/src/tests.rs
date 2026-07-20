@@ -30,7 +30,11 @@ fn assert_physical_delta_reconciles(before: &CoreSnapshot, after: &CoreSnapshot)
     let physical_delta = physical_energy(after) - physical_energy(before);
     let flow_delta = i128::from(after.energy_flow.net_external_delta().0)
         - i128::from(before.energy_flow.net_external_delta().0);
-    assert_eq!(physical_delta, flow_delta);
+    assert_eq!(
+        physical_delta, flow_delta,
+        "physical Energy reconciliation failed: before_flow={:?} after_flow={:?}",
+        before.energy_flow, after.energy_flow
+    );
 }
 
 fn definition() -> GameDefinition {
@@ -116,6 +120,20 @@ fn definition() -> GameDefinition {
         economy: EconomyConfig::default(),
     }
 }
+
+#[test]
+fn canonical_energy_good_accepts_non_numeraire_bootstrap_cost() {
+    let mut configured = definition();
+    configured
+        .goods
+        .iter_mut()
+        .find(|good| good.id.as_str() == ENERGY_ID)
+        .unwrap()
+        .bootstrap_cost = Energy(2);
+
+    GameSession::new(configured).expect("physical Energy identity must not require price parity");
+}
+
 fn local_energy_contract_definition() -> GameDefinition {
     let mut definition = definition();
     let energy = id(ENERGY_ID);
@@ -167,6 +185,20 @@ fn three_loaded_energy_contract_session(permutation: [&str; 3]) -> GameSession {
     }
     session.resolve_pending_energy_contract_intents().unwrap();
     assert_eq!(session.world.resource::<EnergyContracts>().active.len(), 3);
+    let loaded = session.snapshot();
+    assert_eq!(
+        loaded
+            .traders
+            .iter()
+            .filter(|trader| trader.id.as_str().starts_with("core:ai_"))
+            .filter(|trader| trader
+                .bulk_energy
+                .locked
+                .is_some_and(|lot| lot.amount > Energy::ZERO))
+            .count(),
+        3,
+        "conditional ordering evidence requires three nonzero locked lots"
+    );
     session
 }
 
@@ -3631,32 +3663,16 @@ fn reservation_contention_is_stable_and_partial_settlement_releases_claim() {
 }
 #[test]
 fn energy_flow_reconciles_external_delta() {
-    let mut s = GameSession::new(definition()).unwrap();
-    let before = s.snapshot();
-    let total_before: i64 = before.markets.iter().map(|m| m.energy_stock.0).sum::<i64>()
-        + before
-            .traders
-            .iter()
-            .map(|t| {
-                t.energy_tank.0
-                    + i64::try_from(t.cargo.get(&id(ENERGY_ID)).copied().unwrap_or(0)).unwrap()
-            })
-            .sum::<i64>();
-    s.step().unwrap();
-    let after = s.snapshot();
-    let total_after: i64 = after.markets.iter().map(|m| m.energy_stock.0).sum::<i64>()
-        + after
-            .traders
-            .iter()
-            .map(|t| {
-                t.energy_tank.0
-                    + i64::try_from(t.cargo.get(&id(ENERGY_ID)).copied().unwrap_or(0)).unwrap()
-            })
-            .sum::<i64>();
-    assert_eq!(
-        total_after - total_before,
-        i64::try_from(i128::from(after.energy_flow.net_external_delta().0)).unwrap()
+    let mut session = GameSession::new(definition()).unwrap();
+    let before = session.snapshot();
+    session.step().unwrap();
+    let after = session.snapshot();
+    assert_ne!(
+        after.energy_flow.net_external_delta(),
+        before.energy_flow.net_external_delta(),
+        "reconciliation evidence requires nonzero physical flow"
     );
+    assert_physical_delta_reconciles(&before, &after);
 }
 
 #[test]

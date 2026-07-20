@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- A reviewed engine-invariant registry with exact oracles, applicability rules, non-vacuity witnesses, and focused test evidence.
+
+### Changed
+
+- Content compilation accepts small equal-distance fixtures, fixed zero-NPC fleets, and non-numeraire Energy costs while retaining source-aware structural validation.
+- Migration CI now gates formatting, compilation, linting, and retained workspace tests instead of legacy product acceptance.
+
+### Removed
+
+- Authored-world cardinality, ecology-role, bootstrap-solvency, liquidation-adequacy, fleet-route, and repository-activity quality gates.
+- Legacy economy diagnostics, pricing comparison, player-impact, metastability, content-validation, and authored headless CLI modes and tests.
+
 ## 0.7.1 - 2026-07-20
 
 ### Changed

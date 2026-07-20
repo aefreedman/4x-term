@@ -117,7 +117,7 @@ pub struct GoodDefinition {
     pub id: ContentId,
     pub name: String,
     pub category: GoodCategory,
-    /// Initial embodied-energy cost per unit. `core:energy` must be exactly one.
+    /// Initial embodied-Energy cost per unit; not a market-price or numeraire contract.
     pub bootstrap_cost: Energy,
 }
 
@@ -2767,7 +2767,7 @@ impl GameSession {
             .iter()
             .find(|g| g.id == energy_id)
             .ok_or(CoreError::InvalidEnergyGood)?;
-        if energy_good.category != GoodCategory::Energy || energy_good.bootstrap_cost != Energy(1) {
+        if energy_good.category != GoodCategory::Energy {
             return Err(CoreError::InvalidEnergyGood);
         }
         definition

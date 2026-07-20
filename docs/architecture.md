@@ -190,9 +190,9 @@ behavior. These are architectural contracts; the prototype's particular
 markets, prices, traders, reservations, and NPC lifecycle are not.
 
 Three-dimensional map coordinates and derived Euclidean distances use
-finite `f64` values in prototype distance units. The former market-trading
-implementation is retained only as
-[archived historical documentation](../archive/market-trading-prototype/docs/energy-economy.md).
+finite `f64` values in prototype distance units. Historical market-trading
+implementation and design material remain recoverable through Git history and
+are not retained as a working-tree compatibility or archive surface.
 
 ## Application boundary
 
@@ -303,9 +303,13 @@ Perfect cross-platform determinism is not an initial requirement, but replayable
 - Use `tracing` instead of writing diagnostics into the TUI directly.
 - The executable chooses whether traces go to a file, stderr, or another subscriber.
 
+## Migration build policy
+
+During the governance-sandbox migration, repository coherence means that retained crates and contracts compile, focused retained tests pass, and current documentation is truthful. It does **not** mean that the legacy game remains playable, that old startup/content/CI acceptance keeps working, or that obsolete tests receive one-for-one replacements. Delete obsolete surfaces instead of adapting them or copying them into `archive/`; Git history is the recovery mechanism. A truthful playable executable returns only when the origin-and-frontier startup slice owns it.
+
 ## Testing strategy
 
-Testing has two deterministic tiers. It does not treat the authored 20-system market world as a global-stability benchmark.
+Testing has two deterministic tiers. It does not treat the authored 20-system market world as a global-stability benchmark. The reviewed source of truth for active, conditional, and reserved engine contracts is the [Engine Invariant Registry](2026-07-20-engine-invariant-registry.md); changing an invariant requires updating its exact oracle, applicability rule, non-vacuity witness, and focused evidence there.
 
 ### Tier 1: authored micro-fixtures
 
@@ -327,7 +331,7 @@ Local collapse and unusual frontier outcomes are expected texture unless they vi
 ### Core tests
 
 - Preserve deterministic scheduling, checked physical-resource accounting, exact reconciliation, stable identifiers, and validate-before-mutate where applicable.
-- Markets, pricing, independent traders, NPC fleet ecology, universal market populations, commercial contracts, and metastability are prototype responsibilities, not architecture contracts. Any successor must be justified by an accepted governance-and-expansion requirement; current code remains only until its staged cutover or retirement.
+- Markets, pricing, independent traders, NPC fleet ecology, universal market populations, commercial contracts, and metastability are prototype responsibilities, not architecture contracts. Remove them as soon as they obstruct migration; do not wait for a playable successor or preserve them merely to keep old acceptance green.
 
 ### Content tests
 
@@ -403,12 +407,21 @@ A separate server process should only be introduced for a concrete requirement s
 
 ## Architectural acceptance criteria
 
-The architecture is functioning as intended when:
+During migration Stages 2–4, only retained architectural contracts apply:
 
-- The simulation test suite runs without initializing a terminal.
+- Retained simulation tests run without initializing a terminal.
+- No retained core crate imports `ratatui` or `crossterm`.
+- Stable references do not rely on runtime ECS entity IDs.
+- Retained simulation rules remain frontend-independent.
+
+Normal startup, a CLI headless runner, repository-content validation, TUI
+composition, and save compatibility may be absent. After Stage 5 restores a
+truthful executable, steady-state acceptance additionally requires:
+
 - A command-line headless runner can drive the same simulation as the TUI.
-- No core crate imports `ratatui` or `crossterm`.
 - The TUI cannot directly mutate ECS components.
-- Repository content can be validated without starting the game.
-- Save loading reconstructs references without relying on prior runtime entity IDs.
+- Current content or generation parameters can be validated without starting
+  the game.
+- Supported save loading reconstructs references without relying on prior
+  runtime entity IDs.
 - Replacing the TUI would not require rewriting simulation systems.
