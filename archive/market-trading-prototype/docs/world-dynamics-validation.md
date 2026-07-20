@@ -18,7 +18,7 @@ Routine workspace result after the review-response additions: 122 tests passed, 
 
 ## Enforced soak gates
 
-The exact commands and ownership rule are recorded under **Enforced world-dynamics pre-merge gate** in `docs/energy-economy.md`. Changes to the economy/world-dynamics surfaces named there cannot merge until both soaks and the player-impact probe pass and this evidence file is refreshed.
+The exact commands and ownership rule are recorded under **Enforced world-dynamics pre-merge gate** in `archive/market-trading-prototype/docs/energy-economy.md`. Changes to the economy/world-dynamics surfaces named there cannot merge until both soaks and the player-impact probe pass and this evidence file is refreshed.
 
 ### 1,000-tick deterministic activity soak
 

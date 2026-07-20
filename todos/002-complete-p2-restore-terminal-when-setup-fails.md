@@ -53,7 +53,7 @@ Refactor `TerminalGuard::enter` into staged acquisition and add setup-failure cl
 ## Resources
 
 - **Review/PR/changeset:** branch `loop/20260710-initial-prototype-implementation`
-- **Documentation:** `docs/initial-prototype.md:476-478`
+- **Documentation:** `archive/market-trading-prototype/docs/initial-prototype.md:476-478`
 
 ## Acceptance Criteria
 

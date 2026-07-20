@@ -1,11 +1,22 @@
 ---
-status: pending
+status: complete
+resolution: obsolete
 priority: p1
 issue_id: 007
 tags: [economy, worldbuilding, population, npc-traders, player, simulation, design]
 dependencies: [006]
+superseded_by:
+  - docs/design-direction-governance-sandbox.md
+  - docs/plans/2026-07-20-testing-stance-correction.md
 ---
 # Slice 2: World Dynamics, Population, and Player Progression
+
+> **Obsolete:** Closed without further implementation. Its NPC market-network,
+> trader-first progression, and metastability premises conflict with G17,
+> G19, and G21 of the current
+> [Governance Sandbox direction](../docs/design-direction-governance-sandbox.md).
+> Brownout, seasons, and population ideas may return only when re-derived for
+> the governance-and-expansion game.
 
 ## Purpose
 
@@ -188,3 +199,21 @@ Extend `--economy-diagnostics` beyond Slice 1:
 - Preserve determinism and validate-before-mutate guarantees throughout.
 - Display naming follows the `energy` internal-ID note in Slice 1.
 - The unrelated untracked `.obsidian/` directory must remain untouched.
+
+## Work Log
+
+### 2026-07-20 - Close as obsolete
+
+By: OpenAI
+
+Actions:
+- Closed todo 007 without further implementation and recorded the obsolete
+  resolution in its frontmatter and filename.
+- Linked the governance sandbox and testing/worldgen transition direction
+  that supersede its product assumptions.
+
+Learnings:
+- The durable prototype core is physical Energy pressure and the resource
+  tension between sustaining communities and funding expansion.
+- Independent NPC market ecology, trader-first progression, and
+  metastability acceptance are not compatibility requirements.

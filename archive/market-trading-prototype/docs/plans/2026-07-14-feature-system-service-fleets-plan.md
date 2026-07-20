@@ -10,7 +10,7 @@ status: draft
 
 This is a **working design plan**, not an implementation-ready specification. It tracks the idea of system-controlled physical ships that pursue system resilience rather than personal profit.
 
-Service fleets are intentionally separated from physical Energy logistics. The Energy request, source-consignment, bulk-capacity, ownership, and settlement model should be designed and tested first in `docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md`.
+Service fleets are intentionally separated from physical Energy logistics. The Energy request, source-consignment, bulk-capacity, ownership, and settlement model should be designed and tested first in `archive/market-trading-prototype/docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md`.
 
 A service fleet is not necessary to validate commercial Energy contracts. This feature is a later reliability layer that reuses those contracts when market incentives alone are insufficient.
 
@@ -217,7 +217,7 @@ Longer-term acquisition could connect to development projects:
 - Large Energy capital cost.
 - A real shipyard or service-fleet project once ship construction has a physical output.
 
-This link should be coordinated with `docs/plans/2026-07-14-feature-advanced-goods-development-projects-plan.md`, but service-fleet implementation should not force that plan to absorb shipbuilding prematurely.
+This link should be coordinated with `archive/market-trading-prototype/docs/plans/2026-07-14-feature-advanced-goods-development-projects-plan.md`, but service-fleet implementation should not force that plan to absorb shipbuilding prematurely.
 
 ## Player and Governance Experience
 
@@ -524,9 +524,9 @@ The target is not maximum survival. It is visible strategic resilience with mean
 
 These are candidate surfaces after Energy logistics exists.
 
-- `docs/energy-economy.md` — service dispatch and physical mission accounting.
-- `docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md` — prerequisite commercial contract model.
-- `docs/plans/2026-07-14-feature-advanced-goods-development-projects-plan.md` — possible later acquisition/infrastructure relationship.
+- `archive/market-trading-prototype/docs/energy-economy.md` — service dispatch and physical mission accounting.
+- `archive/market-trading-prototype/docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md` — prerequisite commercial contract model.
+- `archive/market-trading-prototype/docs/plans/2026-07-14-feature-advanced-goods-development-projects-plan.md` — possible later acquisition/infrastructure relationship.
 - `content/traders.ron` — service vessel configurations and ownership.
 - `content/economy_config.ron` — doctrine and dispatch defaults.
 - `content/economy.ron` — per-system fleet and policy overrides.
@@ -543,9 +543,9 @@ These are candidate surfaces after Energy logistics exists.
 ### Internal references
 
 - `docs/architecture.md` — headless simulation, immutable views, content pipeline, and dependency direction.
-- `docs/energy-economy.md:75-81,93-104,125-141,151-187` — current reservations, brownout demand, dynamic fleets, investments, phase order, and diagnostics.
-- `docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md` — prerequisite physical Energy request, offer, consignment, contract, capacity, and settlement model.
-- `docs/plans/2026-07-14-feature-advanced-goods-development-projects-plan.md` — durable advanced-goods uses and possible future service-fleet capacity project.
+- `archive/market-trading-prototype/docs/energy-economy.md:75-81,93-104,125-141,151-187` — current reservations, brownout demand, dynamic fleets, investments, phase order, and diagnostics.
+- `archive/market-trading-prototype/docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md` — prerequisite physical Energy request, offer, consignment, contract, capacity, and settlement model.
+- `archive/market-trading-prototype/docs/plans/2026-07-14-feature-advanced-goods-development-projects-plan.md` — durable advanced-goods uses and possible future service-fleet capacity project.
 - `content/traders.ron:1-26` — current player/NPC archetype values and dynamic-fleet settings.
 - `content/economy_config.ron:15-35` — current repositioning, brownout, and survival policy.
 - `crates/game-core/src/lib.rs:1706-1733,2254-2265` — current trader lifecycle/state and snapshots.

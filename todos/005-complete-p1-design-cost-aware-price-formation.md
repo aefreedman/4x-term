@@ -98,7 +98,7 @@ Next design session should:
 - `crates/game-content/src/lib.rs` — validation for any new pricing policy configuration.
 - `content/economy_config.ron` — likely home for selected pricing mode, margins, reserves, and adjustment rates.
 - `content/goods.ron` — authored reference prices or bootstrap values.
-- `docs/initial-prototype.md` — selected price-formation behavior and invariants.
+- `archive/market-trading-prototype/docs/initial-prototype.md` — selected price-formation behavior and invariants.
 
 **Related systems:**
 - Market bids and asks
@@ -118,7 +118,7 @@ Next design session should:
 - **Review/PR/changeset:** Commit `c933afb` on `experiment/cost-aware-pricing`
 - **Related issue/card:** `todos/004-pending-p1-design-trade-commitments-and-market-liquidity.md`
 - **Log/capture:** `cargo run -p game-cli -- --economy-diagnostics 350`
-- **Documentation:** `docs/initial-prototype.md`
+- **Documentation:** `archive/market-trading-prototype/docs/initial-prototype.md`
 - **Similar pattern:** `crates/game-core/tests/economy_loop_mock.rs`
 
 ## Acceptance Criteria
@@ -167,7 +167,7 @@ Next design session should:
 
 ## Notes
 
-- Superseded by todo 006 and `docs/energy-economy.md`.
+- Superseded by todo 006 and `archive/market-trading-prototype/docs/energy-economy.md`.
 - Preserve the current scarcity model as a comparison baseline until an alternative is validated.
 - Do not treat the 1,000-cycle cost-floor mock as evidence of buyer liquidity or market equilibrium.
 - The unrelated untracked `.obsidian/` directory must remain untouched.

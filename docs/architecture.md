@@ -182,7 +182,17 @@ Use separate stable identifiers for:
 
 Stable content IDs are validated string newtypes using a namespace-qualified form such as `core:system_01`. Mappings between stable IDs and ECS entities belong in core resources or persistence reconstruction code.
 
-The economy uses a checked integer `Energy` newtype for physical energy stock, tank amounts, prices, costs, reservations, and settlements; floating-point values are not used for economic arithmetic. A market's `core:energy` inventory line is its only purchasing balance, while trader tanks and cargo-bay energy remain distinct physical stores. Dynamic NPC lifecycle work runs only after stable trade-request resolution: spawns are market-funded and next-tick eligible, while retirement is deferred until transit, reservation, cargo, tank return, and ECS removal reconcile. Population is explicit integer market state with bounded sufficiency history, checked demographic remainders, supply-derived caps, trend/tier aggregates, and stable-ID-ordered updates after fleet work; settled changes affect life support, labor throughput, and tertiary demand on the following tick. A stable-ID-ordered autonomous investment phase runs after arrival settlement and NPC tank balancing but before trade-opportunity collection. Player-governed and AI markets share that executor; typed policy/allocation commands change configuration only, and the executor spends exact checked costs from stage-aware unreserved purchasing energy. Three-dimensional map coordinates and derived Euclidean distances use finite `f64` values in prototype distance units. The enduring economy contract, deterministic phase order, and reconciliation rules are documented in [Energy-Denominated Economy](energy-economy.md).
+Simulation resources use checked integer quantities. Energy is physical:
+generation, storage, life-support burn, production costs, transport, and
+curtailment must reconcile without hidden creation or deletion. Resource
+mutations preserve deterministic ordering and validate-before-mutate
+behavior. These are architectural contracts; the prototype's particular
+markets, prices, traders, reservations, and NPC lifecycle are not.
+
+Three-dimensional map coordinates and derived Euclidean distances use
+finite `f64` values in prototype distance units. The former market-trading
+implementation is retained only as
+[archived historical documentation](../archive/market-trading-prototype/docs/energy-economy.md).
 
 ## Application boundary
 

@@ -59,16 +59,16 @@ References are relative to the repository root.
 - **E2:** `docs/architecture.md:125-183,274-284` — ECS ownership, scheduling, stable identity, and determinism.
 - **E3:** `docs/architecture.md:185-229,326-356` — application/TUI boundary and async actor model.
 - **E4:** `docs/architecture.md:231-252,294-322` — content pipeline and test strategy.
-- **E5:** `docs/initial-prototype.md:28-60,78-139` — prototype scope and 20-system graph requirements.
-- **E6:** `docs/initial-prototype.md:141-331` — themed goods, recipes, pricing, markets, automated traders, player trader, and status metrics.
-- **E7:** `docs/initial-prototype.md:333-436` — proposed ECS state, tick flow, requests, channels, and views.
-- **E8:** `docs/initial-prototype.md:438-538` — TUI controls, content layout, and required tests.
-- **E9:** `docs/initial-prototype.md:541-567` — deliverables and end-to-end acceptance flow.
+- **E5:** `archive/market-trading-prototype/docs/initial-prototype.md:28-60,78-139` — prototype scope and 20-system graph requirements.
+- **E6:** `archive/market-trading-prototype/docs/initial-prototype.md:141-331` — themed goods, recipes, pricing, markets, automated traders, player trader, and status metrics.
+- **E7:** `archive/market-trading-prototype/docs/initial-prototype.md:333-436` — proposed ECS state, tick flow, requests, channels, and views.
+- **E8:** `archive/market-trading-prototype/docs/initial-prototype.md:438-538` — TUI controls, content layout, and required tests.
+- **E9:** `archive/market-trading-prototype/docs/initial-prototype.md:541-567` — deliverables and end-to-end acceptance flow.
 
 ### Local research summary
 
 - The repository is a new Git project with no Rust source or package manifest yet.
-- `docs/architecture.md` and `docs/initial-prototype.md` are authoritative inputs; implementation files and RON content are future targets.
+- `docs/architecture.md` and `archive/market-trading-prototype/docs/initial-prototype.md` are authoritative inputs; implementation files and RON content are future targets.
 - No generated artifacts were identified. `.pi/`, `.obsidian/`, `.DS_Store`, and future `target/` output are not implementation targets.
 - No relevant institutional solution documents exist under `docs/solutions/`.
 - Broad supplemental research was skipped because the specifications already select the architecture and behavior.
@@ -293,7 +293,7 @@ Validation:
 - [x] Add a bounded economy soak test that runs enough fixed-seed ticks to detect overflow, negative inventory/balance, route stalls, and nondeterminism.
 - [x] Add CI for formatting, Clippy, workspace tests, content validation, and headless acceptance execution.
 - [x] Update `README.md` with build/run/test/content-validation commands and controls.
-- [x] Reconcile `docs/architecture.md` and `docs/initial-prototype.md` with implemented names and deliberate deviations; record follow-up work separately rather than expanding prototype scope.
+- [x] Reconcile `docs/architecture.md` and `archive/market-trading-prototype/docs/initial-prototype.md` with implemented names and deliberate deviations; record follow-up work separately rather than expanding prototype scope.
 
 Validation:
 
@@ -399,7 +399,7 @@ Test development should proceed with each phase rather than after integration: p
 
 - [x] `README.md` — build, run, headless validation, tests, controls, and log location.
 - [x] `docs/architecture.md` — final crate boundaries, dependency versions/constraints, channel/input implementation, and any deliberate architectural deviation.
-- [x] `docs/initial-prototype.md` — only deliberate behavior/name changes discovered during implementation.
+- [x] `archive/market-trading-prototype/docs/initial-prototype.md` — only deliberate behavior/name changes discovered during implementation.
 - [x] Add solution documentation under `docs/solutions/` only for reusable problems actually solved during implementation.
 
 ### Intentional follow-up
@@ -419,7 +419,7 @@ These items are explicitly deferred and must not be added as compatibility abstr
 
 - `README.md:1-14` — project intent and local setup entry points.
 - `docs/architecture.md:11-24,104-122,125-183,185-252,274-356` — selected stack, boundaries, ECS/content/testing design, and async ownership.
-- `docs/initial-prototype.md:28-60,78-139,141-331,333-538,541-567` — complete prototype behavior, data, flow, tests, and acceptance requirements.
+- `archive/market-trading-prototype/docs/initial-prototype.md:28-60,78-139,141-331,333-538,541-567` — complete prototype behavior, data, flow, tests, and acceptance requirements.
 
 ### External references
 

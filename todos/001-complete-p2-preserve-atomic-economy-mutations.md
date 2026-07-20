@@ -53,7 +53,7 @@ Refactor buy, sell, source replenishment, and recipe execution to use validate-t
 ## Resources
 
 - **Review/PR/changeset:** branch `loop/20260710-initial-prototype-implementation`
-- **Documentation:** `docs/initial-prototype.md:185-206,268-272,512-526`
+- **Documentation:** `archive/market-trading-prototype/docs/initial-prototype.md:185-206,268-272,512-526`
 
 ## Acceptance Criteria
 

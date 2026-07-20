@@ -25,7 +25,7 @@ It is never bought with itself. The player-facing explanation is:
 
 This plan is implementation-ready. Economic constants still require Phase 0 fixture tuning, but the runtime ownership, arithmetic, lifecycle, deterministic ordering, command boundary, failure recovery, and phase placement are fixed below. Changes to those contracts should update this plan rather than being improvised during implementation.
 
-System-controlled service fleets are intentionally excluded. Commercial Energy logistics must pass its own deterministic and long-run gates with no service fleets present. The later resilience layer is tracked in `docs/plans/2026-07-14-feature-system-service-fleets-plan.md`.
+System-controlled service fleets are intentionally excluded. Commercial Energy logistics must pass its own deterministic and long-run gates with no service fleets present. The later resilience layer is tracked in `archive/market-trading-prototype/docs/plans/2026-07-14-feature-system-service-fleets-plan.md`.
 
 This is a full replacement of ordinary `core:energy` bid/ask trading. No save migration is required because persistence does not exist. No new crate or dependency is needed.
 
@@ -524,7 +524,7 @@ Reasons for this placement:
 - Newly accepted source claims protect Energy from subsequent ordinary commitments in the same tick.
 - Population keeps its existing following-tick effect.
 
-The implementation must update `docs/energy-economy.md` to make this the canonical phase order.
+The implementation must update `archive/market-trading-prototype/docs/energy-economy.md` to make this the canonical phase order.
 
 ### D14. Runtime ownership stays in `game-core`
 
@@ -573,7 +573,7 @@ energy_logistics: (
 )
 ```
 
-Phase 0 selected repository defaults of 50/100/200/300 fee bps, 1,000 maximum allocation bps, a 20-tick projection window, zero global export reserve/base, and a 20-tick settlement timeout. The authored fixture gives `frontier:system_15` a 3,200-Energy export-base override and full starting storage, raises `frontier:system_14`'s Energy target to 5,000, and uses the exact archetype values recorded in `docs/energy-logistics-validation.md`; these are validated content values rather than hidden code defaults.
+Phase 0 selected repository defaults of 50/100/200/300 fee bps, 1,000 maximum allocation bps, a 20-tick projection window, zero global export reserve/base, and a 20-tick settlement timeout. The authored fixture gives `frontier:system_15` a 3,200-Energy export-base override and full starting storage, raises `frontier:system_14`'s Energy target to 5,000, and uses the exact archetype values recorded in `archive/market-trading-prototype/docs/energy-logistics-validation.md`; these are validated content values rather than hidden code defaults.
 
 #### `economy.ron`
 
@@ -695,7 +695,7 @@ Only the root/main agent invokes subagents. Workers must not delegate further. T
 When instructions conflict, use this order and stop rather than guessing:
 
 1. This accepted implementation plan and its D1–D16 decisions.
-2. The main-agent-authored test contract and fixtures in `docs/energy-logistics-validation.md`.
+2. The main-agent-authored test contract and fixtures in `archive/market-trading-prototype/docs/energy-logistics-validation.md`.
 3. Project architecture and current canonical economy documentation.
 4. The bounded implementation handoff.
 5. Worker-local implementation preferences.
@@ -707,7 +707,7 @@ A worker may propose a plan or fixture correction in its handoff, but it may not
 Before handing any production slice to an implementation agent, the main agent must:
 
 1. **Establish a clean baseline.** Run the routine workspace tests and targeted existing economy/content tests. Record pre-existing failures separately; do not hand them to a feature worker as implicit scope.
-2. **Create the validation contract.** Add `docs/energy-logistics-validation.md` containing stable test IDs, exact fixtures, expected arithmetic/state/ledger outcomes, required commands, and evidence slots.
+2. **Create the validation contract.** Add `archive/market-trading-prototype/docs/energy-logistics-validation.md` containing stable test IDs, exact fixtures, expected arithmetic/state/ledger outcomes, required commands, and evidence slots.
 3. **Freeze invariants for the slice.** Map every delegated task to the Core Invariants and acceptance criteria it must preserve. At minimum the validation contract must identify:
    - `EL-INV-PHYSICAL`: exact whole-world Energy reconciliation.
    - `EL-INV-LOCKED`: locked Energy is inaccessible outside the contract executor.
@@ -868,7 +868,7 @@ At each handoff boundary, the main agent runs:
 - `cargo clippy` for the affected crate once the slice is behaviorally green.
 - Invariant checks that compare pre/post physical Energy and claim/lot state.
 
-Before final completion, the main agent runs the full workspace tests, workspace Clippy, content validation, insertion-permutation suites, 1,000-tick deterministic gate, 10,000-tick diagnostics, player-impact gate, and manual player contract/storage flows. Final evidence goes in `docs/energy-logistics-validation.md` and the required concise world-dynamics evidence goes in `docs/world-dynamics-validation.md`.
+Before final completion, the main agent runs the full workspace tests, workspace Clippy, content validation, insertion-permutation suites, 1,000-tick deterministic gate, 10,000-tick diagnostics, player-impact gate, and manual player contract/storage flows. Final evidence goes in `archive/market-trading-prototype/docs/energy-logistics-validation.md` and the required concise world-dynamics evidence goes in `archive/market-trading-prototype/docs/world-dynamics-validation.md`.
 
 ## Implementation Sequence
 
@@ -896,7 +896,7 @@ The expensive 1,000/10,000-tick gates are not required solely for a byte-for-byt
 This phase is owned by the main agent. No production behavior is delegated until its gate is complete.
 
 - [x] Confirm the post-Phase--1 baseline matches the recorded pre-refactor behavior and carry any explicitly documented pre-existing failures forward.
-- [x] Create `docs/energy-logistics-validation.md` with the `EL-INV-*` map, transition table, exact arithmetic vectors, legacy rejection matrix, insertion permutations, boundary expectations, and evidence slots.
+- [x] Create `archive/market-trading-prototype/docs/energy-logistics-validation.md` with the `EL-INV-*` map, transition table, exact arithmetic vectors, legacy rejection matrix, insertion permutations, boundary expectations, and evidence slots.
 - [x] Add a test-only/pure modeling table over the authored 20-system graph for D1 offer projections, D3 gross sizing, all three route burns, fee stages, expected score, and system headroom.
 - [x] Design shared fixtures/assertion helpers and add compile-safe executable tests or minimal API scaffolding for the first delegated slice.
 - [x] Capture failure-first evidence for each first-wave behavior test; label tests that intentionally characterize existing behavior.
@@ -906,7 +906,7 @@ This phase is owned by the main agent. No production behavior is delegated until
 - [x] Freeze Wave 1 public signatures, allowed files, test names, expected results, and stop conditions before invoking an implementation worker.
 - [x] Record the chosen values and representative table in the validation artifact before enabling runtime matching.
 
-Files: `docs/energy-logistics-validation.md`, `crates/game-core/src/energy_logistics/tests.rs`, minimal signatures in `crates/game-core/src/energy_logistics/mod.rs`, and the explicitly tuned content files.
+Files: `archive/market-trading-prototype/docs/energy-logistics-validation.md`, `crates/game-core/src/energy_logistics/tests.rs`, minimal signatures in `crates/game-core/src/energy_logistics/mod.rs`, and the explicitly tuned content files.
 
 ### Phase 1: Core types, arithmetic, and content compilation
 
@@ -968,8 +968,8 @@ Freeze core commands, snapshots, diagnostics, and vocabulary before Wave 5. App 
 - [x] Show tank, owned bulk, locked bulk, contract details, transfer maxima, deadlines, and blockers.
 - [x] Add exact ledger fields for source loading, destination delivery, allocation conversion, owned-bulk deposit, recovery return, and recovery curtailment.
 - [x] Add exhaustive D10 starvation attribution and contract/fleet metrics to CLI diagnostics.
-- [x] Update `docs/energy-economy.md`, `content/encyclopedia.ron`, README, and CHANGELOG in the same implementation.
-- [x] Append pre-merge acceptance evidence to `docs/world-dynamics-validation.md`.
+- [x] Update `archive/market-trading-prototype/docs/energy-economy.md`, `content/encyclopedia.ron`, README, and CHANGELOG in the same implementation.
+- [x] Append pre-merge acceptance evidence to `archive/market-trading-prototype/docs/world-dynamics-validation.md`.
 
 Files: `crates/game-app/src/energy_logistics.rs` plus limited root wiring, `crates/game-tui/src/screens/energy_logistics.rs` plus limited screen/input wiring, `crates/game-cli/src/main.rs`, and docs/content listed above.
 
@@ -1068,7 +1068,7 @@ Files: `crates/game-app/src/energy_logistics.rs` plus limited root wiring, `crat
 - Manual trace follows one shipment from source claim through deadhead, loading, travel burn, partial/full settlement, allocation, and destination stock.
 - Manual capacity test demonstrates exact transfer rejection, automatic contract partial settlement, timeout, and visible recovery.
 
-The existing enforced pre-merge commands in `docs/energy-economy.md` remain required. Extend their concise output with contract counts, D10 attribution, locked-lot state, recovery outcomes, archetype activity, and exact reconciliation before appending evidence to `docs/world-dynamics-validation.md`.
+The existing enforced pre-merge commands in `archive/market-trading-prototype/docs/energy-economy.md` remain required. Extend their concise output with contract counts, D10 attribution, locked-lot state, recovery outcomes, archetype activity, and exact reconciliation before appending evidence to `archive/market-trading-prototype/docs/world-dynamics-validation.md`.
 
 ## Success Metrics for Phase 0 and Tuning
 
@@ -1130,18 +1130,18 @@ The target is not universal service. The target is coherent, profitable-at-scale
   - Player bulk capacity and stable NPC archetype list.
 - `content/encyclopedia.ron`
   - Unit-of-account and contract explanation.
-- `docs/energy-economy.md`
+- `archive/market-trading-prototype/docs/energy-economy.md`
   - Canonical physical stores, contracts, tick order, reconciliation, and diagnostics.
-- `README.md`, `CHANGELOG.md`, `docs/world-dynamics-validation.md`
+- `README.md`, `CHANGELOG.md`, `archive/market-trading-prototype/docs/world-dynamics-validation.md`
   - Player-facing behavior and acceptance evidence.
 
 ## References
 
 - `docs/architecture.md` — headless simulation, stable IDs, content compilation, deterministic schedule, typed commands, immutable views, and dependency direction.
-- `docs/energy-economy.md` — current physical Energy, reserves, claims, settlement, anti-strand, phase order, and required long-run gates.
-- `docs/plans/2026-07-12-feature-energy-denominated-economy-foundation-plan.md` — Energy-as-numéraire and exact physical-settlement foundation.
-- `docs/plans/2026-07-14-feature-system-service-fleets-plan.md` — later public resilience layer that reuses these contracts.
-- `docs/plans/2026-07-14-feature-advanced-goods-development-projects-plan.md` — parallel durable-goods progression design; coordinate content/schema changes but do not combine implementations.
+- `archive/market-trading-prototype/docs/energy-economy.md` — current physical Energy, reserves, claims, settlement, anti-strand, phase order, and required long-run gates.
+- `archive/market-trading-prototype/docs/plans/2026-07-12-feature-energy-denominated-economy-foundation-plan.md` — Energy-as-numéraire and exact physical-settlement foundation.
+- `archive/market-trading-prototype/docs/plans/2026-07-14-feature-system-service-fleets-plan.md` — later public resilience layer that reuses these contracts.
+- `archive/market-trading-prototype/docs/plans/2026-07-14-feature-advanced-goods-development-projects-plan.md` — parallel durable-goods progression design; coordinate content/schema changes but do not combine implementations.
 - `notes/2026-07-14-playtest-notes.md` — observed Energy-for-Energy drain and UI legibility problems.
 - `docs/solutions/rust-ecs-validate-before-mutate.md` — required atomic transition pattern.
 - `crates/game-core/src/lib.rs:3014-3031` — current centralized tick order.

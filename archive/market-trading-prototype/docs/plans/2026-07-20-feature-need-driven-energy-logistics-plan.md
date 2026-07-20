@@ -546,7 +546,7 @@ Use focused failure-first tests during Phases 1–5. Do not repeatedly run long 
 - App/TUI buffer traces for raw versus Player Serviceable modes.
 - CLI before/after counts for raw requests, physical candidates, NPC commercial candidates, contracts, and capacity shortfall.
 - Release acceptance output and exact reconciliation line.
-- Updated `docs/world-dynamics-validation.md` and `docs/energy-logistics-validation.md` entries.
+- Updated `archive/market-trading-prototype/docs/world-dynamics-validation.md` and `archive/market-trading-prototype/docs/energy-logistics-validation.md` entries.
 
 ## Dependencies and Risks
 
@@ -574,13 +574,13 @@ Use focused failure-first tests during Phases 1–5. Do not repeatedly run long 
 
 ### Documentation to update
 
-- [ ] `docs/energy-economy.md` — derived security floor, raw request, safe offer, serviceability layers, phase semantics, and diagnostics.
-- [ ] `docs/energy-logistics-validation.md` — replace D1/D3/D4/D10 fixtures and invariant evidence.
-- [ ] `docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md` — mark replaced target/export-pressure decisions and link this plan; do not silently rewrite historical acceptance evidence.
+- [ ] `archive/market-trading-prototype/docs/energy-economy.md` — derived security floor, raw request, safe offer, serviceability layers, phase semantics, and diagnostics.
+- [ ] `archive/market-trading-prototype/docs/energy-logistics-validation.md` — replace D1/D3/D4/D10 fixtures and invariant evidence.
+- [ ] `archive/market-trading-prototype/docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md` — mark replaced target/export-pressure decisions and link this plan; do not silently rewrite historical acceptance evidence.
 - [ ] `README.md` — All Requests / Player Serviceable / exact payload flow.
 - [ ] `content/encyclopedia.ron` — system need, safe surplus, player loss warning, and NPC commercial choice.
 - [ ] `CHANGELOG.md` — player-visible system behavior and schema replacement.
-- [ ] `docs/world-dynamics-validation.md` — refreshed long-run evidence.
+- [ ] `archive/market-trading-prototype/docs/world-dynamics-validation.md` — refreshed long-run evidence.
 
 ### Intentional follow-up
 
@@ -593,10 +593,10 @@ Use focused failure-first tests during Phases 1–5. Do not repeatedly run long 
 ### Internal references
 
 - `docs/architecture.md:1-145` — headless core, typed commands, immutable views, and dependency direction.
-- `docs/energy-economy.md:11-17,143-164,178-188` — current physical stores, phase order, observability, and acceptance requirements.
-- `docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md:112-211,423-523,616-665` — current offer/request, sizing, D10/D12/D13, and frontend contracts being replaced or preserved.
-- `docs/plans/2026-07-14-feature-system-service-fleets-plan.md:1-105` — future non-commercial resilience layer and commercial-versus-physical distinction.
-- `docs/plans/2026-07-14-feature-advanced-goods-development-projects-plan.md:1-110` — separate system agency for durable projects and material demand.
+- `archive/market-trading-prototype/docs/energy-economy.md:11-17,143-164,178-188` — current physical stores, phase order, observability, and acceptance requirements.
+- `archive/market-trading-prototype/docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md:112-211,423-523,616-665` — current offer/request, sizing, D10/D12/D13, and frontend contracts being replaced or preserved.
+- `archive/market-trading-prototype/docs/plans/2026-07-14-feature-system-service-fleets-plan.md:1-105` — future non-commercial resilience layer and commercial-versus-physical distinction.
+- `archive/market-trading-prototype/docs/plans/2026-07-14-feature-advanced-goods-development-projects-plan.md:1-110` — separate system agency for durable projects and material demand.
 - `crates/game-core/src/energy_logistics/mod.rs:651-670,1169-1188,1252-1630,1670-1835,1990-2076` — scoring, offers, projections, request/candidate generation, snapshots, and attribution.
 - `crates/game-core/src/lib.rs:1624-1718,3284-3311,4300-4322,4993-5105,7124-7220` — market obligations, phase order, export protection, physical tick, and automated selection.
 - `crates/game-content/src/lib.rs:154-178,255-292,711-803,1689-1729,1820-1921` — source schema, target compilation, generation, structural roles, and bootstrap validation.
@@ -609,7 +609,7 @@ Use focused failure-first tests during Phases 1–5. Do not repeatedly run long 
 ### Institutional knowledge
 
 - `docs/solutions/rust-ecs-validate-before-mutate.md` — calculate complete checked next state before applying ECS mutations or emitting events.
-- `docs/world-dynamics-validation.md` — preserve deterministic activity, metastability, and reconciliation evidence when changing economy behavior.
+- `archive/market-trading-prototype/docs/world-dynamics-validation.md` — preserve deterministic activity, metastability, and reconciliation evidence when changing economy behavior.
 
 ### Research decision
 

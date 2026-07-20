@@ -218,7 +218,7 @@ Required tests (absorbing the superseded todos' acceptance criteria):
 
 ## Sequencing within this slice
 
-1. Record the durable energy-as-numéraire contract in `docs/energy-economy.md`; keep `docs/initial-prototype.md` historical.
+1. Record the durable energy-as-numéraire contract in `archive/market-trading-prototype/docs/energy-economy.md`; keep `archive/market-trading-prototype/docs/initial-prototype.md` historical.
 2. Physical layer: generation, life-support burn, storage, bootstrap check.
 3. Price formation (upstream of what a reservation is worth).
 4. Commitments and liquidity, sharing the funded-quantity definition.
@@ -253,7 +253,7 @@ Required tests (absorbing the superseded todos' acceptance criteria):
 **Actions:**
 - Replaced abstract currency with physical `Energy`, canonical market `core:energy` inventory, trader tanks, haulable bay energy, generation, life support, storage, embodied costs, policy, reservations, partial settlement, and anti-strand routing across all five crates.
 - Migrated and validated all repository content, including fixed-point solar compilation, system roles, bootstrap feasibility, recipe energy/weights, and refuel policy.
-- Added immutable application views, TUI health states, exact CLI flow/processor diagnostics, pricing A/B support, and `docs/energy-economy.md`.
+- Added immutable application views, TUI health states, exact CLI flow/processor diagnostics, pricing A/B support, and `archive/market-trading-prototype/docs/energy-economy.md`.
 - Ran format, Clippy, workspace tests, content validation, and deterministic 1,000-tick cost-aware/A-B diagnostics.
 
 **Learnings:**

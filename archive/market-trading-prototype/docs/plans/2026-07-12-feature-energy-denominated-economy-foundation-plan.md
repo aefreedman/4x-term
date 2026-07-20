@@ -146,7 +146,7 @@ Bootstrap validation should calculate each net importer's static burn, shortest 
 
 ### Phase 1: Contract, Schema, and Test Scaffolding
 
-- [x] Create `docs/energy-economy.md` as the durable post-prototype design document. Record energy as numéraire, the `Money` → `Energy` type rename, the single physical `core:energy` market line, tank-versus-bay energy semantics, star luminosity × collector-efficiency generation compilation, deliberate solar/raw-resource anti-correlation, emergent system roles, storage-overflow loss, mandatory life-support behavior, reservation claims, independent operating reserve and computed protected liquidation budget, pricing/cost formulas, deterministic rounding, bootstrap acknowledgement, diagnostics, and compatibility stance. Explicitly document that energy's cost basis—not price—is anchored at 1 and that the refuel-revenue mock loop is replaced by generation → market stock → trade proceeds → travel burn/other-market spending. Treat todo 006 as authoritative while drafting it.
+- [x] Create `archive/market-trading-prototype/docs/energy-economy.md` as the durable post-prototype design document. Record energy as numéraire, the `Money` → `Energy` type rename, the single physical `core:energy` market line, tank-versus-bay energy semantics, star luminosity × collector-efficiency generation compilation, deliberate solar/raw-resource anti-correlation, emergent system roles, storage-overflow loss, mandatory life-support behavior, reservation claims, independent operating reserve and computed protected liquidation budget, pricing/cost formulas, deterministic rounding, bootstrap acknowledgement, diagnostics, and compatibility stance. Explicitly document that energy's cost basis—not price—is anchored at 1 and that the refuel-revenue mock loop is replaced by generation → market stock → trade proceeds → travel burn/other-market spending. Treat todo 006 as authoritative while drafting it.
 - [x] Define core typed data structures and pure checked helpers for `Energy`, unified market/tank/cargo inventory access, proportional cost allocation, energy quotes, funded quantity, operating reserve, content-computed protected liquidation budget, universal liquidation quantity, and flow reconciliation. Use these shared helpers for ordinary goods, energy cargo, and anti-strand settlement.
 - [x] Extend RON source definitions and compilation for energy, fixed-point star luminosity/solar quality, collector efficiency, compiled generation, system physical fields, trader tanks, recipe/source energy costs, policy defaults/overrides, and pricing mode.
 - [x] Add source-aware validations for exact energy identity/cost basis, valid luminosity and collector ranges, checked generation compilation, positive capacities and weights, percentage ranges, override merging, energy stock ≤ cap, tank stock ≤ cap, graph-aware bootstrap runway with fail-by-default acknowledgement handling, computed liquidation-budget feasibility, and the presence of exporter/importer/knife-edge roles.
@@ -299,11 +299,11 @@ cargo run -p game-cli -- --economy-diagnostics 1000
 
 ### Documentation to Update
 
-- [x] `docs/energy-economy.md` — create the current economy design document covering the physical model, refueling-loop consequence, tank-versus-energy-cargo semantics, energy cost-basis versus market-price distinction, independent reserve/budget definitions, bootstrap acknowledgement, invariants, formulas, tick phases, content schema, diagnostics, and test expectations from todo 006.
-- [x] `docs/initial-prototype.md` — leave unchanged as a historical record of the completed prototype; do not retrofit the new economy design into it.
-- [x] `docs/architecture.md` — link to `docs/energy-economy.md` and update only enduring type/boundary or deterministic-schedule facts; preserve the headless/app/TUI boundaries.
+- [x] `archive/market-trading-prototype/docs/energy-economy.md` — create the current economy design document covering the physical model, refueling-loop consequence, tank-versus-energy-cargo semantics, energy cost-basis versus market-price distinction, independent reserve/budget definitions, bootstrap acknowledgement, invariants, formulas, tick phases, content schema, diagnostics, and test expectations from todo 006.
+- [x] `archive/market-trading-prototype/docs/initial-prototype.md` — leave unchanged as a historical record of the completed prototype; do not retrofit the new economy design into it.
+- [x] `docs/architecture.md` — link to `archive/market-trading-prototype/docs/energy-economy.md` and update only enduring type/boundary or deterministic-schedule facts; preserve the headless/app/TUI boundaries.
 - [x] `CHANGELOG.md` — add the user-visible economy, diagnostics, and TUI changes under `Unreleased`.
-- [x] `todos/004-*`, `todos/005-*`, and `todos/006-*` — update statuses only after acceptance, preserving historical findings. At that same acceptance-time edit, amend todo 006 sequencing step 1 to point to `docs/energy-economy.md`; make no other plan-time change to todo 006.
+- [x] `todos/004-*`, `todos/005-*`, and `todos/006-*` — update statuses only after acceptance, preserving historical findings. At that same acceptance-time edit, amend todo 006 sequencing step 1 to point to `archive/market-trading-prototype/docs/energy-economy.md`; make no other plan-time change to todo 006.
 
 ### Intentional Follow-up
 
@@ -324,7 +324,7 @@ References use project-root-relative paths.
 - **E4 — Content seam:** `crates/game-content/src/lib.rs:43-144,170-210,300-414,509-547,575-719` — RON structs, validation/compilation, and current repository-content tests.
 - **E5 — App/TUI seam:** `crates/game-app/src/lib.rs:69-155,305-465`; `crates/game-tui/src/lib.rs:501-575` — immutable market/player views and present currency rendering.
 - **E6 — Diagnostics seam:** `crates/game-cli/src/main.rs:72-190` — interval activity, fixed-total currency report, market ledger, and stationary-laden reporting.
-- **E7 — Historical prototype evidence and design mocks:** `docs/initial-prototype.md:62-75,149-166,234-272,371-389,423-440,500-540`; `crates/game-core/tests/economy_loop_mock.rs:1-119`; `crates/game-core/tests/pricing_model_mock.rs:1-167`. These describe the superseded implementation and remain evidence, not the target design document.
+- **E7 — Historical prototype evidence and design mocks:** `archive/market-trading-prototype/docs/initial-prototype.md:62-75,149-166,234-272,371-389,423-440,500-540`; `crates/game-core/tests/economy_loop_mock.rs:1-119`; `crates/game-core/tests/pricing_model_mock.rs:1-167`. These describe the superseded implementation and remain evidence, not the target design document.
 
 ### Institutional Knowledge
 

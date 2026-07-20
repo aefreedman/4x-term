@@ -189,7 +189,7 @@ The optional `--player-impact` probe runs two identical deterministic sessions a
 
 ### Enforced world-dynamics pre-merge gate
 
-Any change to core economy scheduling/arithmetic, world-dynamics content, trader lifecycle, population, investments, or diagnostics is not merge-ready until the following pre-merge gate succeeds and its concise output is appended to `docs/world-dynamics-validation.md`:
+Any change to core economy scheduling/arithmetic, world-dynamics content, trader lifecycle, population, investments, or diagnostics is not merge-ready until the following pre-merge gate succeeds and its concise output is appended to `archive/market-trading-prototype/docs/world-dynamics-validation.md`:
 
 ```bash
 cargo test -p game-content \

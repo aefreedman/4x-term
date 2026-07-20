@@ -473,7 +473,7 @@ Specific automated coverage:
 ### Documentation to update
 
 - [x] `README.md` — replace the old Tab/global shortcut list, document activities, contextual controls, and `80x30`/`160x45` cell-grid behavior.
-- [x] `docs/initial-prototype.md` — intentionally left unchanged; this legacy prototype specification is no longer maintained.
+- [x] `archive/market-trading-prototype/docs/initial-prototype.md` — intentionally left unchanged; this legacy prototype specification is no longer maintained.
 - [x] `CHANGELOG.md` — add the user-visible mode-based UX replacement under `Unreleased`.
 - [x] `setup/Brewfile`, `setup/doctor.sh`, and `setup/README.md` — declare and verify `ripgrep`, and document exporting `$HOME/.cargo/bin` when the shell does not already include it.
 - [x] `docs/architecture.md` — update only if the final application-view grouping adds a durable contract not already covered by immutable frontend projections and TUI-local state.
@@ -499,7 +499,7 @@ References use paths relative to the repository root unless noted.
 - `crates/game-app/src/lib.rs:350-405,540-890` — app-owned browse selection, local command submission, selected-market projections, route previews, and player/governor projections.
 - `crates/game-core/src/lib.rs:2051-2137,2754-2836` — local trade targeting and core validation for location, travel, and governance authority.
 - `docs/architecture.md:5-9,92-109,139-154,202-218,316-320` — headless core, dependency boundary, typed command constraints, TUI-local state, and TUI test strategy.
-- `docs/initial-prototype.md:45-59,306-318,423-478,550-579` — prototype activity scope, local trade/travel rules, current pane requirements, and acceptance flow.
+- `archive/market-trading-prototype/docs/initial-prototype.md:45-59,306-318,423-478,550-579` — prototype activity scope, local trade/travel rules, current pane requirements, and acceptance flow.
 - `README.md:26-43` — current player controls and minimum terminal documentation to replace.
 - `Cargo.toml:14-16`; `Cargo.lock:429-430,1407-1408,1423-1424,1488-1489` — pinned Crossterm and Ratatui package versions.
 
@@ -513,4 +513,4 @@ References use paths relative to the repository root unless noted.
 ### Institutional knowledge
 
 - `docs/solutions/rust-terminal-staged-raii-cleanup.md` — preserve staged acquisition flags, reverse-order cleanup, and failure-path tests while restructuring the TUI.
-- `docs/plans/2026-07-10-feature-initial-prototype-implementation-plan.md` — retain the original frontend/application/core separation and TestBackend validation strategy while replacing the provisional UX.
+- `archive/market-trading-prototype/docs/plans/2026-07-10-feature-initial-prototype-implementation-plan.md` — retain the original frontend/application/core separation and TestBackend validation strategy while replacing the provisional UX.

@@ -196,7 +196,7 @@ Use **full replacement**:
 - Remove `RecipeLayer::Tertiary` if no new explicit consumer contract uses it.
 - Reject outputless production recipes rather than silently treating them as sinks.
 - Rename `tertiary_demand` to `population_goods` in source/runtime terminology without a legacy alias.
-- Keep `docs/initial-prototype.md` historical; update current docs and encyclopedia prose to describe projects and population consumption.
+- Keep `archive/market-trading-prototype/docs/initial-prototype.md` historical; update current docs and encyclopedia prose to describe projects and population consumption.
 - No save or schema compatibility adapter is required because persistence does not exist.
 
 ## Technical Approach
@@ -405,7 +405,7 @@ These decisions should be settled in Phase 0 before implementation:
 
 ### Phase 0: Lock the Economy Contract
 
-- [ ] Add the project lifecycle, Energy-claim ordering, demand-overlay equation, cancellation semantics, population-consumption equation, and accounting rules to `docs/energy-economy.md`.
+- [ ] Add the project lifecycle, Energy-claim ordering, demand-overlay equation, cancellation semantics, population-consumption equation, and accounting rules to `archive/market-trading-prototype/docs/energy-economy.md`.
 - [ ] Author the first project/level balance table for all four kinds and verify every secondary good has a named use.
 - [ ] Decide the population Habitat target and consumption rates using a small deterministic spreadsheet/test spike.
 - [ ] Decide whether core/runtime types are renamed from Investment to Development now or only player-facing content/views are renamed.
@@ -501,7 +501,7 @@ Validation:
 - [ ] Run scarcity/throughput tuning so projects create opportunities without draining life-support markets or monopolizing all transport.
 - [ ] Verify advanced production remains useful for a meaningful play horizon and measure when all markets reach maximum levels.
 - [ ] Decide from evidence whether maintenance/replacement demand is the next feature; document saturation rather than masking it.
-- [ ] Refresh `docs/world-dynamics-validation.md` with the required gate output.
+- [ ] Refresh `archive/market-trading-prototype/docs/world-dynamics-validation.md` with the required gate output.
 - [ ] Update `CHANGELOG.md` under Unreleased and current README designer/UI descriptions.
 
 Validation:
@@ -581,7 +581,7 @@ Add a project-impact command or focused integration test with identical baseline
 - Focused atomic failure/success test names and results.
 - `80x30` and `160x45` text-buffer captures for Governance project detail and Trade demand cause.
 - Before/after project completion diagnostic excerpt showing material debit, Energy burn, level/effect change, and reconciliation difference zero.
-- Updated 1,000-tick, 10,000-tick, player-impact, and project-impact outputs in `docs/world-dynamics-validation.md`.
+- Updated 1,000-tick, 10,000-tick, player-impact, and project-impact outputs in `archive/market-trading-prototype/docs/world-dynamics-validation.md`.
 
 ## Dependencies and Risks
 
@@ -612,12 +612,12 @@ Add a project-impact command or focused integration test with identical baseline
 
 ### Documentation to Update
 
-- [ ] `docs/energy-economy.md` — authoritative project, population-consumption, phase-order, accounting, and validation contracts.
+- [ ] `archive/market-trading-prototype/docs/energy-economy.md` — authoritative project, population-consumption, phase-order, accounting, and validation contracts.
 - [ ] `docs/architecture.md` — only if public core/app view contracts materially change.
 - [ ] `content/encyclopedia.ron` — player-facing economy loop, projects, uses, and demand causes.
 - [ ] `README.md` — Governance/Trade controls and designer project schema.
 - [ ] `CHANGELOG.md` — user-visible additions/changes under Unreleased.
-- [ ] `docs/world-dynamics-validation.md` — refreshed acceptance evidence.
+- [ ] `archive/market-trading-prototype/docs/world-dynamics-validation.md` — refreshed acceptance evidence.
 
 ### Intentional Follow-up
 
@@ -632,8 +632,8 @@ Add a project-impact command or focused integration test with identical baseline
 ### Internal References
 
 - `docs/architecture.md` — headless core, immutable application views, TUI adapter, content pipeline, deterministic scheduling, and testing boundaries.
-- `docs/energy-economy.md` — physical Energy model, claims/reserves, investments, population sufficiency, phase order, reconciliation, and mandatory world-dynamics gates.
-- `docs/initial-prototype.md` — historical definition of primary/secondary/tertiary layers and explicit warning that prototype balance/mechanics were not final.
+- `archive/market-trading-prototype/docs/energy-economy.md` — physical Energy model, claims/reserves, investments, population sufficiency, phase order, reconciliation, and mandatory world-dynamics gates.
+- `archive/market-trading-prototype/docs/initial-prototype.md` — historical definition of primary/secondary/tertiary layers and explicit warning that prototype balance/mechanics were not final.
 - `content/recipes.ron:11-25` — secondary manufacturing and current zero-output tertiary sinks.
 - `content/economy_config.ron:30-55` — current population Habitat demand and Energy-only investment shapes.
 - `content/economy.ron:114-134` — current tertiary consumer systems and sink-oriented targets.
@@ -644,8 +644,8 @@ Add a project-impact command or focused integration test with identical baseline
 - `crates/game-core/src/lib.rs:3009-3025,3160-3194,4329-4472,4746-4825,5028-5128` — tick order, market demand, autonomous investments, population sufficiency, and recipe execution.
 - `crates/game-app/src/lib.rs:120-138,206-279,314-336,425-442,1220-1285` — current immutable production, market, investment, and application views.
 - `crates/game-tui/src/lib.rs:1680-1755,1934-2075,2167-2273` — current production, market-demand, and investment presentation.
-- `docs/world-dynamics-validation.md` — accepted baseline gates and tuning evidence to preserve/re-run.
-- `docs/plans/2026-07-13-feature-world-dynamics-population-player-progression-plan.md` — existing autonomous investment/governance design and phase-order rationale.
+- `archive/market-trading-prototype/docs/world-dynamics-validation.md` — accepted baseline gates and tuning evidence to preserve/re-run.
+- `archive/market-trading-prototype/docs/plans/2026-07-13-feature-world-dynamics-population-player-progression-plan.md` — existing autonomous investment/governance design and phase-order rationale.
 
 ### External References
 

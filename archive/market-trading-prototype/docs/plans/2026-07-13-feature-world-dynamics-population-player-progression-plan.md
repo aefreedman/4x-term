@@ -51,7 +51,7 @@ The first phase should turn the todo's direction into tested typed contracts bef
 3. **Reserve consistency:** every quote, funded-quantity, settlement, tank withdrawal, investment, and subsidy path must use one stage-aware purchasing-energy helper. Survival stock remains physical stock, not a second treasury, and neither stage changes nor investments may consume reservation claims, the operating reserve, or the protected liquidation budget.
 4. **Seasonal generation:** use a deterministic integer waveform with authored amplitude, period, and phase per system. A triangle wave is recommended because it is learnable and requires no floating-point trigonometry. Amplitude zero must return the current compiled base rate exactly. Collector investments modify base capacity; seasons derive effective output from that base.
 5. **Population hysteresis:** sample a fixed-point sufficiency score from energy plus authored essential/tertiary goods into a bounded moving window. Starvation decline uses a faster checked rate; growth requires Surplus/Normal conditions and a long average above threshold, then applies logistic growth toward a supply-history-derived cap at roughly one-fifth to one-tenth the decline rate. Carry fixed-point remainders so small populations do not become permanently frozen by integer truncation.
-6. **Fleet lifecycle and conservation:** dynamic spawns use one compiled trader archetype, deterministic IDs, and stable highest-surplus placement. Initial tank energy is withdrawn atomically from the spawn market's unprotected stock, so spawning does not create physical energy. Retirement only completes for an idle trader after reservations and cargo are resolved; residual tank energy returns atomically to a market. Slice 1 resolved worthless cargo with validated positive bootstrap-based liquidation prices and a graph/capability-derived protected budget sized for the minimum whole-unit payout; content compilation rejects infeasible cargo-capacity, tank-headroom, or budget combinations. Deferred laden retirement therefore has a terminating cleanup path: every laden candidate can liquidate into adjacent-jump funding, finish cleanup, and retire rather than remain laden, stranded, and unretirable. If conservation or storage constraints cannot be satisfied, retirement is deferred rather than destroying state. Evidence: `docs/energy-economy.md:50-74`; `crates/game-core/src/lib.rs:1050-1131`; `crates/game-content/src/lib.rs:1079-1089,1578-1607`.
+6. **Fleet lifecycle and conservation:** dynamic spawns use one compiled trader archetype, deterministic IDs, and stable highest-surplus placement. Initial tank energy is withdrawn atomically from the spawn market's unprotected stock, so spawning does not create physical energy. Retirement only completes for an idle trader after reservations and cargo are resolved; residual tank energy returns atomically to a market. Slice 1 resolved worthless cargo with validated positive bootstrap-based liquidation prices and a graph/capability-derived protected budget sized for the minimum whole-unit payout; content compilation rejects infeasible cargo-capacity, tank-headroom, or budget combinations. Deferred laden retirement therefore has a terminating cleanup path: every laden candidate can liquidate into adjacent-jump funding, finish cleanup, and retire rather than remain laden, stranded, and unretirable. If conservation or storage constraints cannot be satisfied, retirement is deferred rather than destroying state. Evidence: `archive/market-trading-prototype/docs/energy-economy.md:50-74`; `crates/game-core/src/lib.rs:1050-1131`; `crates/game-content/src/lib.rs:1079-1089,1578-1607`.
 7. **Anti-strand with a changing fleet:** compute protected liquidation requirements from validated fleet archetype capabilities, not the currently active trader count. Spawn/retire count changes therefore cannot weaken the guarantee. Policy changes still recompute and validate the whole protected budget before mutation.
 8. **Investment spending:** define all four typed shapes together. Investment energy comes only from the same stage-aware unreserved purchasing pool, after survival and anti-strand protection. Costs, diminishing returns, cooldown/rate limits, and maximum levels are authored and validated. Collectors raise base output; storage raises cap; population support changes growth/cap modifiers; route subsidy adds a funded, visible bid premium that feeds the same opportunity model used by NPCs. Stage demand suppression has final authority: Emergency and Starvation spend no subsidy energy and cannot use a standing premium to re-advertise a suppressed non-survival good; the authorized premium remains configured and resumes automatically after recovery permits that demand.
 9. **Governor authority:** add a small ownership/entitlement component and authorize policy commands against it. For this slice, content may grant one starting market to the player; absent-player and AI-default policy execution must use the same autonomous market-policy system. Do not expose unrestricted edits to every system merely because acquisition is deferred.
@@ -132,7 +132,7 @@ Extend the current automated-request collection instead of creating an unrelated
 
 Spawn placement selects the market with the greatest checked surplus after all protected amounts, then stable system ID. Spawn only when that market can fund the archetype's starting tank without entering a lower protected state. Generate IDs/names from a monotonic deterministic sequence that is never reused during a session.
 
-Retirement candidates are selected from sustained unprofitability or inability to fund a jump after liquidation. Release reservations exactly once, finish or liquidate cargo through existing settlement paths, return tank energy, then despawn and emit an event. In-transit or unresolved laden traders are never deleted. This deferral must terminate: Slice 1's positive bootstrap-based liquidation price plus protected minimum whole-unit payout guarantees a laden candidate can fund an adjacent jump, receive another liquidation opportunity, complete cleanup, and retire within a bounded number of ticks. A trader may not persist in the simultaneous laden, stranded, and unretirable state. Fixed mode bypasses all lifecycle mutation while retaining the same trading behavior. See `docs/energy-economy.md:50-74` and `crates/game-core/src/lib.rs:1050-1131`.
+Retirement candidates are selected from sustained unprofitability or inability to fund a jump after liquidation. Release reservations exactly once, finish or liquidate cargo through existing settlement paths, return tank energy, then despawn and emit an event. In-transit or unresolved laden traders are never deleted. This deferral must terminate: Slice 1's positive bootstrap-based liquidation price plus protected minimum whole-unit payout guarantees a laden candidate can fund an adjacent jump, receive another liquidation opportunity, complete cleanup, and retire within a bounded number of ticks. A trader may not persist in the simultaneous laden, stranded, and unretirable state. Fixed mode bypasses all lifecycle mutation while retaining the same trading behavior. See `archive/market-trading-prototype/docs/energy-economy.md:50-74` and `crates/game-core/src/lib.rs:1050-1131`.
 
 #### Population model
 
@@ -224,7 +224,7 @@ Update authored schema in one validated evolution:
 
 ### Phase 1: Contracts, Schema, and Test Scaffolding
 
-- [x] Add durable Slice 2 design details to `docs/energy-economy.md` or a linked world-dynamics document: stage metric/phase boundary, effective profile, seasonal waveform, population equations, fleet conservation, investment funding, and diagnostic pass/fail definitions.
+- [x] Add durable Slice 2 design details to `archive/market-trading-prototype/docs/energy-economy.md` or a linked world-dynamics document: stage metric/phase boundary, effective profile, seasonal waveform, population equations, fleet conservation, investment funding, and diagnostic pass/fail definitions.
 - [x] Introduce typed core definitions/components/resources for stages, seasons, population history, fleet mode/dynamics, investment kinds/policy/state, governance, and aggregate history without enabling all runtime writers.
 - [x] Extend `game-content` source structs and compilation for every new data shape, including all four investments and both fleet modes.
 - [x] Add source-aware validation for ordered thresholds, positive windows/periods, amplitude and fixed-point bounds, resolved goods, growth/decline ratio, logistic limits, fleet thresholds/rates/caps, investment curves/rate limits, allocation totals, and starting governorship references.
@@ -314,7 +314,7 @@ Validation:
 - [x] Collector tests prove seasons scale from the upgraded base output; storage tests preserve stock/cap invariants; population support affects only approved growth/cap inputs; subsidies are funded and alter the normal opportunity backlog. A market with an active subsidy that enters Emergency must advertise only energy/survival goods, spend nothing on the suppressed subsidized good, and automatically resume its premium after recovery.
 - [x] Authorization tests reject unowned-market changes and prove AI-defaulted and player-configured markets execute through the same policy system.
 - [x] App actor tests cover request→command→event→view flow; Ratatui `TestBackend` tests cover governor editing, validation feedback, and read-only non-governed markets.
-- [x] Manual-equivalent headless, app-actor, and Ratatui `TestBackend` flows confirm that a trader can read a seasonal/brownout opportunity, deliver relief before fleet adaptation, govern one market without repetitive upkeep, and observe persistent ladder/population consequences. Evidence: `docs/world-dynamics-validation.md`.
+- [x] Manual-equivalent headless, app-actor, and Ratatui `TestBackend` flows confirm that a trader can read a seasonal/brownout opportunity, deliver relief before fleet adaptation, govern one market without repetitive upkeep, and observe persistent ladder/population consequences. Evidence: `archive/market-trading-prototype/docs/world-dynamics-validation.md`.
 
 ## Acceptance Criteria
 
@@ -377,7 +377,7 @@ Add the final player-impact invocation after its CLI shape is implemented. Keep 
 
 ### Manual Validation
 
-The non-interactive environment used deterministic headless diagnostics, app actor flows, and Ratatui `TestBackend` buffers as the terminal-play equivalent. Evidence is summarized in `docs/world-dynamics-validation.md`.
+The non-interactive environment used deterministic headless diagnostics, app actor flows, and Ratatui `TestBackend` buffers as the terminal-play equivalent. Evidence is summarized in `archive/market-trading-prototype/docs/world-dynamics-validation.md`.
 
 - [x] Observe one fixed-output and one seasonal market through a complete cycle; confirm output, storage, quotes, and stage changes are understandable and repeat.
 - [x] Deliver energy/survival goods during the fleet-response lag and confirm the target moves stage or later population trajectory within the documented horizon.
@@ -427,11 +427,11 @@ The non-interactive environment used deterministic headless diagnostics, app act
 
 ### Documentation to Update
 
-- [x] `docs/energy-economy.md` or a linked `docs/world-dynamics.md` — record the final ladder, seasons, fleet, population, investment, and determinism contracts.
+- [x] `archive/market-trading-prototype/docs/energy-economy.md` or a linked `docs/world-dynamics.md` — record the final ladder, seasons, fleet, population, investment, and determinism contracts.
 - [x] `docs/architecture.md` — update only enduring component/resource, lifecycle, and deterministic phase-order facts.
 - [x] `README.md` — update player-facing diagnostics/governor commands if exposed there.
 - [x] `CHANGELOG.md` — add user-visible world dynamics, diagnostics, TUI, and governor changes under `Unreleased` after implementation.
-- [x] Owner override: leave `todos/007-pending-p1-slice-2-world-dynamics-population-and-player-progression.md` unchanged; status/work-log mutation was explicitly excluded from this implementation run.
+- [x] Owner override at implementation time: leave `todos/007-complete-p1-slice-2-world-dynamics-population-and-player-progression.md` unchanged; status/work-log mutation was explicitly excluded from that implementation run. The todo was later closed as obsolete by the governance-sandbox direction shift.
 
 ### Intentional Follow-up
 
@@ -448,8 +448,8 @@ References use project-root-relative paths.
 
 ### Internal Evidence Index
 
-- **E1 — Governing design truth:** `todos/007-pending-p1-slice-2-world-dynamics-population-and-player-progression.md:20-69,73-123,127-187` — timescale layering, ladder, seasons, population, dynamic fleet, investments, progression, diagnostics, sequencing, and risks.
-- **E2 — Slice 1 runtime contract:** `docs/energy-economy.md:24-40,58-96,98-124` — generation/life support, reserves, anti-strand, deterministic operations/phases, content, and reconciliation.
+- **E1 — Historical design source:** `todos/007-complete-p1-slice-2-world-dynamics-population-and-player-progression.md:20-69,73-123,127-187` — the then-governing timescale layering, ladder, seasons, population, dynamic fleet, investments, progression, diagnostics, sequencing, and risks; later made obsolete by the governance-sandbox direction shift.
+- **E2 — Slice 1 runtime contract:** `archive/market-trading-prototype/docs/energy-economy.md:24-40,58-96,98-124` — generation/life support, reserves, anti-strand, deterministic operations/phases, content, and reconciliation.
 - **E3 — Architectural boundaries:** `docs/architecture.md:105-156,188-254,304-356` — core commands/events/schedules, immutable app/TUI boundary, content pipeline, determinism, testing, and single-owner async model.
 - **E4 — Current core state/schedule:** `crates/game-core/src/lib.rs:190-265,437-511,766-867,1176-1322,1407-1431,2366-2427` — static population/generation, reserve helpers, typed events/commands, startup-only trader spawn, phase order, and generation/life support.
 - **E5 — Current policy/trader seams:** `crates/game-core/src/lib.rs:2235-2274,3420-3567,3888,4037,4574` — atomic policy/protected-budget recomputation, stable opportunity ordering, contention/life-support/liquidation regressions.
@@ -457,7 +457,7 @@ References use project-root-relative paths.
 - **E7 — App/TUI seams:** `crates/game-app/src/lib.rs:59-183,190-226,297-329,382-654`; `crates/game-tui/src/lib.rs:420-575` — typed requests, immutable energy/market/player views, event publication, and current textual market rendering.
 - **E8 — Diagnostics seam:** `crates/game-cli/src/main.rs:141-157,188-407,461-504` — tick argument, interval activity, market/flow/solvency output, and formatter tests.
 - **E9 — Current authored configuration:** `content/economy_config.ron:1-16`; `content/traders.ron:1-25` — no ladder/season/population-dynamics/investment shape and fixed count of nine NPC traders.
-- **E10 — Dependency plan:** `docs/plans/2026-07-12-feature-energy-denominated-economy-foundation-plan.md` — accepted Slice 1 implementation sequence, validation patterns, compatibility stance, and deferred Slice 2 scope.
+- **E10 — Dependency plan:** `archive/market-trading-prototype/docs/plans/2026-07-12-feature-energy-denominated-economy-foundation-plan.md` — accepted Slice 1 implementation sequence, validation patterns, compatibility stance, and deferred Slice 2 scope.
 
 ### Institutional Knowledge
 

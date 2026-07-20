@@ -79,7 +79,7 @@ Keep this todo pending until the economic actor and commitment model is selected
 - `crates/game-content/src/lib.rs` — validation if contract, credit, or liquidity parameters become authored configuration.
 - `content/economy_config.ron` — likely home for market credit, reservation, expiry, or settlement policy parameters.
 - `content/economy.ron` — possible per-market liquidity or contract-capacity overrides.
-- `docs/initial-prototype.md` — document the selected transaction and commitment model.
+- `archive/market-trading-prototype/docs/initial-prototype.md` — document the selected transaction and commitment model.
 
 **Related systems:**
 - Automated trader decision-making
@@ -98,7 +98,7 @@ Keep this todo pending until the economic actor and commitment model is selected
 - **Review/PR/changeset:** PR #3 — economy-flow balancing
 - **Related issue/card:** None
 - **Log/capture:** Run `cargo run -p game-cli -- --economy-diagnostics 1000` for permanent 50-tick activity and final cash-flow diagnostics.
-- **Documentation:** `docs/initial-prototype.md`
+- **Documentation:** `archive/market-trading-prototype/docs/initial-prototype.md`
 - **Similar pattern:** `crates/game-core/src/lib.rs` atomic market transaction validation
 
 ## Acceptance Criteria
@@ -188,7 +188,7 @@ Keep this todo pending until the economic actor and commitment model is selected
 
 ## Notes
 
-- Superseded by todo 006 and `docs/energy-economy.md`.
+- Superseded by todo 006 and `archive/market-trading-prototype/docs/energy-economy.md`.
 - Do not implement a partial-sale-only fix without first deciding the market commitment and liquidity model.
 - Preserve the existing validate-before-mutate transaction guarantees.
 - The unrelated untracked `.obsidian/` directory must remain untouched.

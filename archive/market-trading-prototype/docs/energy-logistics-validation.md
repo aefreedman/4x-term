@@ -3,7 +3,7 @@ title: Physical Energy Logistics Validation Contract
 type: validation
 date: 2026-07-15
 status: active
-plan: docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md
+plan: archive/market-trading-prototype/docs/plans/2026-07-14-feature-physical-energy-logistics-plan.md
 ---
 # Physical Energy Logistics Validation Contract
 
@@ -246,7 +246,7 @@ Required metrics: gross/net delivery, loaded/deadhead/recovery burn, carrier fee
 - Main rerun: all 101 game-core tests pass; game-core Clippy with warnings denied, format, and diff checks pass. Full workspace validation is recorded with the integration commit.
 - Existing NPCs collect one canonical positive-score choice across Energy and ordinary work. Executable cases prove Energy selection, more-profitable ordinary selection, stale exact-payload contention, stable carrier-ID winners, and no ordinary Energy request path.
 - Forward/reverse/pseudo-random insertion fixtures produce identical intent contention, destination settlement, and recovery results. Recovery uses checked immutable `departure + stored route ticks` arrival keys, including a fixture where arrival order conflicts with contract-ID order.
-- D13 phase order is wired in `GameSession::step`, with destination arrivals marked in phase 1 and Energy maintenance/settlement/selection/resolution in phases 6/7/10/11. `docs/energy-economy.md` now records the canonical 15 phases.
+- D13 phase order is wired in `GameSession::step`, with destination arrivals marked in phase 1 and Energy maintenance/settlement/selection/resolution in phases 6/7/10/11. `archive/market-trading-prototype/docs/energy-economy.md` now records the canonical 15 phases.
 - Profitability tracks cumulative reimbursement and reimbursed-travel subsets without duplicating mutable contract payment state. Local loaded burn and recovery are neutral across tick boundaries, remote deadhead remains cost, earned fee contributes once, and active contracts/locked lots cannot trigger or complete retirement. Pre-load arithmetic overflow propagates without terminalizing or partially mutating the contract.
 - Read-only architecture/spec review findings for retirement gating, frozen recovery-arrival order, phase-1 marking, and preload overflow classification were corrected and rerun. Archetype-aware spawn selection/unserved demand remains explicitly owned by Wave 4; named presentation ledgers remain Wave 5.
 
