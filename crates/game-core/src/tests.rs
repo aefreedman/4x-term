@@ -30,7 +30,11 @@ fn assert_physical_delta_reconciles(before: &CoreSnapshot, after: &CoreSnapshot)
     let physical_delta = physical_energy(after) - physical_energy(before);
     let flow_delta = i128::from(after.energy_flow.net_external_delta().0)
         - i128::from(before.energy_flow.net_external_delta().0);
-    assert_eq!(physical_delta, flow_delta);
+    assert_eq!(
+        physical_delta, flow_delta,
+        "physical Energy reconciliation failed: before_flow={:?} after_flow={:?}",
+        before.energy_flow, after.energy_flow
+    );
 }
 
 fn definition() -> GameDefinition {
@@ -3659,32 +3663,16 @@ fn reservation_contention_is_stable_and_partial_settlement_releases_claim() {
 }
 #[test]
 fn energy_flow_reconciles_external_delta() {
-    let mut s = GameSession::new(definition()).unwrap();
-    let before = s.snapshot();
-    let total_before: i64 = before.markets.iter().map(|m| m.energy_stock.0).sum::<i64>()
-        + before
-            .traders
-            .iter()
-            .map(|t| {
-                t.energy_tank.0
-                    + i64::try_from(t.cargo.get(&id(ENERGY_ID)).copied().unwrap_or(0)).unwrap()
-            })
-            .sum::<i64>();
-    s.step().unwrap();
-    let after = s.snapshot();
-    let total_after: i64 = after.markets.iter().map(|m| m.energy_stock.0).sum::<i64>()
-        + after
-            .traders
-            .iter()
-            .map(|t| {
-                t.energy_tank.0
-                    + i64::try_from(t.cargo.get(&id(ENERGY_ID)).copied().unwrap_or(0)).unwrap()
-            })
-            .sum::<i64>();
-    assert_eq!(
-        total_after - total_before,
-        i64::try_from(i128::from(after.energy_flow.net_external_delta().0)).unwrap()
+    let mut session = GameSession::new(definition()).unwrap();
+    let before = session.snapshot();
+    session.step().unwrap();
+    let after = session.snapshot();
+    assert_ne!(
+        after.energy_flow.net_external_delta(),
+        before.energy_flow.net_external_delta(),
+        "reconciliation evidence requires nonzero physical flow"
     );
+    assert_physical_delta_reconciles(&before, &after);
 }
 
 #[test]

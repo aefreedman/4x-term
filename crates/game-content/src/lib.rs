@@ -1595,10 +1595,12 @@ fn compute_protected_budgets(
             travel_burn_per_distance: trader.travel_burn_per_distance,
         })
         .collect::<Vec<_>>();
+    let dynamic_fleet = matches!(&fleet.mode, Some(FleetMode::Dynamic { .. }));
     capabilities.extend(
         fleet
             .archetypes
             .values()
+            .filter(|archetype| dynamic_fleet || archetype.initial_count > 0)
             .map(FleetArchetype::liquidation_capability),
     );
     for system in systems.iter_mut() {
@@ -1618,10 +1620,6 @@ fn compute_protected_budgets(
 mod tests {
     use super::*;
 
-    fn root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content")
-    }
-
     type SourceFixture = (
         Vec<SystemSource>,
         Vec<GoodSource>,
@@ -1632,42 +1630,196 @@ mod tests {
     );
 
     fn small_source_fixture() -> SourceFixture {
-        let mut systems: Vec<SystemSource> = load(root().join("systems.ron")).unwrap();
-        systems.truncate(3);
-        for (index, system) in systems.iter_mut().enumerate() {
-            system.position = PositionSource {
-                x: index as f64 * 10.0,
-                y: 0.0,
-                z: 0.0,
-            };
-        }
-        let system_ids = systems
-            .iter()
-            .map(|system| system.id.clone())
-            .collect::<BTreeSet<_>>();
-
-        let mut goods: Vec<GoodSource> = load(root().join("goods.ron")).unwrap();
-        goods
-            .iter_mut()
-            .find(|good| good.id == ENERGY_ID)
-            .unwrap()
-            .bootstrap_cost = 2;
-        let recipes = load(root().join("recipes.ron")).unwrap();
-        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
-        economy
-            .markets
-            .retain(|market| system_ids.contains(&market.system));
-        let config = load(root().join("economy_config.ron")).unwrap();
-        let mut traders: TraderConfigSource = load(root().join("traders.ron")).unwrap();
-        traders.player.starting_system = systems[0].id.clone();
-        traders.npcs.mode = NpcFleetModeSource::Fixed;
-        traders.npcs.archetypes.clear();
-        traders.npcs.dynamic.opportunity_threshold = 0;
-        traders.npcs.dynamic.opportunity_window = 0;
-        traders.npcs.dynamic.spawn_cooldown_ticks = 0;
-        traders.npcs.dynamic.retirement_window = 0;
-        traders.npcs.dynamic.maximum_count = 0;
+        let systems = (0..3)
+            .map(|index| SystemSource {
+                id: format!("fixture:system_{index}"),
+                name: format!("System {index}"),
+                position: PositionSource {
+                    x: f64::from(index) * 10.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+            })
+            .collect();
+        let goods = vec![
+            GoodSource {
+                id: ENERGY_ID.into(),
+                name: "Energy".into(),
+                category: CategorySource::Energy,
+                bootstrap_cost: 2,
+            },
+            GoodSource {
+                id: "fixture:ore".into(),
+                name: "Ore".into(),
+                category: CategorySource::Raw,
+                bootstrap_cost: 3,
+            },
+            GoodSource {
+                id: "fixture:alloy".into(),
+                name: "Alloy".into(),
+                category: CategorySource::Primary,
+                bootstrap_cost: 5,
+            },
+        ];
+        let recipes = vec![RecipeSource {
+            id: "fixture:smelt".into(),
+            name: "Smelt".into(),
+            layer: LayerSource::Primary,
+            inputs: vec![AmountSource {
+                good: "fixture:ore".into(),
+                quantity: 1,
+            }],
+            outputs: vec![OutputSource {
+                good: "fixture:alloy".into(),
+                quantity: 1,
+                cost_weight: 1,
+            }],
+            operating_energy: 1,
+            margin_percent: None,
+        }];
+        let economy = EconomySource {
+            markets: (0..3)
+                .map(|index| MarketSource {
+                    system: format!("fixture:system_{index}"),
+                    starting_energy: 100,
+                    inventory: vec![],
+                    targets: vec![],
+                    recipes: vec![],
+                    sources: vec![],
+                    star_luminosity: 10,
+                    collector_efficiency: 100,
+                    energy_storage_cap: 1_000,
+                    population: 1,
+                    seasonal: SeasonalSource::default(),
+                    population_reference: None,
+                    population_cap: None,
+                    investment_allocation: None,
+                    governor: (index == 0).then(|| "fixture:player".into()),
+                    policy: MarketPolicyOverrideSource::default(),
+                    energy_logistics: EnergyLogisticsOverrideSource::default(),
+                    acknowledge_bootstrap_risk: false,
+                })
+                .collect(),
+        };
+        let config = EconomyConfigSource {
+            pricing_mode: PricingModeSource::CostAware,
+            producer_margin_percent: 10,
+            operating_reserve_ticks: 1,
+            import_priorities: vec![],
+            liquidation_threshold_percent: 100,
+            liquidation_discount_percent: 50,
+            default_target: 10,
+            reservation_ttl: 20,
+            life_support_burn_per_capita: 1,
+            source_output_percent: 100,
+            idle_trader_repositioning: false,
+            brownouts: BrownoutConfigSource {
+                throttled_entry_ticks: 3,
+                emergency_entry_ticks: 2,
+                starvation_entry_ticks: 1,
+                throttled_recovery_ticks: 4,
+                emergency_recovery_ticks: 3,
+                starvation_recovery_ticks: 2,
+                minimum_stage_ticks: 1,
+                throttled_throughput_percent: 50,
+                emergency_throughput_percent: 0,
+                starvation_throughput_percent: 0,
+                survival_goods: vec![ENERGY_ID.into()],
+            },
+            population: PopulationConfigSource {
+                static_population: true,
+                sufficiency_window: 10,
+                growth_sufficiency_percent: 90,
+                essential_goods: vec![ENERGY_ID.into()],
+                tertiary_demand: vec![],
+                decline_per_thousand: 10,
+                growth_per_thousand: 1,
+                logistic_scale: 1,
+                minimum_cap: 0,
+                maximum_cap: 100,
+                tier_thresholds: vec![1, 5, 10],
+            },
+            investments: [
+                InvestmentKindSource::Collector,
+                InvestmentKindSource::Storage,
+                InvestmentKindSource::PopulationSupport,
+                InvestmentKindSource::RouteSubsidy,
+            ]
+            .into_iter()
+            .map(|kind| InvestmentShapeSource {
+                kind,
+                enabled: true,
+                base_cost: 10,
+                cost_growth_percent: 100,
+                maximum_level: 1,
+                cooldown_ticks: 1,
+                effect_per_level: 1,
+            })
+            .collect(),
+            default_investment_allocation: [
+                InvestmentKindSource::Collector,
+                InvestmentKindSource::Storage,
+                InvestmentKindSource::PopulationSupport,
+                InvestmentKindSource::RouteSubsidy,
+            ]
+            .into_iter()
+            .map(|kind| InvestmentAllocationSource { kind, percent: 25 })
+            .collect(),
+            energy_logistics: EnergyLogisticsSource {
+                carrier_fee_bps: vec![10, 20, 30, 40],
+                max_allocation_bps: 1_000,
+                curtailment_projection_window: 10,
+                export_reserve: 0,
+                authored_export_base: 0,
+                settlement_timeout_ticks: 10,
+            },
+        };
+        let traders = TraderConfigSource {
+            player: PlayerTraderSource {
+                id: "fixture:player".into(),
+                name: "Player".into(),
+                starting_system: "fixture:system_0".into(),
+                energy_tank: 100,
+                energy_tank_capacity: 100,
+                bulk_energy_capacity: 0,
+                cargo_capacity: 10,
+                speed: 1.0,
+                travel_burn_per_distance: 1,
+                refuel_policy: RefuelPolicySource::DepositAndWithdraw,
+                trade_network_access: TradeNetworkAccessSource::Offline,
+            },
+            npcs: NpcTraderSource {
+                mode: NpcFleetModeSource::Fixed,
+                archetypes: vec![],
+                dynamic: DynamicFleetSource {
+                    opportunity_threshold: 1,
+                    opportunity_window: 1,
+                    spawn_cooldown_ticks: 1,
+                    retirement_window: 1,
+                    retirement_threshold: 0,
+                    maximum_count: 1,
+                },
+            },
+        };
         (systems, goods, recipes, economy, config, traders)
+    }
+
+    fn short_range_archetype(id: &str) -> NpcArchetypeSource {
+        NpcArchetypeSource {
+            id: id.into(),
+            id_prefix: id.into(),
+            name_prefix: "Short Range".into(),
+            initial_count: 0,
+            maximum_count: 1,
+            energy_tank: 1,
+            energy_tank_capacity: 1,
+            bulk_energy_capacity: 0,
+            cargo_capacity: 1,
+            speed: 1.0,
+            travel_burn_per_distance: 1,
+            refuel_policy: RefuelPolicySource::DepositAndWithdraw,
+            initial_distribution: vec![],
+        }
     }
 
     #[test]
@@ -1701,39 +1853,32 @@ mod tests {
     #[test]
     fn fixed_optional_archetype_route_capacity_is_not_a_content_gate() {
         let (systems, goods, recipes, economy, config, mut traders) = small_source_fixture();
-        traders.npcs.archetypes.push(NpcArchetypeSource {
-            id: "fixture:short_range".into(),
-            id_prefix: "fixture:short_range".into(),
-            name_prefix: "Short Range".into(),
-            initial_count: 0,
-            maximum_count: 1,
-            energy_tank: 1,
-            energy_tank_capacity: 1,
-            bulk_energy_capacity: 0,
-            cargo_capacity: 1,
-            speed: 1.0,
-            travel_burn_per_distance: 1,
-            refuel_policy: RefuelPolicySource::DepositAndWithdraw,
-            initial_distribution: vec![],
-        });
+        traders
+            .npcs
+            .archetypes
+            .push(short_range_archetype("fixture:short_range"));
 
         let loaded = compile(systems, goods, recipes, economy, config, traders).unwrap();
         assert_eq!(loaded.definition.fleet.archetypes.len(), 1);
         assert_eq!(loaded.definition.systems.len(), 3);
+        assert!(
+            loaded
+                .definition
+                .systems
+                .iter()
+                .all(|system| system.protected_liquidation_budget > Energy::ZERO),
+            "an inapplicable zero-count archetype must not erase player-derived budgets"
+        );
+        game_core::GameSession::new(loaded.definition).unwrap();
     }
 
     #[test]
     fn removed_energy_import_priorities_report_exact_source_contexts() {
-        let systems = load(root().join("systems.ron")).unwrap();
-        let goods = load(root().join("goods.ron")).unwrap();
-        let recipes = load(root().join("recipes.ron")).unwrap();
-        let economy = load(root().join("economy.ron")).unwrap();
-        let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+        let (systems, goods, recipes, economy, mut config, traders) = small_source_fixture();
         config.import_priorities.push(PrioritySource {
             good: ENERGY_ID.into(),
             percent: 200,
         });
-        let traders = load(root().join("traders.ron")).unwrap();
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
             .to_string();
@@ -1744,47 +1889,31 @@ mod tests {
             "{error}"
         );
 
-        let systems = load(root().join("systems.ron")).unwrap();
-        let goods = load(root().join("goods.ron")).unwrap();
-        let recipes = load(root().join("recipes.ron")).unwrap();
-        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
+        let (systems, goods, recipes, mut economy, config, traders) = small_source_fixture();
         economy.markets[0].policy.import_priorities = Some(vec![PrioritySource {
             good: ENERGY_ID.into(),
             percent: 130,
         }]);
-        let config = load(root().join("economy_config.ron")).unwrap();
-        let traders = load(root().join("traders.ron")).unwrap();
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("economy.ron:frontier:system_01:policy:import_priorities: core:energy import priority is obsolete"),
+            error.contains("economy.ron:fixture:system_0:policy:import_priorities: core:energy import priority is obsolete"),
             "{error}"
         );
     }
 
     #[test]
     fn malformed_world_dynamics_report_source_contexts() {
-        let systems = load(root().join("systems.ron")).unwrap();
-        let goods = load(root().join("goods.ron")).unwrap();
-        let recipes = load(root().join("recipes.ron")).unwrap();
-        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
-        let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
-        let mut traders: TraderConfigSource = load(root().join("traders.ron")).unwrap();
-
+        let (systems, goods, recipes, mut economy, mut config, mut traders) =
+            small_source_fixture();
         config.brownouts.emergency_entry_ticks = config.brownouts.throttled_entry_ticks;
         config.population.growth_per_thousand = config.population.decline_per_thousand;
         config.investments.pop();
         economy.markets[0].seasonal.period_ticks = 0;
-        economy.markets[0].governor = Some("frontier:missing_player".into());
+        economy.markets[0].governor = Some("fixture:missing_player".into());
         traders.npcs.mode = NpcFleetModeSource::Dynamic;
-        traders.npcs.dynamic.maximum_count = traders
-            .npcs
-            .archetypes
-            .iter()
-            .map(|archetype| archetype.initial_count)
-            .sum::<usize>()
-            - 1;
+        traders.npcs.dynamic.maximum_count = 0;
 
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
@@ -1793,8 +1922,8 @@ mod tests {
             "economy_config.ron:brownouts",
             "economy_config.ron:population",
             "economy_config.ron:investments",
-            "economy.ron:frontier:system_01:seasonal",
-            "economy.ron:frontier:system_01:governor",
+            "economy.ron:fixture:system_0:seasonal",
+            "economy.ron:fixture:system_0:governor",
             "traders.ron:npcs:dynamic",
         ] {
             assert!(error.contains(context), "missing {context} in {error}");
@@ -1804,13 +1933,8 @@ mod tests {
     #[test]
     fn malformed_energy_logistics_policy_reports_exact_source_contexts() {
         fn compile_with(mutator: fn(&mut EconomyConfigSource)) -> String {
-            let systems = load(root().join("systems.ron")).unwrap();
-            let goods = load(root().join("goods.ron")).unwrap();
-            let recipes = load(root().join("recipes.ron")).unwrap();
-            let economy = load(root().join("economy.ron")).unwrap();
-            let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+            let (systems, goods, recipes, economy, mut config, traders) = small_source_fixture();
             mutator(&mut config);
-            let traders = load(root().join("traders.ron")).unwrap();
             compile(systems, goods, recipes, economy, config, traders)
                 .unwrap_err()
                 .to_string()
@@ -1819,7 +1943,7 @@ mod tests {
         type ConfigMutation = fn(&mut EconomyConfigSource);
         let cases: [(ConfigMutation, &str); 4] = [
             (
-                |config| config.energy_logistics.carrier_fee_bps[1] = 50,
+                |config| config.energy_logistics.carrier_fee_bps[1] = 10,
                 "economy_config.ron:energy_logistics:carrier_fee_bps",
             ),
             (
@@ -1840,130 +1964,100 @@ mod tests {
             assert!(error.contains(context), "missing {context} in {error}");
         }
 
-        let systems = load(root().join("systems.ron")).unwrap();
-        let goods = load(root().join("goods.ron")).unwrap();
-        let recipes = load(root().join("recipes.ron")).unwrap();
-        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
-        economy.markets[0].energy_logistics.max_allocation_bps = Some(300);
-        let config = load(root().join("economy_config.ron")).unwrap();
-        let traders = load(root().join("traders.ron")).unwrap();
+        let (systems, goods, recipes, mut economy, config, traders) = small_source_fixture();
+        economy.markets[0].energy_logistics.max_allocation_bps = Some(30);
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("economy.ron:frontier:system_01:energy_logistics:carrier_fee_bps"),
+            error.contains("economy.ron:fixture:system_0:energy_logistics:carrier_fee_bps"),
             "{error}"
         );
     }
 
     #[test]
     fn duplicate_archetype_id_reports_source_context() {
-        let systems = load(root().join("systems.ron")).unwrap();
-        let goods = load(root().join("goods.ron")).unwrap();
-        let recipes = load(root().join("recipes.ron")).unwrap();
-        let economy = load(root().join("economy.ron")).unwrap();
-        let config = load(root().join("economy_config.ron")).unwrap();
-        let mut traders: TraderConfigSource = load(root().join("traders.ron")).unwrap();
-        traders.npcs.archetypes[1].id = traders.npcs.archetypes[0].id.clone();
-        let duplicate = traders.npcs.archetypes[1].id.clone();
+        let (systems, goods, recipes, economy, config, mut traders) = small_source_fixture();
+        traders
+            .npcs
+            .archetypes
+            .push(short_range_archetype("fixture:duplicate"));
+        traders
+            .npcs
+            .archetypes
+            .push(short_range_archetype("fixture:duplicate"));
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains(&format!(
-                "traders.ron:npcs:archetype:{duplicate}: duplicate archetype id"
-            )),
+            error.contains("traders.ron:npcs:archetype:fixture:duplicate: duplicate archetype id"),
             "{error}"
         );
     }
 
     #[test]
     fn investment_effect_bound_errors_retain_source_context() {
-        let systems = load(root().join("systems.ron")).unwrap();
-        let goods = load(root().join("goods.ron")).unwrap();
-        let recipes = load(root().join("recipes.ron")).unwrap();
-        let economy = load(root().join("economy.ron")).unwrap();
-        let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
-        let traders = load(root().join("traders.ron")).unwrap();
+        let (systems, goods, recipes, economy, mut config, traders) = small_source_fixture();
         let route = config
             .investments
             .iter_mut()
             .find(|shape| matches!(shape.kind, InvestmentKindSource::RouteSubsidy))
             .unwrap();
-        route.maximum_level = 1;
-        route.effect_per_level = u32::MAX - 99;
+        route.effect_per_level = u32::MAX;
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
             .to_string();
-        assert!(
-            error.contains("economy_config.ron:investments"),
-            "missing config source context in {error}"
-        );
+        assert!(error.contains("economy_config.ron:investments"), "{error}");
 
-        let systems = load(root().join("systems.ron")).unwrap();
-        let goods = load(root().join("goods.ron")).unwrap();
-        let recipes = load(root().join("recipes.ron")).unwrap();
-        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
-        let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
-        let traders = load(root().join("traders.ron")).unwrap();
+        let (systems, goods, recipes, mut economy, mut config, traders) = small_source_fixture();
         let storage = config
             .investments
             .iter_mut()
             .find(|shape| matches!(shape.kind, InvestmentKindSource::Storage))
             .unwrap();
-        storage.enabled = true;
-        storage.maximum_level = 1;
         storage.effect_per_level = 1;
         economy.markets[0].energy_storage_cap = i64::MAX;
-        let system = economy.markets[0].system.clone();
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains(&format!("economy.ron:{system}:investments")),
-            "missing market source context in {error}"
-        );
-    }
-
-    #[test]
-    fn dynamic_trader_namespace_collision_reports_source_context() {
-        let systems = load(root().join("systems.ron")).unwrap();
-        let goods = load(root().join("goods.ron")).unwrap();
-        let recipes = load(root().join("recipes.ron")).unwrap();
-        let economy = load(root().join("economy.ron")).unwrap();
-        let config = load(root().join("economy_config.ron")).unwrap();
-        let mut traders: TraderConfigSource = load(root().join("traders.ron")).unwrap();
-        traders.npcs.mode = NpcFleetModeSource::Dynamic;
-        traders.player.id = format!("{}_dynamic_00000001", traders.npcs.archetypes[0].id_prefix);
-
-        let error = compile(systems, goods, recipes, economy, config, traders)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("traders.ron:npcs:archetype:frontier:general_freighter:id_prefix: generated trader namespace")
-                && error.contains("_dynamic_00000001"),
+            error.contains("economy.ron:fixture:system_0:investments"),
             "{error}"
         );
     }
 
     #[test]
-    fn nonzero_seasonal_amplitude_rejects_odd_period_with_source_context() {
-        let systems = load(root().join("systems.ron")).unwrap();
-        let goods = load(root().join("goods.ron")).unwrap();
-        let recipes = load(root().join("recipes.ron")).unwrap();
-        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
-        let config = load(root().join("economy_config.ron")).unwrap();
-        let traders = load(root().join("traders.ron")).unwrap();
-        economy.markets[0].seasonal.amplitude_percent = 20;
-        economy.markets[0].seasonal.period_ticks = 3;
-        economy.markets[0].seasonal.phase_ticks = 0;
+    fn dynamic_trader_namespace_collision_reports_source_context() {
+        let (systems, goods, recipes, economy, config, mut traders) = small_source_fixture();
+        traders
+            .npcs
+            .archetypes
+            .push(short_range_archetype("fixture:short"));
+        traders.npcs.mode = NpcFleetModeSource::Dynamic;
+        traders.player.id = "fixture:short_dynamic_00000001".into();
 
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
             .to_string();
         assert!(
             error.contains(
-                "economy.ron:frontier:system_01:seasonal: nonzero amplitude requires an even period"
+                "traders.ron:npcs:archetype:fixture:short:id_prefix: generated trader namespace"
+            ) && error.contains("fixture:short_dynamic_00000001"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn nonzero_seasonal_amplitude_rejects_odd_period_with_source_context() {
+        let (systems, goods, recipes, mut economy, config, traders) = small_source_fixture();
+        economy.markets[0].seasonal.amplitude_percent = 20;
+        economy.markets[0].seasonal.period_ticks = 3;
+        let error = compile(systems, goods, recipes, economy, config, traders)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(
+                "economy.ron:fixture:system_0:seasonal: nonzero amplitude requires an even period"
             ),
             "{error}"
         );
@@ -1971,29 +2065,26 @@ mod tests {
 
     #[test]
     fn duplicate_market_schedules_report_source_contexts() {
-        let systems = load(root().join("systems.ron")).unwrap();
-        let goods = load(root().join("goods.ron")).unwrap();
-        let recipes = load(root().join("recipes.ron")).unwrap();
-        let mut economy: EconomySource = load(root().join("economy.ron")).unwrap();
-        let config = load(root().join("economy_config.ron")).unwrap();
-        let traders = load(root().join("traders.ron")).unwrap();
-
-        let source = &economy.markets[0].sources[0];
-        let duplicate_source = SourceSource {
+        let (systems, goods, recipes, mut economy, config, traders) = small_source_fixture();
+        let source = SourceSource {
+            good: "fixture:ore".into(),
+            quantity_per_tick: 1,
+            extraction_energy: 1,
+        };
+        economy.markets[0].sources.push(SourceSource {
             good: source.good.clone(),
             quantity_per_tick: source.quantity_per_tick,
             extraction_energy: source.extraction_energy,
-        };
-        economy.markets[0].sources.push(duplicate_source);
-        let recipe = economy.markets[4].recipes[0].clone();
-        economy.markets[4].recipes.push(recipe);
+        });
+        economy.markets[0].sources.push(source);
+        economy.markets[1].recipes = vec!["fixture:smelt".into(), "fixture:smelt".into()];
 
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
             .to_string();
         for context in [
-            "economy.ron:frontier:system_01:sources: duplicate source good",
-            "economy.ron:frontier:system_05:recipes: duplicate recipe",
+            "economy.ron:fixture:system_0:sources: duplicate source good",
+            "economy.ron:fixture:system_1:recipes: duplicate recipe",
         ] {
             assert!(error.contains(context), "missing {context} in {error}");
         }
@@ -2010,13 +2101,8 @@ mod tests {
     #[test]
     fn population_window_content_accepts_maximum_and_rejects_first_value_above_it() {
         let compile_with_window = |window| {
-            let systems = load(root().join("systems.ron")).unwrap();
-            let goods = load(root().join("goods.ron")).unwrap();
-            let recipes = load(root().join("recipes.ron")).unwrap();
-            let economy = load(root().join("economy.ron")).unwrap();
-            let mut config: EconomyConfigSource = load(root().join("economy_config.ron")).unwrap();
+            let (systems, goods, recipes, economy, mut config, traders) = small_source_fixture();
             config.population.sufficiency_window = window;
-            let traders = load(root().join("traders.ron")).unwrap();
             compile(systems, goods, recipes, economy, config, traders)
         };
         assert!(compile_with_window(MAX_POPULATION_SUFFICIENCY_WINDOW_TICKS).is_ok());
@@ -2045,22 +2131,16 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_recipe_inputs_and_outputs_with_source_context() {
-        let systems = load(root().join("systems.ron")).unwrap();
-        let goods = load(root().join("goods.ron")).unwrap();
-        let mut recipes: Vec<RecipeSource> = load(root().join("recipes.ron")).unwrap();
+        let (systems, goods, mut recipes, economy, config, traders) = small_source_fixture();
         let duplicate_input = recipes[0].inputs[0].clone();
         let duplicate_output = recipes[0].outputs[0].clone();
         recipes[0].inputs.push(duplicate_input);
         recipes[0].outputs.push(duplicate_output);
-        let economy = load(root().join("economy.ron")).unwrap();
-        let config = load(root().join("economy_config.ron")).unwrap();
-        let traders = load(root().join("traders.ron")).unwrap();
         let error = compile(systems, goods, recipes, economy, config, traders)
             .unwrap_err()
             .to_string();
-        assert!(error.contains("recipes.ron:"));
-        assert!(error.contains(":input: duplicate good"));
-        assert!(error.contains(":output: duplicate good"));
+        assert!(error.contains("recipes.ron:fixture:smelt:input: duplicate good"));
+        assert!(error.contains("recipes.ron:fixture:smelt:output: duplicate good"));
     }
 
     #[test]

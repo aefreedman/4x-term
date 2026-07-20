@@ -117,7 +117,7 @@ pub struct GoodDefinition {
     pub id: ContentId,
     pub name: String,
     pub category: GoodCategory,
-    /// Initial embodied-energy cost per unit. `core:energy` must be exactly one.
+    /// Initial embodied-Energy cost per unit; not a market-price or numeraire contract.
     pub bootstrap_cost: Energy,
 }
 
