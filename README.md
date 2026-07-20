@@ -5,10 +5,12 @@ A data-driven 4X terminal game written in Rust.
 The planned architecture keeps the headless ECS simulation independent from terminal rendering so other frontends remain possible. See [docs/architecture.md](docs/architecture.md) for the current design.
 
 > **Transition status:** The runnable build described below is the legacy authored
-> market-trading prototype. It remains operational while the project migrates,
-> but its trader-first flow, independent NPC ecology, and metastability targets
-> are not current product or compatibility requirements. Current direction is
-> defined by the [Governance Sandbox](docs/2026-07-20-design-direction-governance-sandbox.md)
+> market-trading prototype at this revision. Migration work does not promise to
+> keep it playable: obsolete gameplay, content, diagnostics, tests, and UI may be
+> deleted before the origin-and-frontier replacement is runnable. Git history,
+> rather than compatibility code or a working-tree archive, preserves the old
+> version. Current direction is defined by the
+> [Governance Sandbox](docs/2026-07-20-design-direction-governance-sandbox.md)
 > and [Testing Stance and Constructive Worldgen](docs/2026-07-20-testing-stance-correction.md).
 
 ## Development setup
