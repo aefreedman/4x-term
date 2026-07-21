@@ -2811,6 +2811,47 @@ mod tests {
     }
 
     #[test]
+    fn stacked_functional_batteries_set_exact_retention_cap_and_overflow() {
+        let mut definition = stage4_definition(0);
+        let engine = stage4_engine_mut(&mut definition);
+        engine.collector_energy_profile = [199, 1, 3, 0, 0, 0, 0, 0, 0, 0];
+        for (index, slot) in [1, 2].into_iter().enumerate() {
+            engine.bodies[0].slots[slot].development = Some(development(
+                &format!("core:battery_{index}"),
+                DevelopmentRole::Battery,
+                DevelopmentCondition::Functional,
+                None,
+            ));
+        }
+        let expected_capacity = engine
+            .config
+            .battery_energy_capacity
+            .checked_mul(2)
+            .and_then(|battery_capacity| {
+                engine
+                    .config
+                    .intrinsic_energy_capacity
+                    .checked_add(battery_capacity)
+            })
+            .unwrap();
+        let mut state = WorldState::new(definition).unwrap();
+
+        for (energy, headroom, last_tick_overflow, cumulative_overflow) in
+            [(209, 1, 0, 0), (210, 0, 0, 0), (210, 0, 3, 3)]
+        {
+            let snapshot = state.advance_tick().unwrap();
+            assert_eq!(snapshot.energy_capacity, expected_capacity);
+            assert_eq!(snapshot.energy_headroom, headroom);
+            assert_eq!(snapshot.stocks.quantity(&id(ENERGY_ID)), energy);
+            assert_eq!(
+                snapshot.energy_overflow.last_tick_retention,
+                last_tick_overflow
+            );
+            assert_eq!(snapshot.energy_overflow.cumulative, cumulative_overflow);
+        }
+    }
+
+    #[test]
     fn damaged_and_ruined_developments_have_no_stage4_consequences() {
         let mut definition = stage4_definition(0);
         definition.deposits.push(ResourceDepositDefinition {
