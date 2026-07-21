@@ -5,9 +5,24 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+test-support = []
+
 [dependencies]
-bevy_ecs.workspace = true
 thiserror.workspace = true
+
+[[test]]
+name = "global_tick_integration"
+required-features = ["test-support"]
+
+[[test]]
+name = "routing_knowledge"
+required-features = ["test-support"]
+
+[[test]]
+name = "ships_expansion"
+required-features = ["test-support"]
 
 [lints]
 workspace = true
