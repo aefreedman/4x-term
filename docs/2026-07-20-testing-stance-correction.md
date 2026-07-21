@@ -15,7 +15,7 @@ at that time and supply their own exact contracts, migration inventories,
 and acceptance commands rather than treating this document as an
 executable specification.
 
-**Current migration boundary (2026-07-20):** Stages 1–4b are complete. The
+**Current migration boundary (2026-07-21):** Stages 1–4b are complete. The
 workspace retains only the headless `game-core` simulation and the
 schema/profile/generation `game-content` adapter. It has 56 focused tests and no
 ignored tests; constructive frontier generation and bounded probe/expedition
@@ -38,9 +38,10 @@ wrong target.
 
 The deeper correction: world viability is not a statistical property to
 verify after generation. It is **constructed where it matters and
-irrelevant everywhere else** (G18). The world starts dead except for the
-player's origin community (G17); there is no NPC market network whose
-health needs guaranteeing.
+irrelevant everywhere else** (G18). Revision 1 constructs the origin command
+seat at population zero with the approved physical scaffold; population is
+bootstrapped through a Habitat. The generated frontier starts neutral, with no
+NPC market network whose health needs guaranteeing.
 
 ## Relationship to the pre-cutover implementation
 
@@ -69,12 +70,13 @@ backward product compatibility.
 
 ### Tier 1 — Authored micro-fixtures (test mechanisms)
 
-- Small hand-written worlds: roughly 3–6 systems, minimal ships.
+- Small hand-written worlds: roughly 1–6 systems with only the bodies, slots,
+  developments, populations, and ships needed by the scenario.
 - Deterministic, with hand-computable expected outcomes.
-- Test *mechanisms*, one or few at a time: ladder-stage transitions at
-  known ticks, seasonal oscillation arithmetic, population hysteresis
-  stepping, reserve/funded-quantity recomputation per stage, and (as they
-  land) expedition resolution, survey layers, training recipes.
+- Test *mechanisms*, one or few at a time: fixed-point distance boundaries,
+  seasonal apportionment, body-resource contention, Habitat ready/finalize
+  timing, fact merge and delay, Shipyard queue progression, expedition
+  settlement/loss, and complete-state rollback.
 - Exact assertions are correct here. Agents may and should "solve for the
   fixture" — that is what fixtures are for.
 - Fast: runnable in seconds, suitable for inner-loop iteration and smoke
@@ -86,19 +88,19 @@ Generated-world tests assert exactly two kinds of things, both
 deterministic and exact — **no statistical acceptance criteria, no
 N-of-M seed thresholds, no viability screening or reject/reroll**:
 
-1. **Engine invariants**, on a handful of arbitrary seeds, over soak-length
-   runs: integer determinism (identical seed → identical run),
-   conservation, anti-strand for automated logistics, no deadlock,
-   validate-before-mutate. An invariant violation on any seed is always a
-   bug. (Extend this list from the invariants actually named in the repo;
-   do not invent new ones.)
-2. **The approved structural guarantees of G18**, beginning in Stage 4b as
-   exact per-seed assertions on generator output. These assert mandatory
-   records, references, placement scopes, and topology relationships derived
-   from implemented gameplay. They do not assert economic solvency, seasonal
+1. **Engine invariants**, on a handful of arbitrary seeds and only where their
+   applicability setup is present: deterministic identity/output, checked
+   arithmetic, sole ownership, population reconciliation, atomic mutation, and
+   other active entries in the invariant registry. An applicable invariant
+   violation on any seed is always a bug. Do not invent soak criteria for
+   reserved systems such as automated logistics or replay.
+2. **The approved structural guarantee of G18**, implemented in Stage 4b as
+   exact per-seed assertions on revision-1 generator output. It asserts the
+   mandatory origin records, references, placement, resources, starting stocks,
+   and development scaffold. It does not assert economic solvency, seasonal
    surplus, affordability or quantity floors, tick-zero action availability,
-   long-run survival, favorable distributions, or a reclaimable site unless an
-   implemented action makes that site structurally required.
+   long-run survival, nearby witnesses, favorable distributions, or a
+   reclaimable site.
 
 Everything else observed in a generated world — regions dying, odd resource
 quantities or distributions, economic weirdness at the frontier — is
@@ -153,8 +155,8 @@ replacement or copied into a working-tree archive; Git history preserves them.
 
 **Status:** recorded on 2026-07-20 in the
 [authored market-world migration audit](2026-07-20-authored-market-world-migration-audit.md).
-This records migration decisions only. Stages 2 and 3 are complete below;
-Stages 4–8 remain future work.
+This records migration decisions only. Stages 2 through 4b are complete below;
+Stages 5–8 remain future work.
 
 - Add the testing stance and norms to `AGENTS.md` and architecture notes.
 - Mark obsolete product assumptions clearly, including trader-first play,
@@ -249,6 +251,18 @@ bootstrap.
 
 ### Stage 4b — Implement constructive frontier and bounded expansion
 
+**Status:** completed on 2026-07-21 by
+[PR #15](https://github.com/aefreedman/4x-term/pull/15). The retained two-crate
+workspace now implements `core:frontier_world@1`, strict editable profiles and
+complete generation identity, fixed-point geometric routing, body-owned
+resources, a global ten-phase atomic tick, Habitat-backed population, delayed
+origin knowledge, Shipyards, probes, expeditions, founding, explicit loss, and
+a knowledge-filtered `PlayerWorldView`. The all-feature workspace suite has 56
+focused deterministic tests with no ignored tests. Exact current contracts and
+evidence are recorded in the [Stage 4b plan](plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md),
+the [architecture](architecture.md), and the
+[Engine Invariant Registry](2026-07-20-engine-invariant-registry.md).
+
 - Construct the approved origin-only G18 scaffold, then generate unconstrained
   frontier systems from explicit profiles. Target count, connectivity,
   reachability, quantities, and distributions are not generated-world quality
@@ -270,8 +284,8 @@ than an unsupported promise that all additions preserve old seed output.
 
 ### Stage 5 — Restore playable startup with the origin-and-frontier paradigm
 
-Stage 5 depends on the completed Stage 4 origin engine and Stage 4b generated
-world/bounded-expansion boundary.
+Stage 5 depends on the completed Stage 4b generated-world and bounded-expansion
+boundary.
 
 - Decide how a generated world is selected and composed for normal play,
   tests, diagnostics, and replay.
@@ -321,13 +335,13 @@ compatibility target for new work.
 
 ### Stage 8 — Hand off to expansion-gameplay slices
 
-After the world and testing foundations are truthful, carve separate plans
-for deeper scouting/expedition layers, resource ruins, site reclamation,
-cultural influence and delegation, automated freight/logistics, specialists,
-and richer delayed information. Stage 4b implements only its approved Habitat,
-probe, one-population founding, and origin-recipient information contracts. Later plans derive from G7–G16 and
-the open questions in the governance sandbox; they are not bundled into the
-origin-engine or constructive-generator slices.
+After the world and testing foundations are truthful, carve separate plans for
+deeper scouting/expedition layers, resource ruins, site reclamation, cultural
+influence and delegation, automated freight/logistics, specialists, and richer
+delayed information. Stage 4b implements only its approved Habitat, probe,
+one-population founding, and origin-recipient information contracts. Later
+plans derive from G7–G16 and the open questions in the governance sandbox; they
+are not bundled into the origin-engine or constructive-generator slices.
 
 ## Cross-stage constraints
 
