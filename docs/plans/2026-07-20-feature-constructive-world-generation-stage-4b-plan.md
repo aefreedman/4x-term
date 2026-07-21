@@ -63,6 +63,7 @@ required no disk-save migration or compatibility adapter.
 - Implementation base commit: `d8118fd`.
 - Implementation commit: `458a522` (the implementation phases were delivered
   together rather than as the suggested incremental phase commits).
+- Delivery PR: [#15](https://github.com/aefreedman/4x-term/pull/15).
 - Pre-change validation: workspace tests were run and had one pre-existing
   failure, `stage4_input_permutations_compile_to_the_same_definition`; the
   failing obsolete permutation assertion was replaced by current Stage 4b
@@ -562,9 +563,9 @@ Use incremental conventional commits, for example:
 7. `docs(stage-4b): record implementation evidence`
 
 - [ ] Update this plan's checkboxes in the corresponding incremental commit.
-- [ ] Include AI attribution in the final commit and PR body.
-- [ ] Push the implementation branch.
-- [ ] Create a PR using the project template.
+- [x] Include AI attribution in the final commit and PR body.
+- [x] Push the implementation branch.
+- [x] Create a PR using the project template.
 - [x] Report screenshots as not applicable because the stage is headless and
   non-visual.
 
