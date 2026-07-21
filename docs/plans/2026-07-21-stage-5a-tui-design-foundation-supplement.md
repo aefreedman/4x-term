@@ -1,43 +1,43 @@
 ---
 title: "Stage 5a TUI Planning Supplement — Design Foundation"
 type: plan-supplement
-status: draft-review
+status: approved
 date: 2026-07-21
+approved: 2026-07-21
 source: "../plans/2026-07-21-feature-playable-startup-stage-5-plan.md"
 ---
 # Stage 5a TUI Planning Supplement — Design Foundation
 
 ## Review purpose
 
-This draft supplements the Stage 5 implementation plan for review. It is not
-yet durable or approved game-design documentation. It establishes a reusable
-terminal design system, classifies the
-required Slice 5b surfaces, fixes common interaction behavior, and records the
-application-view boundary. It does not select Rust dependencies or implement
-widgets.
+This approved supplement establishes a reusable terminal design system,
+classifies the required Slice 5b surfaces, fixes common interaction behavior,
+and records the application-view boundary. It remains an implementation-plan
+supplement rather than durable game-design documentation. It does not select
+Rust dependencies or implement widgets.
 
-Approval should confirm the overall design direction and the decisions in the
-review table. Local panel composition may evolve inside this system; new
-interaction patterns or component types require review.
+The overall direction and every decision below are approved. Local panel
+composition may evolve inside this system; new interaction patterns or
+component types require review.
 
 See the exact-cell [reference wireframes](2026-07-21-stage-5a-tui-reference-wireframes-supplement.md).
 
-## Decisions requiring review
+## Decision review status
 
-| Decision | Proposed answer |
-| --- | --- |
-| Map when position is not known | Plot only systems with player-known positions. Keep identified but unpositioned systems selectable in the synchronized list with `--` for position; do not add explanatory sections inside the map. Never plot uncharted indications. Center the known origin without requiring a global coordinate. If a richer tick-zero spatial map is desired, change the scouting contract explicitly rather than reading hidden positions. |
-| Preview boundary | Preview is an allowlisted player summary: seed, profile name, and origin scaffold. Generator family/revision, fingerprint, provenance, aggregate count, and neutral-world facts are not player-facing. Starting play discards preview-detail state except seed/profile session identity. |
-| Multi-tick behavior | Execute and render one atomic tick at a time. Accept interruption only between ticks. Already completed ticks remain committed; a rejected tick remains uncommitted. Report requested, completed, stopped/rejected state, and visible per-tick changes. |
-| Correctable rejection | The application outcome explicitly says whether the draft is retainable. Construction validation failures retain slot, role, and optional target unless the selected slot is no longer a valid draft root. The TUI never infers this from error text. |
-| Quit without saves | Quit from startup is immediate. Quit from an active session requires confirmation stating that the session cannot be resumed and defaults to Cancel. |
-| Failed regeneration | Editing profile or seed immediately makes an existing preview stale and disables Start. A failed generation preserves edited fields and the visibly stale prior preview for comparison, but the stale preview cannot start a session. |
-| Undersized recovery | Below `160x45`, suspend multi-tick advancement, preserve focus/drafts/overlays, dispatch no gameplay intent, and allow only resize recovery or confirmed quit. Restore the exact prior UI state after recovery. |
-| Tick-zero Energy evidence | Render last-tick fields as `-- no completed tick --`, not as zero evidence. The application view represents this distinction explicitly. |
-| Habitat toggle | Use a lightweight confirmation showing current state and preserved progress. Unavailable controls remain visible with an application-provided reason. |
-| Larger terminals | Keep the approved 160x45 composition and deterministically expand list/map viewports. Do not invent a second responsive layout in Stage 5. |
-| Keyboard mode | Keyboard mode is a global TUI user setting, independent of profile, seed, generation identity, and session. It is changed through global settings, never through the generation form. Machine-local persistence may be added later without changing gameplay state. |
-| Player aliases | A charted system may receive a session-owned player alias. Collections show the alias first; detail retains the stable `FSC NNNNNN` label. Clearing restores the catalogue label. The TUI sends an intent and never owns the alias map. |
+| Decision | Review | Answer under review or approved |
+| --- | --- | --- |
+| Map when position is not known | Approved | Plot only systems with player-known positions. Keep identified but unpositioned systems selectable in the synchronized list with `--` for position; do not add explanatory sections inside the map. Never plot uncharted indications. Center the known origin without requiring a global coordinate. If a richer tick-zero spatial map is desired, change the scouting contract explicitly rather than reading hidden positions. |
+| Preview boundary | Approved | Preview is an allowlisted player summary: seed, profile name, and origin scaffold. Generator family/revision, fingerprint, provenance, aggregate count, and neutral-world facts are not player-facing. Starting play discards preview-detail state except seed/profile session identity. |
+| Multi-tick behavior | Approved | Execute and render one atomic tick at a time at a player-selected pace of 1, 5, or 10 ticks per second, defaulting to 5. Space pauses/resumes between ticks; Enter advances one tick while paused; Esc stops between ticks. Already completed ticks remain committed; a rejected tick remains uncommitted. Report requested, completed, stopped/rejected state, and visible per-tick changes. |
+| Correctable rejection | Approved | A rejected construction outcome explicitly supplies `Retain` or `InvalidateRoot`. `Retain` preserves slot, role, and optional target and returns from the concise rejection overlay to that draft. `InvalidateRoot` closes the draft and returns to the refreshed slot list. Accepted construction closes its draft. The TUI never infers recovery from error text. |
+| Quit without saves | Approved | Quit from startup is immediate. Quit from an active session requires confirmation stating that the session cannot be resumed and defaults to Cancel. |
+| Failed regeneration | Approved | Editing profile or seed immediately makes an existing preview stale and disables Start. A failed generation preserves edited fields and the visibly stale prior preview for comparison, but the stale preview cannot start a session. |
+| Undersized recovery | Approved | Below `160x45`, suspend multi-tick advancement, preserve focus/drafts/overlays, dispatch no gameplay intent, and allow only resize recovery or confirmed quit. Restore the exact prior UI state after recovery. |
+| Tick-zero Energy evidence | Approved | Render last-tick fields as `-- no completed tick --`, not as zero evidence. The application view represents this distinction explicitly. |
+| Habitat toggle | Approved | Use a lightweight confirmation showing current state and preserved progress. Unavailable controls remain visible with an application-provided reason. |
+| Larger terminals | Approved | Keep the approved 160x45 composition and deterministically expand list/map viewports. Do not invent a second responsive layout in Stage 5. |
+| Keyboard mode | Approved | Keyboard mode is a global TUI user setting, independent of profile, seed, generation identity, and session. It is changed through global settings, never through the generation form. Machine-local persistence may be added later without changing gameplay state. |
+| Player aliases | Approved | A charted system may receive a session-owned player alias. Collections show the alias first; detail retains the stable `FSC NNNNNN` label. Clearing restores the catalogue label. The TUI sends an intent and never owns the alias map. |
 
 ## Reference sensibility
 
@@ -376,9 +376,10 @@ Select empty slot
   -> review exact application-provided cost and availability
   -> confirm
      -> accepted: close draft, keep slot visible, show queued project
-     -> retainable rejection: show reason, preserve slot/role/target
+     -> retainable rejection: show concise overlay, preserve slot/role/target
+        -> Enter or Esc returns to the retained draft
      -> invalidated root: close draft, return to refreshed slot list
-Esc -> one draft layer back; Esc at root cancels
+Esc in draft -> one draft layer back; Esc at root cancels
 ```
 
 ### Habitat control
@@ -405,21 +406,25 @@ intermediate state.
 ### Multi-tick
 
 ```text
-`t` -> enter count (1..100) -> confirm
-  -> advance one atomic tick
+`t` -> enter count (1..100) and pace (1, 5, or 10 ticks/sec; default 5)
+  -> confirm -> advance one atomic tick
   -> append player-visible intermediate result and render
-  -> poll interruption
-  -> repeat until requested count, rejection, or Esc stop
+  -> wait for the selected presentation cadence and poll controls
+     -> Space: pause/resume between ticks
+     -> Enter while paused: advance exactly one tick and remain paused
+     -> Esc: stop between ticks
+  -> repeat until requested count, rejection, or stop
   -> summary retains all completed ticks
 ```
 
-Interruption happens only between ticks. A rejected tick remains uncommitted,
-stops the batch, retains all earlier committed rows, focuses the rejected
-summary row, and displays the typed reason with requested/completed counts.
-Resize below minimum requests the same between-tick stop and enters the safety
-view. Recovery returns to a stopped summary and requires a new explicit
-confirmation before any remaining ticks run. No tick is partially committed or
-displayed.
+The cadence is presentation pacing for an explicit manual command, not
+real-time or autonomous simulation. Interruption happens only between ticks. A
+rejected tick remains uncommitted, stops the batch, retains all earlier
+committed rows, focuses the rejected summary row, and displays the typed reason
+with requested/completed counts. Resize below minimum requests the same
+between-tick stop and enters the safety view. Recovery returns to a stopped
+summary and requires a new explicit confirmation before any remaining ticks
+run. No tick is partially committed or displayed.
 
 ### Quit
 
@@ -539,8 +544,9 @@ and optional last-completed-tick evidence with required/paid/unpaid life
 support, supported/underserved population, and retention overflow.
 
 `ApplicationOutcome` contains accepted/rejected kind, player-facing message,
-optional stable result IDs, and `DraftDisposition` of `Retain`, `Close`, or
-`InvalidateRoot`. `TickStepView` contains the resulting immutable `PlayingView`
+optional stable result IDs, and, for rejected draft commands, a
+`DraftDisposition` of `Retain` or `InvalidateRoot`. Accepted construction closes
+its draft without a rejection disposition. `TickStepView` contains the resulting immutable `PlayingView`
 and an ordered player-visible delta; an empty delta is explicit.
 
 ## UX acceptance walkthroughs

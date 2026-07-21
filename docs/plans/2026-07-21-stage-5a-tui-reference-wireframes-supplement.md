@@ -1,8 +1,9 @@
 ---
 title: "Stage 5a TUI Planning Supplement — Reference Wireframes"
 type: plan-supplement
-status: draft-review
+status: approved
 date: 2026-07-21
+approved: 2026-07-21
 source: "2026-07-21-stage-5a-tui-design-foundation-supplement.md"
 ---
 # Stage 5a TUI Planning Supplement — Reference Wireframes
@@ -13,6 +14,8 @@ Each frame is exactly `160x45` ASCII cells. The panels use the complete
 workspace from rows 1–43; row 44 contains only stable global actions. Focused
 panel prompts appear on the panel's bottom interior row as button-like actions.
 Example labels and quantities are fixture data, not production balance promises.
+These reference compositions, component edge states, multi-tick behavior, and
+correctable-rejection behavior are approved in the design foundation.
 
 See the [design foundation](2026-07-21-stage-5a-tui-design-foundation-supplement.md)
 for component, interaction, knowledge, and application-view contracts.
@@ -177,7 +180,7 @@ for component, interaction, knowledge, and application-view contracts.
 |             +- ADVANCE 10 TICKS ---------------------------------------------------------------------------------------------------------------+             |
 |             |                                                                                                                                  |             |
 |             |                                                                                                                                  |             |
-|             |   Completed 4 of 10                                      Stopped           +- TICK 23 ---------------------------------------+   |             |
+|             |   Completed 4 of 10          Rate 5/sec          Stopped                   +- TICK 23 ---------------------------------------+   |             |
 |             |                                                                            |                                                 |   |             |
 |             |   TICK   CHANGES                                                           |                                                 |   |             |
 |             |     21   Energy +10      Extractor 1/4                                     |   Energy                         34 / 110       |   |             |
@@ -227,6 +230,8 @@ for component, interaction, knowledge, and application-view contracts.
 - Unavailable actions remain visible only when the reason helps the player.
 - A charted system list exposes `[r Rename]`; the alias editor keeps the stable
   `FSC NNNNNN` label visible and offers Apply, Clear, and Back actions.
+- A running multi-tick panel exposes Space Pause and Esc Stop; while paused it
+  exposes Space Resume, Enter Step, and Esc Stop.
 - Unknown values use `--`; zero is reserved for an observed exact zero.
 - Long labels truncate in collections and appear in full in selected detail.
 - Exact quantities remain unabridged and right-aligned.

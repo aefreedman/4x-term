@@ -84,8 +84,11 @@ The workspace contains only `game-core` and `game-content`.
 10. The frontier overview presents a synchronized map and system list. Both are
     derived from player knowledge and must not reveal uncharted or hidden
     system identity or position.
-11. Multi-tick advancement presents intermediate tick changes rather than only
-    the final state.
+11. Multi-tick advancement presents intermediate tick changes at a selectable
+    pace of 1, 5, or 10 ticks per second, defaulting to 5. Space pauses or
+    resumes between ticks, Enter advances one tick while paused, and Esc stops
+    between ticks. This is presentation pacing for a manual command, not
+    autonomous or real-time simulation.
 12. Construction begins from a selected empty body slot.
 13. Energy receives a dedicated information render rather than being shown
     only as one row in the general stock list.
@@ -98,6 +101,10 @@ The workspace contains only `game-core` and `game-content`.
     stable survey-catalogue label remains available for disambiguation. Alias
     state belongs to the application session, not TUI-local selection state or
     the generated world definition.
+16. A rejected construction command explicitly returns `Retain` or
+    `InvalidateRoot`. Retainable rejection preserves the draft and returns to
+    it from the concise overlay; invalidated roots close the draft and return
+    to the refreshed slot list. Accepted construction closes the draft.
 
 ## Target architecture
 
@@ -184,7 +191,7 @@ implementation plan. The supplements may be separate documents or one reviewed
 Slice 5a TUI specification, but together they must cover the following
 contracts.
 
-Draft review artifacts:
+Slice 5a planning supplements:
 
 - [Stage 5a TUI Design Foundation Supplement](2026-07-21-stage-5a-tui-design-foundation-supplement.md)
 - [Stage 5a TUI Reference Wireframes Supplement](2026-07-21-stage-5a-tui-reference-wireframes-supplement.md)
@@ -331,18 +338,18 @@ seeds only to verify identity and deterministic presentation, not world quality.
 
 ### Design-lock checklist
 
-- [ ] Approve the surface inventory and navigation map.
-- [ ] Approve the *Caves of Qud*/*Dwarf Fortress* reference-sensibility note.
-- [ ] Approve the UI design system and element classification matrix.
-- [ ] Approve the critical `160x45` reference wireframes and component edge
+- [x] Approve the surface inventory and navigation map.
+- [x] Approve the *Caves of Qud*/*Dwarf Fortress* reference-sensibility note.
+- [x] Approve the UI design system and element classification matrix.
+- [x] Approve the critical `160x45` reference wireframes and component edge
       states.
-- [ ] Approve keybindings and input precedence.
-- [ ] Approve information hierarchy and formatting rules.
-- [ ] Approve command-flow state machines.
-- [ ] Approve typed intents and application-view fields.
+- [x] Approve keybindings and input precedence.
+- [x] Approve information hierarchy and formatting rules.
+- [x] Approve command-flow state machines.
+- [x] Approve typed intents and application-view fields.
 - [ ] Walk through all Slice 5b UX acceptance scenarios.
-- [ ] Record deferred UI questions explicitly.
-- [ ] Link the approved design artifacts from this plan.
+- [x] Record deferred UI questions explicitly.
+- [x] Link the approved design artifacts from this plan.
 
 Slice 5b implementation should not begin until this checklist is complete or a
 specific unchecked item is explicitly accepted as implementation-owned rather
