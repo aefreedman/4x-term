@@ -15,12 +15,13 @@ at that time and supply their own exact contracts, migration inventories,
 and acceptance commands rather than treating this document as an
 executable specification.
 
-**Current migration boundary (2026-07-20):** Stages 1–4 are complete. The
-workspace retains only the headless `game-core` substrate/resource engine and
-the schema-specific `game-content` compiler. It has 40 focused tests and no
-ignored tests; the app, TUI, CLI, generated frontier, outward actions, and
-production authored content are absent. Stage 4b and Stages 5–8 remain future
-work; playability is intentionally not restored yet.
+**Current migration boundary (2026-07-20):** Stages 1–4b are complete. The
+workspace retains only the headless `game-core` simulation and the
+schema/profile/generation `game-content` adapter. It has 53 focused tests and no
+ignored tests; constructive frontier generation and bounded probe/expedition
+expansion are present, while the app, TUI, CLI, playable startup, saves, and
+production world bundle remain absent. Stages 5–8 remain future work;
+playability is intentionally not restored yet.
 
 ## The problem being corrected
 

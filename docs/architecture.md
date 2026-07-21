@@ -1,150 +1,190 @@
 # Architecture
 
-## Current boundary: Stage 4 origin resource engine
+## Current boundary: Stage 4b constructive frontier
 
-The current workspace is a non-playable, data-driven headless simulation. It
-contains exactly two crates:
+The workspace is a non-playable, data-driven headless simulation with exactly
+two crates:
 
 ```text
 game-content ──► game-core
 ```
 
-`game-core` is the headless, format-independent domain and runtime owner.
-`game-content` is an adapter that parses and compiles one RON world source into
-`game-core::WorldDefinition`. There is no application, CLI, terminal UI,
-production content bundle, save system, or startup path in the workspace.
+`game-core` owns the format-independent world model, runtime authorities,
+commands, player-safe projection, and global simulation tick. `game-content`
+owns strict RON schemas, filesystem loading, profile normalization and
+validation, canonical profile encoding, SHA-256 fingerprints, and deterministic
+revisioned generation. RON, provenance, hashing, and filesystem access do not
+enter `game-core`.
 
-The workspace uses Rust 2024 with MSRV Rust 1.97. Current dependencies are
-`bevy_ecs` and `thiserror` in `game-core`; `game-content` additionally uses
-`serde` and `ron`. RON and filesystem access end at `game-content`; terminal,
-network, and presentation concerns do not enter `game-core`.
+There is no application/session crate, CLI, TUI, save format, production startup
+path, or playable content bundle. `content/profiles/starter.ron` is an editable
+generation/gameplay baseline consumed explicitly by callers and tests; it is not
+a canonical universe or startup contract.
 
-## Core model
+The workspace uses Rust 2024 with MSRV Rust 1.97. `game-core` depends only on
+`thiserror`. `game-content` depends on `game-core`, `serde`, `ron`, `sha2`, and
+`thiserror`. No crate depends on a renderer, terminal library, network runtime,
+or ECS framework.
 
-`game-core` defines and validates a format-independent world:
+## Implemented module boundaries
 
-- `ResourceDefinition`: a stable ID and display name; `core:energy` is the
-  canonical physical Energy ID.
-- `LocationDefinition`: a stable ID, display name, and finite `Position3`.
-- `OriginCommunityDefinition`: the sole community record, containing identity,
-  location, and population only. Population zero is valid.
-- `SystemDefinition`: persistent location-owned stocks and optional complete
-  Stage 4 resource-engine prerequisites.
-- `ResourceDepositDefinition`: a stable ID, known location and resource, and a
-  nonzero mutable runtime quantity.
-- `ReclaimableSiteDefinition`: the unchanged stable ID/location substrate.
-- `TopologyDefinition`: explicit undirected location-ID edges with canonical
-  endpoint order and derived finite distance.
+`game-core` keeps its modules private and re-exports the public domain surface
+from `lib.rs`:
 
-A Stage 4 resource-engine definition contains a ten-phase per-Collector Energy
-profile, generic bodies and stable slots, installed development identity and
-condition, and validated designer-authored tuning. Runtime system state owns
-available stocks, independent production cycles, construction commitments and
-reservations, overflow evidence, and accounting. Community state never owns a
-treasury or infrastructure.
+| Module | Current ownership |
+| --- | --- |
+| `ids.rs` | Stable content, project, ship, population, transmission, observer, and reservation-owner IDs plus monotonic counters. |
+| `world.rs` | Aggregate definitions and `WorldState`; immutable map/runtime separation; validation; commandability; construction commands; player and diagnostic projections. |
+| `resources.rs` | Resource stores, body/map/runtime resource shapes, developments, construction, tuning, accounting, and checked transfers. |
+| `population.rs` | Communities, the sole population-token registry, Habitat generation/support state, and population transition accounting. |
+| `routing.rs` | Fixed-point positions, checked distance/rate arithmetic, deterministic geometric shortest routes, and route redaction. |
+| `knowledge.rs` | Knowledge levels and keyed facts, observations, delayed transmissions, deterministic fact merge, and origin-facing mission state. |
+| `ships.rs` | Shipyard projects and assets, probe/expedition launch, world-owned transit, observations, reservations, founding, and typed loss. |
+| `simulation.rs` | The world clock and the single phase-major, whole-world atomic tick. |
 
-`WorldState` validates and normalizes the complete definition before creating
-runtime state. Stage 3 substrate definitions with no engine remain loadable and
-snapshotable; `advance_tick` rejects them atomically with a missing-prerequisite
-error.
+`game-content` exposes only its loading/compilation/generation hooks while
+keeping source schemas internal:
 
-Explicit topology is independent of all frontier records. Empty and
-disconnected graphs are valid. The core can return deterministic shortest paths
-where a path exists, but it makes no connectivity, navigability, generation, or
-world-quality claim.
+| Module | Current ownership |
+| --- | --- |
+| `schema.rs` | Strict authored-world and profile RON source types with unknown-field rejection. |
+| `diagnostics.rs` | Deterministic source-aware compilation diagnostics. |
+| `profile.rs` | Validated normalized gameplay and generator tuning. |
+| `fingerprint.rs` | Canonical normalized profile encoding and SHA-256 fingerprinting. |
+| `generator.rs` | `core:frontier_world@1`, complete generation identity/provenance, domain-separated SplitMix64 streams, and deterministic frontier generation. |
+| `lib.rs` | Public string/file compilation APIs and source-to-core translation. |
 
-## Core contracts
+No additional crate boundary is implied by this module split.
 
-Runtime ECS entity IDs are internal and ephemeral. Stable `ContentId` values
-identify definitions and references. Core collections and snapshots use stable
-ordering so equivalent input permutations have equivalent normalized results.
+## World ownership and simulation
 
-Physical resources use one checked unsigned `ResourceStore` quantity model.
-`transfer_resource`, capacity-aware system receipts, construction enqueue and
-cancellation, and complete ticks calculate all affected results before mutation.
-Rejected operations leave their complete relevant state unchanged. Energy is a
-physical resource, not currency or a commercial contract.
+`WorldDefinition` is the validated construction input. Every location has an
+always-present system definition, fixed-point `Position3`, stellar strength,
+ordered bodies and slots, initial body resources, initial stocks, and
+infrastructure. Explicit route graphs and standalone deposits no longer exist.
+Routes are derived from committed positions and a ship's jump limit.
 
-`game-core` owns no parser, filesystem operation, terminal type, frontend
-command loop, or presentation model. It has no simulation `step` API, trader
-command, market query, pricing, wallet, reservation, fleet, or market-per-
-location behavior.
+`WorldState` owns the authoritative runtime:
 
-## Content compilation
+- `map_systems` owns normalized immutable system/body/slot map facts;
+- each `SystemState` owns mutable stocks, remaining body-resource quantities,
+  developments, construction and Shipyard queues, completed local assets,
+  reservations, counters, overflow, and resource accounting;
+- initial body-resource quantities exist only in map definitions, while
+  remaining quantities exist only in body runtime state;
+- `PopulationRegistry` is the sole mutable population authority; community
+  population and Habitat occupancy are derived from resident tokens;
+- `transit` is the sole physical authority for launched ships and in-transit
+  populations are reconciled bijectively with expeditions;
+- `KnowledgeState` owns origin knowledge, pending/received transmissions,
+  player-facing mission outcomes, and fact-level merge state; and
+- one world-level `SimulationTime` advances all systems in stable system-ID
+  order and ships in stable ship-ID order.
 
-`game-content` accepts one strict RON world source containing resources,
-locations, one origin, optional systems and Stage 4 engine definitions, optional
-deposits and unchanged sites, and optional explicit topology edges:
+`WorldState::advance_tick` clones the complete candidate state, executes all ten
+approved phases globally, validates runtime integrity, builds the player view,
+and commits only on success. A rejection therefore preserves the clock,
+counters, stocks, body resources, populations, queues, transit, knowledge,
+accounting, and evidence records together.
+
+Stable typed IDs, rather than runtime entities, identify definitions, projects,
+ships, populations, observers, transmissions, and reservation owners.
+Body/slot and FIFO queue order are semantic state; unordered definition
+collections and profile maps normalize deterministically.
+
+## Public player boundary
+
+`WorldState` fields are crate-private. Callers mutate it through validated
+commands such as construction, Habitat controls, Shipyard enqueue/cancellation,
+probe/expedition launch, and `advance_tick`.
+
+`WorldState::player_view` and the value returned by `advance_tick` are the
+player-adapter boundary. `PlayerWorldView` contains:
+
+- the world time;
+- identified systems and their received `SystemKnowledge`;
+- authoritative `SystemSnapshot` local state only for the origin or a founded
+  system whose successful report has been received;
+- anonymous indication count;
+- received/awaiting mission states; and
+- active routes redacted so an unidentified intermediate stop is named only
+  after the ship reaches it.
+
+It intentionally omits the global population registry, pending transmissions
+and hidden mission outcomes, global accounting, neutral-system runtime, and
+unreceived founding-loss evidence. Physical arrival can therefore occur before
+the player learns the result or gains remote commandability.
+
+## Test-support boundary
+
+The `test-support` feature exposes privileged deterministic diagnostics, not a
+player API:
+
+- `WorldState::debug_snapshot`, `WorldState::debug_system_snapshot`,
+  `WorldSnapshot`, and `CommunitySnapshot` are compiled only under
+  `cfg(test)` or `feature = "test-support"`;
+- complete-state `Clone`, `Debug`, `Eq`, and `PartialEq` for `WorldState` are
+  likewise feature/test gated; and
+- the four cross-crate integration-test targets require `test-support` in their
+  Cargo manifests.
+
+Production adapters must use `player_view`; they must not enable diagnostic
+snapshots to bypass knowledge or mission redaction.
+
+## Content and generation pipeline
+
+Authored fixture compilation remains available for small deterministic Tier 1
+worlds:
 
 ```text
-RON source
-→ parse with document provenance
-→ schema/reference/value validation
-→ deterministic aggregated diagnostics or WorldDefinition
-→ optional WorldState instantiation by the caller
+RON world source
+→ strict parse with logical provenance
+→ deterministic schema/reference/value diagnostics
+→ normalized WorldDefinition
+→ optional WorldState construction
 ```
 
-It rejects unknown source fields and validates stable IDs, duplicate IDs,
-finite coordinates, system-owned stock references, nonzero deposit quantities,
-Stage 4 profiles, bodies, slots, developments, recipes and numeric tuning, and
-self or duplicate edges. Zero origin population is valid. Independent semantic
-failures are aggregated in deterministic source/definition/field order. A parse
-or read error also retains document provenance. No repository-directory loader
-or production authored bundle is a current contract; the only sources are
-focused test fixtures.
+Procedural generation uses a separate explicit pipeline:
+
+```text
+RON profile
+→ strict parse and normalized validation
+→ canonical bytes + SHA-256 fingerprint + logical source provenance
+→ GenerationRequest(version, seed, compiled profile)
+→ GeneratedWorldArtifact(identity, provenance, normalized WorldDefinition)
+```
+
+Complete generation identity is generator family/revision, unsigned 64-bit
+seed, and normalized-profile fingerprint. Revision 1 constructs only the
+approved origin scaffold as a structural guarantee. Frontier count may differ
+from its approximate target, and generation makes no connectivity,
+reachability, solvency, favorable-distribution, survival, or qualitative-world
+claim.
 
 ## Testing and evidence
 
-The workspace currently has 40 focused deterministic tests: 31 in
-`game-core` and nine in `game-content`. They provide Tier 1 evidence for:
+The workspace has 53 focused deterministic tests: 28 in `game-core` and 25 in
+`game-content`. They cover fixed-point routing, strict profiles and canonical
+fingerprints, revisioned generation and the origin scaffold, body-resource
+ownership, retained Stage 4 resource mechanisms, global tick atomicity,
+Habitats and token population, knowledge/transmission merge, Shipyards, probes,
+expeditions, founding/loss, player-view redaction, and exact resource/population
+reconciliation.
 
-- stable and collision-safe IDs plus normalized, permutation-independent state;
-- neutral frontier locations and valid empty or disconnected topology;
-- strict source-aware Stage 3/4 content validation;
-- system-owned stocks and zero-population origin work;
-- exact transfers, storage overflow, cancellation refunds, and checked
-  reconciliation;
-- deterministic development conditions, production cycles, role/body/slot
-  ordering, and completion timing;
-- FIFO construction, slot/deposit reservation, and rejected-command/tick
-  atomicity; and
-- the exact authored 20-tick Collector → Refinery → Battery → Extractor
-  bootstrap.
+The acceptance surface is formatting, all-target/all-feature compilation,
+Clippy with warnings denied, and the all-feature workspace test suite. Generated
+seed outcomes fail acceptance only when they violate an active invariant or the
+constructive origin guarantee; local collapse and qualitative frontier texture
+are not failures.
 
-This is the current acceptance surface, alongside formatting, workspace check,
-Clippy with warnings denied, and workspace tests. A generated seed outcome is
-not a failure unless it violates a named engine invariant or a future G18
-constructive guarantee. Local collapse, authored-world counts, global
-connectivity, and statistical world-quality gates are not Stage 4 acceptance.
+## Future adapters
 
-## Migration boundary and future work
+Stage 5 may add an application/session, truthful startup path, CLI, and terminal
+rendering around the headless core and `PlayerWorldView`. Those adapters must
+keep input and presentation outside `game-core` and must not expose unrestricted
+runtime mutation or privileged test-support snapshots.
 
-Stage 4 now provides the authored, headless origin resource/infrastructure
-engine. It intentionally does not add population arrival/change,
-scouting/outward commands, map generation, or playable startup. The standalone
-reclaimable-site substrate remains unchanged.
-
-The approved Stage 4b plan replaces explicit topology/deposits with fixed-point
-procedural positions, geometric ship routes, and body-owned resources; records
-complete generation identity/provenance; and adds Habitats, Shipyards, probes,
-expeditions, Habitat-backed population, founding, and delayed origin knowledge.
-Only the origin has a constructive structural guarantee. Frontier count,
-connectivity, reachability, and qualitative outcomes are not acceptance oracles;
-tests verify generator and gameplay mechanics rather than playing generated
-worlds.
-
-Stage 5 may introduce a new application/session, CLI, and terminal rendering
-adapter around the headless core. If added, those are future adapters: terminal
-input and rendering must remain outside `game-core`, and they must not expose
-unrestricted ECS mutation. They are not present or implied by the current
-workspace. The retained
-[Frontend Architecture Lessons](2026-07-20-frontend-architecture-lessons.md)
-record useful prototype patterns and removed dependencies for consideration,
-not compatibility requirements.
-
-Later work may add persistence, deeper expedition/reclamation behavior,
-community cultural influence/delegation, automated freight, and broader
-player-owned logistics only when their concrete contracts exist.
-The retired trader/market prototype is not a compatibility target. Delete
-obsolete code and content rather than preserving adapters, shells, or archives;
-Git history is the recovery path.
+Persistence, event-log replay, reclamation, automated freight, wider logistics,
+delegation, and cultural influence remain future work. The retired
+trader/market prototype and the replaced Stage 3/4 schemas are not compatibility
+targets; Git history is the recovery path.
