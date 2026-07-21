@@ -8,6 +8,8 @@ pub(crate) struct WorldSource {
     pub origin: OriginSource,
     #[serde(default)]
     pub communities: Vec<CommunitySource>,
+    #[serde(default)]
+    pub population_tokens: Vec<PopulationTokenSource>,
     pub systems: Vec<SystemSource>,
     #[serde(default)]
     pub sites: Vec<SiteSource>,
@@ -47,6 +49,30 @@ pub(crate) struct OriginSource {
 pub(crate) struct CommunitySource {
     pub id: String,
     pub system: String,
+}
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PopulationTokenSource {
+    pub id: PopulationIdSource,
+    pub state: PopulationStateSource,
+}
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PopulationIdSource {
+    pub birth_system: String,
+    pub sequence: u64,
+}
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) enum PopulationStateSource {
+    Resident { community: String, habitat: String },
+    InTransit { ship: ShipIdSource },
+}
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ShipIdSource {
+    pub system: String,
+    pub sequence: u64,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -144,6 +144,12 @@ RON world source
 → optional WorldState construction
 ```
 
+Authored Tier 1 definitions may seed coherent resident population tokens backed
+by functional Habitats and communities. Initialization establishes an explicit
+population-accounting baseline and advances birth-system counters beyond every
+seeded ID. Initial in-transit tokens remain outside this fresh-world input because
+Stage 4b has no complete runtime-restoration format.
+
 Procedural generation uses a separate explicit pipeline:
 
 ```text
@@ -163,7 +169,7 @@ claim.
 
 ## Testing and evidence
 
-The workspace has 53 focused deterministic tests: 28 in `game-core` and 25 in
+The workspace has 56 focused deterministic tests: 28 in `game-core` and 28 in
 `game-content`. They cover fixed-point routing, strict profiles and canonical
 fingerprints, revisioned generation and the origin scaffold, body-resource
 ownership, retained Stage 4 resource mechanisms, global tick atomicity,

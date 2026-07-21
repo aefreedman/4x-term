@@ -115,17 +115,28 @@ pub struct GenerationIdentity {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GeneratedWorldArtifact {
-    pub identity: GenerationIdentity,
-    pub provenance: SourceProvenance,
-    pub definition: WorldDefinition,
+    identity: GenerationIdentity,
+    provenance: SourceProvenance,
+    definition: WorldDefinition,
 }
 
 impl GeneratedWorldArtifact {
     #[must_use]
-    pub fn from_generated_definition(
-        request: &GenerationRequest,
-        definition: WorldDefinition,
-    ) -> Self {
+    pub fn identity(&self) -> &GenerationIdentity {
+        &self.identity
+    }
+
+    #[must_use]
+    pub fn provenance(&self) -> &SourceProvenance {
+        &self.provenance
+    }
+
+    #[must_use]
+    pub fn definition(&self) -> &WorldDefinition {
+        &self.definition
+    }
+
+    fn from_generated_definition(request: &GenerationRequest, definition: WorldDefinition) -> Self {
         Self {
             identity: GenerationIdentity {
                 version: request.version.clone(),

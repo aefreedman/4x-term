@@ -31,8 +31,12 @@ never-reused population sequence. IDs and counters persist in snapshots and are
 not reused after movement, loss, or removal.
 
 Each inhabited player system has one stable population-only community. The
-origin community exists at population zero; a target community is created only
-on its first successful founding arrival. Communities do not own stocks,
+revision-1 origin community begins at population zero; a generated target
+community is created only on its first successful founding arrival. Coherent
+authored Tier 1 scenarios may begin with resident tokens backed by functional
+Habitats and communities; this does not change the revision-1 generated start.
+Initial in-transit population requires a complete runtime-restoration contract
+and is not an authored-world input in Stage 4b. Communities do not own stocks,
 infrastructure, queues, projects, assets, or accounting—systems do. See
 [Systems and Resources](systems-and-resources.md).
 

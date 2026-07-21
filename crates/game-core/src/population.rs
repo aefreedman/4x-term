@@ -120,6 +120,9 @@ pub struct PopulationAccountingEntry {
 /// Persistent world-owned evidence for token creation, movement, residence, and removal.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PopulationAccounting {
+    /// Live tokens supplied by the validated world definition at tick zero.
+    pub initialized: u64,
+    /// Tokens created by Habitat generation during simulation ticks.
     pub generated: u64,
     pub removed: u64,
     pub entries: Vec<PopulationAccountingEntry>,
@@ -236,7 +239,7 @@ pub(crate) fn finalize_population_generation(
                 .ok_or(CoreError::Overflow)?,
         );
         if context.populations.tokens.contains_key(&population_id) {
-            return Err(CoreError::DuplicatePopulationId);
+            return Err(CoreError::DuplicatePopulationId(population_id));
         }
     }
 
@@ -972,7 +975,194 @@ mod tests {
             });
         assert_eq!(
             WorldState::new(with_initial_population),
-            Err(CoreError::InitialPopulationTokensNotAllowed)
+            Err(CoreError::InitialPopulationInTransit(PopulationId::new(
+                id("core:origin"),
+                0,
+            )))
+        );
+
+        let seeded_id = PopulationId::new(id("core:origin"), 7);
+        let seeded_token = PopulationToken {
+            id: seeded_id.clone(),
+            state: PopulationState::Resident {
+                community_id: id("core:community"),
+                habitat_id: id("core:origin_habitat"),
+            },
+        };
+        let mut seeded = definition.clone();
+        seeded.population_tokens.push(seeded_token.clone());
+        let seeded_world = WorldState::new(seeded.clone()).expect("coherent residents are valid");
+        let seeded_snapshot = seeded_world.debug_snapshot();
+        assert_eq!(seeded_snapshot.population_accounting.initialized, 1);
+        assert_eq!(seeded_snapshot.population_accounting.generated, 0);
+        assert_eq!(seeded_snapshot.populations.tokens[&seeded_id], seeded_token);
+        assert_eq!(
+            seeded_snapshot
+                .systems
+                .iter()
+                .find(|system| system.location == id("core:origin"))
+                .unwrap()
+                .counters
+                .next_population_sequence,
+            8
+        );
+
+        let mut evolved_resident = definition.clone();
+        evolved_resident.population_tokens.push(PopulationToken {
+            id: PopulationId::new(id("core:remote"), 4),
+            state: PopulationState::Resident {
+                community_id: id("core:community"),
+                habitat_id: id("core:origin_habitat"),
+            },
+        });
+        let evolved_snapshot = WorldState::new(evolved_resident)
+            .expect("birth system need not equal current coherent residence")
+            .debug_snapshot();
+        assert_eq!(
+            evolved_snapshot
+                .systems
+                .iter()
+                .find(|system| system.location == id("core:remote"))
+                .unwrap()
+                .counters
+                .next_population_sequence,
+            5
+        );
+
+        let mut two_seeded = seeded.clone();
+        two_seeded.systems[0].bodies[0]
+            .slots
+            .push(DevelopmentSlotDefinition {
+                id: id("core:second_seeded_habitat_slot"),
+                development: Some(DevelopmentDefinition {
+                    id: id("core:second_seeded_habitat"),
+                    role: DevelopmentRole::Habitat,
+                    condition: DevelopmentCondition::Functional,
+                    extractor_target: None,
+                }),
+            });
+        two_seeded.population_tokens.push(PopulationToken {
+            id: PopulationId::new(id("core:origin"), 2),
+            state: PopulationState::Resident {
+                community_id: id("core:community"),
+                habitat_id: id("core:second_seeded_habitat"),
+            },
+        });
+        let mut reversed_tokens = two_seeded.clone();
+        reversed_tokens.population_tokens.reverse();
+        let normalized = WorldState::new(two_seeded).unwrap().debug_snapshot();
+        assert_eq!(normalized.population_accounting.initialized, 2);
+        assert_eq!(
+            normalized,
+            WorldState::new(reversed_tokens).unwrap().debug_snapshot()
+        );
+
+        let mut duplicate_id = seeded.clone();
+        duplicate_id.population_tokens.push(seeded_token.clone());
+        assert_eq!(
+            WorldState::new(duplicate_id),
+            Err(CoreError::DuplicatePopulationId(seeded_id.clone()))
+        );
+
+        let mut duplicate_habitat = seeded.clone();
+        duplicate_habitat.population_tokens.push(PopulationToken {
+            id: PopulationId::new(id("core:origin"), 8),
+            state: seeded_token.state.clone(),
+        });
+        assert_eq!(
+            WorldState::new(duplicate_habitat),
+            Err(CoreError::HabitatMultiplyOccupied(id(
+                "core:origin_habitat"
+            )))
+        );
+
+        let mut unknown_birth = seeded.clone();
+        unknown_birth.population_tokens[0].id = PopulationId::new(id("core:missing"), 7);
+        assert_eq!(
+            WorldState::new(unknown_birth),
+            Err(CoreError::UnknownPopulationBirthSystem(id("core:missing")))
+        );
+
+        let mut unknown_community = seeded.clone();
+        unknown_community.population_tokens[0].state = PopulationState::Resident {
+            community_id: id("core:missing_community"),
+            habitat_id: id("core:origin_habitat"),
+        };
+        assert_eq!(
+            WorldState::new(unknown_community),
+            Err(CoreError::UnknownPopulationCommunity(id(
+                "core:missing_community"
+            )))
+        );
+
+        let mut unknown_habitat = seeded.clone();
+        unknown_habitat.population_tokens[0].state = PopulationState::Resident {
+            community_id: id("core:community"),
+            habitat_id: id("core:missing_habitat"),
+        };
+        assert_eq!(
+            WorldState::new(unknown_habitat),
+            Err(CoreError::UnknownPopulationHabitat(id(
+                "core:missing_habitat"
+            )))
+        );
+
+        let mut nonfunctional_habitat = seeded.clone();
+        nonfunctional_habitat.systems[0].bodies[0].slots[0]
+            .development
+            .as_mut()
+            .unwrap()
+            .condition = DevelopmentCondition::Damaged;
+        assert_eq!(
+            WorldState::new(nonfunctional_habitat),
+            Err(CoreError::UnknownPopulationHabitat(id(
+                "core:origin_habitat"
+            )))
+        );
+
+        let mut exhausted_sequence = seeded.clone();
+        exhausted_sequence.population_tokens[0].id = PopulationId::new(id("core:origin"), u64::MAX);
+        assert_eq!(
+            WorldState::new(exhausted_sequence),
+            Err(CoreError::Overflow)
+        );
+
+        let mut seeded_then_generated = seeded;
+        seeded_then_generated.systems[0]
+            .stocks
+            .set(id("core:energy"), 7);
+        seeded_then_generated.systems[0].bodies[0]
+            .slots
+            .push(DevelopmentSlotDefinition {
+                id: id("core:second_habitat_slot"),
+                development: Some(DevelopmentDefinition {
+                    id: id("core:second_habitat"),
+                    role: DevelopmentRole::Habitat,
+                    condition: DevelopmentCondition::Functional,
+                    extractor_target: None,
+                }),
+            });
+        let mut seeded_then_generated = WorldState::new(seeded_then_generated).unwrap();
+        seeded_then_generated.advance_tick().unwrap();
+        seeded_then_generated.advance_tick().unwrap();
+        let generated_snapshot = seeded_then_generated.debug_snapshot();
+        assert!(
+            generated_snapshot
+                .populations
+                .tokens
+                .contains_key(&PopulationId::new(id("core:origin"), 8))
+        );
+        assert_eq!(generated_snapshot.population_accounting.initialized, 1);
+        assert_eq!(generated_snapshot.population_accounting.generated, 1);
+        assert_eq!(
+            generated_snapshot
+                .systems
+                .iter()
+                .find(|system| system.location == id("core:origin"))
+                .unwrap()
+                .counters
+                .next_population_sequence,
+            9
         );
 
         let mut missing_founded_community = definition.clone();

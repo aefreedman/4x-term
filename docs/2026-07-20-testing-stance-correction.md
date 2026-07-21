@@ -17,7 +17,7 @@ executable specification.
 
 **Current migration boundary (2026-07-20):** Stages 1–4b are complete. The
 workspace retains only the headless `game-core` simulation and the
-schema/profile/generation `game-content` adapter. It has 53 focused tests and no
+schema/profile/generation `game-content` adapter. It has 56 focused tests and no
 ignored tests; constructive frontier generation and bounded probe/expedition
 expansion are present, while the app, TUI, CLI, playable startup, saves, and
 production world bundle remain absent. Stages 5–8 remain future work;

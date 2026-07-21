@@ -523,8 +523,8 @@ Use `C:/Users/aaron/.cargo/bin/cargo.exe` when bare `cargo` is unavailable.
 
 ### Final validation evidence
 
-The final all-feature workspace suite reported **53 passed, 0 failed, 0
-ignored**: 28 tests in `game-core` and 25 in `game-content`. The exact quality
+The final all-feature workspace suite reported **56 passed, 0 failed, 0
+ignored**: 28 tests in `game-core` and 28 in `game-content`. The exact quality
 commands were:
 
 ```text

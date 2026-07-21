@@ -90,13 +90,13 @@ fn one_output_affecting_profile_change_changes_fingerprint() {
 fn equal_identity_reproduces_equal_normalized_world() {
     let first = generate_world(&request(0x1234_5678)).expect("generation succeeds");
     let second = generate_world(&request(0x1234_5678)).expect("generation succeeds");
-    assert_eq!(first.identity, second.identity);
-    assert_eq!(first.definition, second.definition);
+    assert_eq!(first.identity(), second.identity());
+    assert_eq!(first.definition(), second.definition());
     assert_eq!(
-        WorldState::new(first.definition)
+        WorldState::new(first.definition().clone())
             .expect("artifact instantiates")
             .debug_snapshot(),
-        WorldState::new(second.definition)
+        WorldState::new(second.definition().clone())
             .expect("artifact instantiates")
             .debug_snapshot()
     );
@@ -105,14 +105,20 @@ fn equal_identity_reproduces_equal_normalized_world() {
 #[test]
 fn generated_world_has_exact_constructive_origin_and_bounded_frontier_facts() {
     let artifact = generate_world(&request(77)).expect("generation succeeds");
-    let definition = &artifact.definition;
+    let definition = artifact.definition();
     assert_eq!(
-        artifact.identity.version,
+        artifact.identity().version,
         GeneratorVersion::frontier_revision_1()
     );
     assert_eq!(definition.origin_system, id("core:origin"));
     assert_eq!(definition.origin_community, id("core:origin_community"));
     assert!(definition.population_tokens.is_empty());
+    let initial_state = WorldState::new(definition.clone())
+        .expect("generated definition instantiates")
+        .debug_snapshot();
+    assert!(initial_state.populations.tokens.is_empty());
+    assert_eq!(initial_state.population_accounting.initialized, 0);
+    assert_eq!(initial_state.population_accounting.generated, 0);
 
     let origin_location = definition
         .locations
@@ -193,12 +199,12 @@ fn revision_one_valid_counts_can_fall_on_either_side_of_approximate_target() {
     )
     .unwrap();
     let below = generate_world(&below_request).expect("below-target fixture generates");
-    assert!(below.definition.systems.len() < target);
-    WorldState::new(below.definition).expect("below-target fixture is valid");
+    assert!(below.definition().systems.len() < target);
+    WorldState::new(below.definition().clone()).expect("below-target fixture is valid");
 
     let above = generate_world(&request(2)).expect("above-target fixture generates");
-    assert!(above.definition.systems.len() > target);
-    WorldState::new(above.definition).expect("above-target fixture is valid");
+    assert!(above.definition().systems.len() > target);
+    WorldState::new(above.definition().clone()).expect("above-target fixture is valid");
 }
 
 #[test]

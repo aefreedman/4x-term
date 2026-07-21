@@ -17,7 +17,9 @@
   insufficient-slot loss, delayed outcome reports, and remote command unlock.
 - Whole-world ten-phase atomic ticking with exact cross-system resource and
   population reconciliation evidence.
-- An editable `content/profiles/starter.ron` baseline and 53 focused
+- Strict authored-world support for coherent initial resident population tokens,
+  including initialized-population accounting and never-reused sequence setup.
+- An editable `content/profiles/starter.ron` baseline and 56 focused
   deterministic tests across `game-core` and `game-content`.
 
 ### Changed
@@ -31,6 +33,8 @@
   executes phase-major across all systems in stable order before committing.
 - The public runtime boundary is a knowledge-filtered `PlayerWorldView`;
   privileged complete snapshots are gated behind the `test-support` feature.
+- Generated-world artifacts now expose identity, provenance, and validated world
+  definitions through read-only accessors rather than public fields.
 - The retained Stage 4 Collector, Battery, Extractor, Refinery, construction,
   life-support, overflow, and accounting mechanics now run under the Stage 4b
   map/runtime schema.

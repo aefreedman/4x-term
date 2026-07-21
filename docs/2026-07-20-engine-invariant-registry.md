@@ -197,21 +197,25 @@ with the implementation change.
 - **Exact oracle:** `PopulationRegistry` is the sole mutable population authority.
   Every token is in exactly one resident or in-transit state; resident occupancy
   is at most one token per Habitat; transit tokens and expedition payloads form
-  a bijection; generation and removal counters equal explicit transition
-  evidence; IDs remain globally unique.
-- **Applicability:** Habitat generation/support, expedition departure/transit,
-  settlement, and loss.
-- **Non-vacuity witness:** Fixtures generate multiple tokens, derive occupancy
-  and work, remove Habitat support, transfer two tokens to simultaneous
-  expeditions, settle one, and lose one.
+  a bijection; initialized plus generated tokens reconcile exactly against live
+  plus removed tokens; authored resident IDs advance birth-system counters past
+  every seeded sequence; IDs remain globally unique.
+- **Applicability:** Validated authored resident initialization, Habitat
+  generation/support, expedition departure/transit, settlement, and loss.
+- **Non-vacuity witness:** A strict authored fixture initializes one resident and
+  advances its birth-system sequence; runtime fixtures generate multiple tokens,
+  derive occupancy and work, remove Habitat support, transfer two tokens to
+  simultaneous expeditions, settle one, and lose one.
 - **Current Tier 1 evidence:**
+  - `authored_resident_population_is_strictly_compiled_and_initialized`
+  - `authored_population_diagnostics_cover_duplicates_references_and_transit`
   - `population_registry_is_the_derived_population_and_occupancy_authority`
   - `habitat_support_loss_removes_and_accounts_for_the_token_once`
   - `runtime_requires_a_bijection_between_transit_tokens_and_expeditions`
   - `generated_population_ids_remain_unique_through_departure_arrival_and_loss`
   - `simultaneous_summary_arrivals_succeed_then_lose_in_ship_id_order`
 - **Failure evidence:** Population ID, duplicate/missing state, Habitat/ship
-  reference, generated/removed counters, and transition ledger entries.
+  reference, initialized/generated/removed counters, and transition ledger entries.
 
 ### INV-KNOWLEDGE-001 — Delayed, monotonic, origin-owned facts
 
@@ -338,8 +342,8 @@ with the implementation change.
 
 Stage 4b was implemented on branch `feat/stage-4b-constructive-frontier` from
 base `d8118fd`; implementation commit `458a522` delivered the phase work as one
-implementation commit. The workspace contains 53 focused Tier 1 tests: 28 in
-`game-core` and 25 in `game-content`, with no ignored tests found. Exact current
+implementation commit. The workspace contains 56 focused Tier 1 tests: 28 in
+`game-core` and 28 in `game-content`, with no ignored tests found. Exact current
 test names under active entries resolve in the retained crates.
 
 The all-feature suite is required because privileged diagnostic snapshots and

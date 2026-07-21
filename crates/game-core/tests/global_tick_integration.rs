@@ -584,8 +584,14 @@ fn generated_population_ids_remain_unique_through_departure_arrival_and_loss() {
         PopulationState::Resident { ref community_id, .. }
             if community_id == &id("core:target_community")
     ));
+    assert_eq!(resolved.population_accounting.initialized, 0);
     assert_eq!(resolved.population_accounting.generated, 2);
     assert_eq!(resolved.population_accounting.removed, 1);
+    assert_eq!(
+        resolved.population_accounting.initialized + resolved.population_accounting.generated,
+        u64::try_from(resolved.populations.tokens.len()).unwrap()
+            + resolved.population_accounting.removed
+    );
     assert_eq!(
         resolved
             .population_accounting

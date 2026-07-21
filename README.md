@@ -42,8 +42,8 @@ See [setup/README.md](setup/README.md) for prerequisites and details.
 
 ## Validation
 
-The current acceptance surface is buildability plus 53 focused deterministic
-tests: 28 in `game-core` and 25 in `game-content`.
+The current acceptance surface is buildability plus 56 focused deterministic
+tests: 28 in `game-core` and 28 in `game-content`.
 
 ```bash
 cargo fmt --all -- --check

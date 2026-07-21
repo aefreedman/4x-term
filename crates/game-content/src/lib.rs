@@ -656,6 +656,7 @@ fn compile_world(source_name: &str, source: WorldSource) -> Result<WorldDefiniti
     }
 
     let mut development_ids = BTreeSet::new();
+    let mut development_metadata = BTreeMap::new();
     let mut body_ids = BTreeSet::new();
     let mut systems = BTreeMap::new();
     for (system_index, item) in source.systems.into_iter().enumerate() {
@@ -784,6 +785,7 @@ fn compile_world(source_name: &str, source: WorldSource) -> Result<WorldDefiniti
                             body: body_id.clone(),
                             resource,
                         });
+                    development_metadata.insert(id.clone(), (location.clone(), role, condition));
                     Some(DevelopmentDefinition {
                         id,
                         role,
@@ -826,6 +828,141 @@ fn compile_world(source_name: &str, source: WorldSource) -> Result<WorldDefiniti
                 format!("duplicate system {location}"),
             );
         }
+    }
+
+    let mut population_tokens = Vec::new();
+    let mut population_ids = BTreeSet::new();
+    let mut occupied_habitats = BTreeSet::new();
+    for (index, item) in source.population_tokens.into_iter().enumerate() {
+        let definition = format!("population_tokens[{index}]");
+        let Some(birth_system) = parse_id(
+            source_name,
+            &definition,
+            "id.birth_system",
+            &item.id.birth_system,
+            &mut diagnostics,
+        ) else {
+            continue;
+        };
+        let population_id = PopulationId::new(birth_system.clone(), item.id.sequence);
+        if !systems.contains_key(&birth_system) {
+            push(
+                &mut diagnostics,
+                source_name,
+                &definition,
+                "id.birth_system",
+                format!("unknown birth system {birth_system}"),
+            );
+        }
+        if !population_ids.insert(population_id.clone()) {
+            push(
+                &mut diagnostics,
+                source_name,
+                &definition,
+                "id",
+                format!("duplicate population id {population_id:?}"),
+            );
+        }
+        let state = match item.state {
+            PopulationStateSource::Resident { community, habitat } => {
+                let community_id = parse_id(
+                    source_name,
+                    &definition,
+                    "state.community",
+                    &community,
+                    &mut diagnostics,
+                );
+                let habitat_id = parse_id(
+                    source_name,
+                    &definition,
+                    "state.habitat",
+                    &habitat,
+                    &mut diagnostics,
+                );
+                let Some((community_id, habitat_id)) = community_id.zip(habitat_id) else {
+                    continue;
+                };
+                let community_system = communities.get(&community_id).map(|value| &value.system);
+                if community_system.is_none() {
+                    push(
+                        &mut diagnostics,
+                        source_name,
+                        &definition,
+                        "state.community",
+                        format!("unknown community {community_id}"),
+                    );
+                }
+                match development_metadata.get(&habitat_id) {
+                    None => push(
+                        &mut diagnostics,
+                        source_name,
+                        &definition,
+                        "state.habitat",
+                        format!("unknown Habitat {habitat_id}"),
+                    ),
+                    Some((habitat_system, role, condition)) => {
+                        if *role != DevelopmentRole::Habitat
+                            || *condition != DevelopmentCondition::Functional
+                        {
+                            push(
+                                &mut diagnostics,
+                                source_name,
+                                &definition,
+                                "state.habitat",
+                                format!("development {habitat_id} is not a functional Habitat"),
+                            );
+                        } else if community_system.is_some_and(|system| system != habitat_system) {
+                            push(
+                                &mut diagnostics,
+                                source_name,
+                                &definition,
+                                "state.habitat",
+                                format!(
+                                    "Habitat {habitat_id} is not in community {community_id}'s system"
+                                ),
+                            );
+                        }
+                    }
+                }
+                if !occupied_habitats.insert(habitat_id.clone()) {
+                    push(
+                        &mut diagnostics,
+                        source_name,
+                        &definition,
+                        "state.habitat",
+                        format!("Habitat {habitat_id} is referenced more than once"),
+                    );
+                }
+                PopulationState::Resident {
+                    community_id,
+                    habitat_id,
+                }
+            }
+            PopulationStateSource::InTransit { ship } => {
+                let ship_system = parse_id(
+                    source_name,
+                    &definition,
+                    "state.ship.system",
+                    &ship.system,
+                    &mut diagnostics,
+                )
+                .unwrap_or_else(|| birth_system.clone());
+                push(
+                    &mut diagnostics,
+                    source_name,
+                    &definition,
+                    "state",
+                    "initial InTransit population is not supported",
+                );
+                PopulationState::InTransit {
+                    ship_id: ShipId::new(ship_system, ship.sequence),
+                }
+            }
+        };
+        population_tokens.push(PopulationToken {
+            id: population_id,
+            state,
+        });
     }
 
     let mut sites = BTreeMap::new();
@@ -920,7 +1057,7 @@ fn compile_world(source_name: &str, source: WorldSource) -> Result<WorldDefiniti
         origin_system: origin_system.expect("validated"),
         origin_community: origin_community.expect("validated"),
         communities: communities.into_values().collect(),
-        population_tokens: Vec::new(),
+        population_tokens,
         systems: systems.into_values().collect(),
         sites: sites.into_values().collect(),
         tuning,
@@ -942,6 +1079,23 @@ mod tests {
 
     fn id(value: &str) -> ContentId {
         ContentId::new(value).expect("test id is valid")
+    }
+
+    fn authored_world_with_population(tokens: &str) -> String {
+        include_str!("../tests/fixtures/stage4_origin.ron")
+            .replacen(
+                "    systems: [(\n",
+                &format!("    population_tokens: [{tokens}],\n    systems: [(\n"),
+                1,
+            )
+            .replacen(
+                "                    (id: \"core:slot_1\"),",
+                concat!(
+                    "                    (id: \"core:slot_1\", development: Some((",
+                    "id: \"core:seed_habitat\", role: Habitat, condition: Functional))),"
+                ),
+                1,
+            )
     }
 
     #[test]
@@ -1400,6 +1554,96 @@ mod tests {
     }
 
     #[test]
+    fn authored_resident_population_is_strictly_compiled_and_initialized() {
+        let token = concat!(
+            "(id: (birth_system: \"core:origin\", sequence: 7), ",
+            "state: Resident(community: \"core:community\", habitat: \"core:seed_habitat\"))"
+        );
+        let source = authored_world_with_population(token);
+        let definition = compile_str("seeded.ron", &source).expect("resident token compiles");
+        assert_eq!(definition.population_tokens.len(), 1);
+        let state = WorldState::new(definition).expect("resident token initializes");
+        let snapshot = state.debug_snapshot();
+        assert_eq!(snapshot.population_accounting.initialized, 1);
+        assert_eq!(snapshot.population_accounting.generated, 0);
+        assert_eq!(snapshot.systems[0].counters.next_population_sequence, 8);
+
+        let unknown_field = source.replacen("sequence: 7)", "sequence: 7, unexpected: true)", 1);
+        let error = compile_str("strict-seeded.ron", &unknown_field)
+            .expect_err("population token fields are strict");
+        assert_eq!(error.diagnostics()[0].definition, "document");
+        assert_eq!(error.diagnostics()[0].field, "parse");
+    }
+
+    #[test]
+    fn authored_population_diagnostics_cover_duplicates_references_and_transit() {
+        let first = concat!(
+            "(id: (birth_system: \"core:origin\", sequence: 7), ",
+            "state: Resident(community: \"core:community\", habitat: \"core:seed_habitat\"))"
+        );
+        let second = concat!(
+            "(id: (birth_system: \"core:origin\", sequence: 8), ",
+            "state: Resident(community: \"core:community\", habitat: \"core:seed_habitat\"))"
+        );
+        let duplicate_habitat = authored_world_with_population(&format!("{first}, {second}"));
+        let error = compile_str("duplicate-habitat.ron", &duplicate_habitat)
+            .expect_err("one population per Habitat");
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.definition == "population_tokens[1]"
+                && diagnostic.field == "state.habitat"
+                && diagnostic.message.contains("referenced more than once")
+        }));
+
+        let duplicate_id = authored_world_with_population(&format!("{first}, {first}"));
+        let error = compile_str("duplicate-id.ron", &duplicate_id)
+            .expect_err("population IDs are globally unique");
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.definition == "population_tokens[1]"
+                && diagnostic.field == "id"
+                && diagnostic.message.contains("duplicate population id")
+        }));
+
+        for (field, changed) in [
+            (
+                "id.birth_system",
+                first.replace("core:origin\", sequence", "core:missing\", sequence"),
+            ),
+            (
+                "state.community",
+                first.replace("core:community", "core:missing_community"),
+            ),
+            (
+                "state.habitat",
+                first.replace("core:seed_habitat", "core:missing_habitat"),
+            ),
+        ] {
+            let error = compile_str(
+                "bad-reference.ron",
+                &authored_world_with_population(&changed),
+            )
+            .expect_err("bad population reference is rejected");
+            assert!(
+                error
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.field == field)
+            );
+        }
+
+        let transit = authored_world_with_population(concat!(
+            "(id: (birth_system: \"core:origin\", sequence: 7), ",
+            "state: InTransit(ship: (system: \"core:origin\", sequence: 2)))"
+        ));
+        let error = compile_str("initial-transit.ron", &transit)
+            .expect_err("initial transit has no restorable physical authority");
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.definition == "population_tokens[0]"
+                && diagnostic.field == "state"
+                && diagnostic.message.contains("not supported")
+        }));
+    }
+
+    #[test]
     fn tuning_derives_the_complete_expedition_commitment() {
         let definition = compile_str(
             "stage4_origin.ron",
@@ -1535,11 +1779,11 @@ mod tests {
             seed: 42,
             configuration: compiled,
         };
-        let artifact = GeneratedWorldArtifact::from_generated_definition(&request, definition);
-        assert_eq!(artifact.identity.seed, 42);
-        assert_eq!(artifact.provenance, provenance);
+        let artifact = generate_world(&request).expect("validated generation succeeds");
+        assert_eq!(artifact.identity().seed, 42);
+        assert_eq!(artifact.provenance(), &provenance);
         assert_eq!(
-            artifact.identity.configuration_fingerprint,
+            artifact.identity().configuration_fingerprint,
             expected_fingerprint
         );
         assert_eq!(

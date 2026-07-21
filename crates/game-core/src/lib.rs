@@ -42,10 +42,10 @@ pub enum CoreError {
     DuplicateSlotId { body: ContentId, slot: ContentId },
     #[error("duplicate development id: {0}")]
     DuplicateDevelopmentId(ContentId),
-    #[error("duplicate population id")]
-    DuplicatePopulationId,
-    #[error("new-world definitions cannot contain initial population tokens")]
-    InitialPopulationTokensNotAllowed,
+    #[error("duplicate population id: {0:?}")]
+    DuplicatePopulationId(PopulationId),
+    #[error("new-world definitions cannot contain initial in-transit population: {0:?}")]
+    InitialPopulationInTransit(PopulationId),
     #[error("neutral system has a community: {0}")]
     NeutralSystemHasCommunity(ContentId),
     #[error("founded remote system must have exactly one community: {0}")]
@@ -164,6 +164,10 @@ pub enum CoreError {
     EnergyAboveCapacity { available: u64, capacity: u64 },
     #[error("population ID references unknown birth system: {0}")]
     UnknownPopulationBirthSystem(ContentId),
+    #[error("birth-system population sequence is not above live token: {0:?}")]
+    PopulationSequenceNotAdvanced(PopulationId),
+    #[error("population accounting does not reconcile with the live registry")]
+    PopulationAccountingMismatch,
     #[error("unknown population community: {0}")]
     UnknownPopulationCommunity(ContentId),
     #[error("population references missing/nonfunctional Habitat: {0}")]

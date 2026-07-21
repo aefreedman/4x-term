@@ -780,6 +780,7 @@ mod tests {
     fn forced_retention_failure_rolls_back_population_id_allocation_and_clock() {
         let mut world = fixture();
         world.populations.tokens.clear();
+        world.population_accounting.removed = world.population_accounting.generated;
         world.time.tick = 1;
         let origin = world.systems.get_mut(&id("core:origin")).unwrap();
         origin.overflow.cumulative = u64::MAX;

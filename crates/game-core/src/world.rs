@@ -450,7 +450,8 @@ impl WorldState {
             )));
         }
         validate_founded_communities(&self.origin_system, &self.communities, &self.systems)?;
-        validate_populations(&self.populations, &self.communities, &self.systems)
+        validate_populations(&self.populations, &self.communities, &self.systems)?;
+        validate_population_accounting(&self.populations, &self.population_accounting)
     }
 
     /// Enables or disables automatic generation on an empty, functional Habitat.
@@ -1015,15 +1016,13 @@ fn validate_tuning(tuning: &WorldTuning, resources: &BTreeSet<ContentId>) -> Res
 }
 
 fn validate_and_normalize(mut definition: WorldDefinition) -> Result<WorldState, CoreError> {
-    if !definition.population_tokens.is_empty() {
-        return Err(CoreError::InitialPopulationTokensNotAllowed);
-    }
     definition.resources.sort_by(|a, b| a.id.cmp(&b.id));
     definition.locations.sort_by(|a, b| a.id.cmp(&b.id));
     definition
         .systems
         .sort_by(|a, b| a.location.cmp(&b.location));
     definition.communities.sort_by(|a, b| a.id.cmp(&b.id));
+    definition.population_tokens.sort_by(|a, b| a.id.cmp(&b.id));
     definition.sites.sort_by(|a, b| a.id.cmp(&b.id));
     ensure_unique(
         definition.resources.iter().map(|value| &value.id),
@@ -1224,8 +1223,37 @@ fn validate_and_normalize(mut definition: WorldDefinition) -> Result<WorldState,
         return Err(CoreError::MissingPersistentSystem);
     }
     validate_founded_communities(&definition.origin_system, &community_map, &systems)?;
-    let populations = PopulationRegistry::default();
+    let mut populations = PopulationRegistry::default();
+    for token in definition.population_tokens {
+        if matches!(&token.state, PopulationState::InTransit { .. }) {
+            return Err(CoreError::InitialPopulationInTransit(token.id));
+        }
+        let system = systems
+            .get_mut(&token.id.system)
+            .ok_or_else(|| CoreError::UnknownPopulationBirthSystem(token.id.system.clone()))?;
+        let next_sequence = token
+            .id
+            .sequence
+            .checked_add(1)
+            .ok_or(CoreError::Overflow)?;
+        system.counters.next_population_sequence =
+            system.counters.next_population_sequence.max(next_sequence);
+        let population_id = token.id.clone();
+        if populations
+            .tokens
+            .insert(population_id.clone(), token)
+            .is_some()
+        {
+            return Err(CoreError::DuplicatePopulationId(population_id));
+        }
+    }
     validate_populations(&populations, &community_map, &systems)?;
+    let initialized = u64::try_from(populations.tokens.len()).map_err(|_| CoreError::Overflow)?;
+    let population_accounting = PopulationAccounting {
+        initialized,
+        ..PopulationAccounting::default()
+    };
+    validate_population_accounting(&populations, &population_accounting)?;
     let initial_knowledge_systems = initial_knowledge_systems(
         &definition.locations,
         &map_systems,
@@ -1246,7 +1274,7 @@ fn validate_and_normalize(mut definition: WorldDefinition) -> Result<WorldState,
         origin_community: definition.origin_community,
         communities: community_map,
         populations,
-        population_accounting: PopulationAccounting::default(),
+        population_accounting,
         map_systems,
         systems,
         sites: definition.sites,
@@ -1368,7 +1396,16 @@ fn validate_populations(
     systems: &BTreeMap<ContentId, SystemState>,
 ) -> Result<(), CoreError> {
     let mut occupied = BTreeSet::new();
-    for token in populations.tokens.values() {
+    for (population_id, token) in &populations.tokens {
+        if population_id != &token.id {
+            return Err(CoreError::DuplicatePopulationId(token.id.clone()));
+        }
+        let birth_system = systems
+            .get(&token.id.system)
+            .ok_or_else(|| CoreError::UnknownPopulationBirthSystem(token.id.system.clone()))?;
+        if token.id.sequence >= birth_system.counters.next_population_sequence {
+            return Err(CoreError::PopulationSequenceNotAdvanced(token.id.clone()));
+        }
         match &token.state {
             PopulationState::Resident {
                 community_id,
@@ -1400,6 +1437,25 @@ fn validate_populations(
             }
             PopulationState::InTransit { .. } => {}
         }
+    }
+    Ok(())
+}
+
+fn validate_population_accounting(
+    populations: &PopulationRegistry,
+    accounting: &PopulationAccounting,
+) -> Result<(), CoreError> {
+    let created = accounting
+        .initialized
+        .checked_add(accounting.generated)
+        .ok_or(CoreError::Overflow)?;
+    let live = u64::try_from(populations.tokens.len()).map_err(|_| CoreError::Overflow)?;
+    if created
+        != live
+            .checked_add(accounting.removed)
+            .ok_or(CoreError::Overflow)?
+    {
+        return Err(CoreError::PopulationAccountingMismatch);
     }
     Ok(())
 }
