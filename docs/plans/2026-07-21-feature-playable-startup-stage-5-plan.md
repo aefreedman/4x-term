@@ -347,7 +347,10 @@ seeds only to verify identity and deterministic presentation, not world quality.
 - [x] Approve information hierarchy and formatting rules.
 - [x] Approve command-flow state machines.
 - [x] Approve typed intents and application-view fields.
-- [ ] Walk through all Slice 5b UX acceptance scenarios.
+- [x] Walk through all Slice 5b UX acceptance scenarios. The reviewed contracts
+      include `Retain` and `InvalidateRoot` branches, deterministic paced-batch
+      controls with a controllable clock, stopped resize recovery, and exact
+      Habitat/population presentation fields.
 - [x] Record deferred UI questions explicitly.
 - [x] Link the approved design artifacts from this plan.
 

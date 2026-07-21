@@ -32,7 +32,7 @@ See the exact-cell [reference wireframes](2026-07-21-stage-5a-tui-reference-wire
 | Correctable rejection | Approved | A rejected construction outcome explicitly supplies `Retain` or `InvalidateRoot`. `Retain` preserves slot, role, and optional target and returns from the concise rejection overlay to that draft. `InvalidateRoot` closes the draft and returns to the refreshed slot list. Accepted construction closes its draft. The TUI never infers recovery from error text. |
 | Quit without saves | Approved | Quit from startup is immediate. Quit from an active session requires confirmation stating that the session cannot be resumed and defaults to Cancel. |
 | Failed regeneration | Approved | Editing profile or seed immediately makes an existing preview stale and disables Start. A failed generation preserves edited fields and the visibly stale prior preview for comparison, but the stale preview cannot start a session. |
-| Undersized recovery | Approved | Below `160x45`, suspend multi-tick advancement, preserve focus/drafts/overlays, dispatch no gameplay intent, and allow only resize recovery or confirmed quit. Restore the exact prior UI state after recovery. |
+| Undersized recovery | Approved | Below `160x45`, stop multi-tick advancement between ticks, preserve focus/drafts/overlays and completed history, dispatch no gameplay intent, and allow only resize recovery or confirmed quit. Restore the prior composition and local state after recovery, except that a previously running multi-tick batch remains explicitly stopped and never resumes automatically. |
 | Tick-zero Energy evidence | Approved | Render last-tick fields as `-- no completed tick --`, not as zero evidence. The application view represents this distinction explicitly. |
 | Habitat toggle | Approved | Use a lightweight confirmation showing current state and preserved progress. Unavailable controls remain visible with an application-provided reason. |
 | Larger terminals | Approved | Keep the approved 160x45 composition and deterministically expand list/map viewports. Do not invent a second responsive layout in Stage 5. |
@@ -531,9 +531,11 @@ Each system-list entry contains stable system ID, stable catalogue label,
 optional player alias, resolved primary display label, knowledge level,
 positioned/unpositioned state, commandability when player-visible,
 and observation freshness supplied by admitted facts. Summary detail contains
-only admitted fact rows. Local detail contains bodies/slots, stocks,
-construction queue, population/Habitat presentation, and completed assets
-required by an approved Slice 5b surface.
+only admitted fact rows. Local detail contains bodies/slots, stocks, construction queue, completed
+assets, derived local population count, and Habitat rows with stable ID/label,
+functional and occupied state, generation-enabled state, exact progress and
+required Energy, ready state, and toggle availability/reason. Occupancy and
+population remain derived presentation, not separately writable state.
 
 `ConstructionDraftView` contains system/body/slot stable IDs and labels,
 available and unavailable role choices, eligible Extractor target choices,
@@ -568,14 +570,21 @@ explicit generation request verifies preview identity.
    shortage, and overflow evidence.
 6. Select an empty slot, construct successfully, and observe queue state.
 7. Trigger a retainable construction rejection, correct the draft, and commit.
-8. Enable Habitat generation, observe preserved progress and unavailable
-   states, advance until bootstrap completes, and observe population-facing
-   state through the approved projection.
+   In a separate deterministic branch, return `InvalidateRoot`, close the draft,
+   refresh the slot list, and retain no stale role or target selection.
+8. Enable Habitat generation; inspect functional/occupied/enabled state, exact
+   progress and required Energy, ready state, and toggle availability/reason;
+   observe preserved progress and unavailable states; advance until bootstrap
+   completes; and observe the derived local population count.
 9. Advance one tick successfully, then exercise a rejected uncommitted tick.
-10. Advance multiple ticks, inspect every intermediate result, interrupt
-    between ticks, reject a later tick, and preserve earlier completed ticks.
-11. Resize below minimum during a draft and during multi-tick; recover exact UI
-    state without dispatching an extra intent.
+10. Use a controllable clock to verify the default 5 ticks/sec pace, selectable
+    1/5/10 rates, pause, one-tick step while paused, resume, and between-tick
+    stop without real sleeps. In a separate run, reject a later tick, preserve
+    earlier committed rows, and leave the rejected tick uncommitted.
+11. Resize below minimum during a draft and during multi-tick; recover focus,
+    overlay, draft, and completed history without dispatching an extra intent.
+    A previously running batch recovers as Stopped and never resumes
+    automatically.
 12. Switch QWERTY/Colemak-DH layouts while arrow keys continue to work and text
     fields consume printable input before global shortcuts.
 13. Attempt to quit a live unsaved session, cancel by default, then confirm.
