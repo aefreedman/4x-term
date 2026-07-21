@@ -182,6 +182,26 @@ fn generated_world_has_exact_constructive_origin_and_bounded_frontier_facts() {
 }
 
 #[test]
+fn revision_one_valid_counts_can_fall_on_either_side_of_approximate_target() {
+    let below_request = request(0);
+    let target = usize::try_from(
+        below_request
+            .configuration
+            .normalized()
+            .generator()
+            .target_system_count,
+    )
+    .unwrap();
+    let below = generate_world(&below_request).expect("below-target fixture generates");
+    assert!(below.definition.systems.len() < target);
+    WorldState::new(below.definition).expect("below-target fixture is valid");
+
+    let above = generate_world(&request(2)).expect("above-target fixture generates");
+    assert!(above.definition.systems.len() > target);
+    WorldState::new(above.definition).expect("above-target fixture is valid");
+}
+
+#[test]
 fn invalid_configuration_returns_no_artifact() {
     let invalid = STARTER.replacen("generated_z: 0", "generated_z: 1", 1);
     assert!(compile_generation_profile_str("core:invalid", &invalid).is_err());

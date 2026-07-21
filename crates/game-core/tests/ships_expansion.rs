@@ -397,6 +397,37 @@ fn shipyards_have_independent_fifo_queues_pause_cancel_and_never_reuse_ids() {
 }
 
 #[test]
+fn begun_shipyard_project_cancellation_rejects_without_mutating_world() {
+    let mut world = fixture(100, 0, 0, 2, 2, 2);
+    let project = world
+        .enqueue_ship_project(
+            &id("core:origin"),
+            &id("core:origin_body"),
+            &id("core:yard_slot_a"),
+            ShipProjectKind::Probe,
+        )
+        .unwrap();
+    world.advance_tick().unwrap();
+    assert_eq!(
+        shipyard_queue(
+            &world.debug_system_snapshot(&id("core:origin")).unwrap(),
+            "core:yard_slot_a",
+        )[0]
+        .progress,
+        1
+    );
+
+    let before_rejection = world.debug_snapshot();
+    assert_eq!(
+        world.cancel_ship_project(&project.project_id),
+        Err(CoreError::ShipProjectAlreadyBegun(
+            project.project_id.clone()
+        ))
+    );
+    assert_eq!(world.debug_snapshot(), before_rejection);
+}
+
+#[test]
 fn probe_duration_one_multileg_stops_reveal_and_launch_rejections_are_exact() {
     let mut world = fixture(500, 0, 2, 2, 1, 1);
     let direct = build_asset(&mut world, ShipProjectKind::Probe, "core:yard_slot_a", 1);
