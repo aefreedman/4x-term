@@ -77,11 +77,12 @@ The workspace contains only `game-core` and `game-content`.
    player-selected keyboard layout. The initial layouts are QWERTY (`hjkl`)
    and Colemak-DH `unei` as a WASD-style directional cluster: `u` up, `n`
    left, `e` down, and `i` right. Help and contextual hints reflect the active
-   layout. Layout selection is
-   available during startup and may be changed during play; machine-local
-   persistence of that preference is not required in this stage.
+   layout. Keyboard mode is a global TUI user setting, independent of profile,
+   seed, generated identity, and session. It may be changed from global
+   settings on any surface; machine-local persistence is not required in this
+   stage.
 10. The frontier overview presents a synchronized map and system list. Both are
-    derived from player knowledge and must not reveal anonymous or hidden
+    derived from player knowledge and must not reveal uncharted or hidden
     system identity or position.
 11. Multi-tick advancement presents intermediate tick changes rather than only
     the final state.
@@ -93,6 +94,10 @@ The workspace contains only `game-core` and `game-content`.
     information density, keyboard-first inspectability, map-and-panel
     composition, and systemic legibility—not as layouts, terminology,
     keybindings, color palettes, or widgets to copy literally.
+15. A player may assign or clear a personal alias for a charted system. The
+    stable survey-catalogue label remains available for disambiguation. Alias
+    state belongs to the application session, not TUI-local selection state or
+    the generated world definition.
 
 ## Target architecture
 
@@ -172,9 +177,17 @@ visual language.
 
 Markdown and exact-cell ASCII wireframes are sufficient; this phase should not
 build a throwaway TUI or make a generated seed into a gameplay acceptance
-target. Store the approved design artifacts under `docs/design/` and link them
-from this plan. The artifacts may be separate documents or one reviewed Slice
-5a TUI specification, but together they must cover the following contracts.
+target. Keep draft review artifacts as planning supplements under `docs/plans/`
+and link them from this plan. They move into durable `docs/design/`
+documentation only if they are approved and expected to persist beyond this
+implementation plan. The supplements may be separate documents or one reviewed
+Slice 5a TUI specification, but together they must cover the following
+contracts.
+
+Draft review artifacts:
+
+- [Stage 5a TUI Design Foundation Supplement](2026-07-21-stage-5a-tui-design-foundation-supplement.md)
+- [Stage 5a TUI Reference Wireframes Supplement](2026-07-21-stage-5a-tui-reference-wireframes-supplement.md)
 
 ### Surface inventory and navigation map
 
@@ -190,7 +203,9 @@ designing each one:
 - construction role and Extractor-target selection;
 - Habitat controls;
 - accepted/rejected command feedback;
-- contextual help; and
+- charted-system rename/clear-alias interaction;
+- contextual help;
+- global TUI user settings, including keyboard mode; and
 - below-minimum terminal-size behavior.
 
 For each surface, record its entry/exit path, default focus, available actions,
@@ -216,7 +231,8 @@ reference games' design from memory.
 Define a small reusable terminal design system for the `160x45` canvas. It must
 cover:
 
-- screen shell, title/status regions, panel grid, spacing, borders, and focus;
+- screen shell, title/global-action regions, panel-local action bars, panel
+  grid, spacing, borders, and focus;
 - list, table, detail, metric, resource, progress, form-field, action,
   key-hint, message, and map elements;
 - overlays, confirmations, errors, warnings, disabled states, empty states, and
@@ -265,16 +281,16 @@ and how focus, selection, back, cancel, help, manual tick advancement, and quit
 behave. Arrow keys remain universal. Define QWERTY `hjkl` and Colemak-DH
 `unei` (`u` up, `n` left, `e` down, `i` right) layout mappings through one
 semantic navigation layer so widgets never match
-layout-specific keys directly. Startup and in-play layout selection and all
-contextual hints must use the active mapping.
+layout-specific keys directly. Global user settings own layout selection, and
+all contextual hints must use the active mapping.
 
 ### Information hierarchy and formatting
 
 Classify player information as always visible, visible on inspection,
 contextual help, or intentionally omitted. Define formatting rules for ticks,
-seasons, quantities, progress, generation identity/fingerprints, labels versus
-stable IDs, truncation, disabled actions, warnings, errors, selection, and
-scroll position.
+seasons, quantities, progress, player-facing seed/profile identity, labels
+versus stable IDs, truncation, disabled actions, warnings, errors, selection,
+and scroll position.
 
 Design the dedicated Energy render around player-safe evidence: current Energy,
 capacity, headroom, current seasonal position, last-tick life-support demand and
@@ -367,11 +383,11 @@ operable. It deliberately does not require every Stage 4b command.
 - Generate `core:frontier_world@1` through the public generation API.
 - Preview at least:
   - seed;
-  - generator family and revision;
-  - logical profile identity and normalized fingerprint;
-  - generated system count;
+  - player-facing profile identity;
   - origin identity and the constructed origin scaffold; and
   - clear generation/content failures.
+  Generator revision, fingerprint, provenance, aggregate count, and other
+  reproduction/debug metadata remain internal rather than player-facing.
 - Permit regenerate/repreview with a different seed before starting.
 - Start a fresh `WorldState` only after explicit player confirmation.
 
@@ -379,6 +395,8 @@ operable. It deliberately does not require every Stage 4b command.
 
 - Inspect world time through a knowledge-filtered frontier overview containing
   a synchronized map and system list.
+- Assign or clear a player-facing alias for a charted system while retaining
+  its stable survey-catalogue label.
 - Inspect the origin's stocks, a dedicated Energy render, bodies, slots,
   developments, body resources, construction queue, population-facing state,
   and Habitat controls.
@@ -480,6 +498,8 @@ A deterministic TUI-focused journey must demonstrate:
 - one-tick and bounded multi-tick manual advancement with intermediate views
   and interruption;
 - synchronized map/list selection without hidden-knowledge leakage;
+- charted-system alias assignment, clearing, validation, and catalogue-label
+  fallback;
 - dedicated Energy rendering from application-provided values;
 - arrow, QWERTY `hjkl`, and Colemak-DH `unei` navigation through one semantic
   input mapping, with the directional meaning of every key asserted;
@@ -525,7 +545,7 @@ boundary.
 ### Acceptance focus
 
 A short deterministic fixture or explicit generated request demonstrates that
-an anonymous/identified frontier changes only through approved observations and
+an uncharted/identified frontier changes only through approved observations and
 transmissions. The TUI must not name hidden intermediate systems before the
 player boundary reveals them.
 
