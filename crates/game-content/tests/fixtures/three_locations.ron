@@ -12,8 +12,12 @@
         id: "core:community",
         location: "core:origin",
         population: 12,
-        stocks: [(resource: "core:energy", quantity: 8)],
     ),
+    systems: [
+        (location: "core:origin", stocks: [(resource: "core:energy", quantity: 8)]),
+        (location: "frontier:site", stocks: []),
+        (location: "frontier:isolated", stocks: []),
+    ],
     deposits: [
         (id: "frontier:water", location: "frontier:site", resource: "core:water", quantity: 5),
     ],
