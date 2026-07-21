@@ -13,10 +13,11 @@ origin-and-frontier simulation. Human play uses a terminal UI. The simulation
 remains headless and data driven; the TUI is an input and presentation adapter,
 not an owner of gameplay rules or hidden world state.
 
-Deliver Stage 5 as focused slices. The first slice proves world generation,
-preview, and the minimum bank/develop/bootstrap gameplay loop with manual tick
-advancement. Later slices expose the already-implemented scouting and founding
-mechanics without bundling every Stage 4b command into the first playable pass.
+Deliver Stage 5 as focused sequential slices. Slice 5a settles the reusable UI
+design foundation. Slice 5b then proves world generation, preview, and the
+minimum bank/develop/bootstrap gameplay loop with manual tick advancement.
+Later slices expose the already-implemented scouting and founding mechanics
+without bundling every Stage 4b command into the first playable pass.
 Agent-facing CLI interaction is deferred to a separate future stage so this
 plan can focus exclusively on human interaction through the TUI.
 
@@ -59,8 +60,9 @@ The workspace contains only `game-core` and `game-content`.
 1. The TUI is the human play surface.
 2. The game remains data driven. Widgets and key handlers do not contain
    recipes, resource identities, simulation rules, or hidden world facts.
-3. The first slice includes generated-world selection and preview plus a basic
-   playable origin loop. It need not expose every Stage 4b feature.
+3. The first implementation slice after UI preparation includes generated-world
+   selection and preview plus a basic playable origin loop. It need not expose
+   every Stage 4b feature.
 4. Ticks can be advanced manually. Real-time ticking is not required in this
    stage.
 5. Agent-facing CLI interaction is outside Stage 5 and will receive a separate
@@ -102,7 +104,7 @@ human-play executable ──► game-tui ──► game-app ──► game-core
           └───────────────────────────────────────► game-content
 ```
 
-Exact crate names and executable packaging may be adjusted during Slice 5a
+Exact crate names and executable packaging may be adjusted during Slice 5b
 setup, but the responsibility boundaries are contractual:
 
 ### `game-app`
@@ -159,7 +161,7 @@ concrete need for Tokio, channels, background tasks, or a wall clock.
 - Add external dependencies only for a concrete adapter responsibility and
   keep them out of `game-core` and `game-content`.
 
-## Preparation phase — Slice 5a UI design lock
+## Slice 5a — UI design foundation
 
 Complete and review the minimum human-interaction foundation before
 implementation agents choose crate APIs, Ratatui widgets, or input handlers.
@@ -176,7 +178,7 @@ from this plan. The artifacts may be separate documents or one reviewed Slice
 
 ### Surface inventory and navigation map
 
-Inventory the required Slice 5a surfaces and their transitions without fully
+Inventory the required Slice 5b surfaces and their transitions without fully
 designing each one:
 
 - profile/seed selection;
@@ -224,7 +226,7 @@ cover:
 - truncation, scrolling, selected-row viewport, and overflow indicators; and
 - semantic text markers so color is never the only carrier of meaning.
 
-Create a classification matrix mapping every inventoried Slice 5a element to a
+Create a classification matrix mapping every inventoried Slice 5b element to a
 design-system component and variant. An implementation agent may compose an
 unwireframed surface from approved components, but must not create a new
 component, state language, or navigation pattern without recording the gap for
@@ -244,7 +246,7 @@ system's composition and highest-risk interactions:
 
 Use these reference screens to prove the design system against representative
 edge states such as long labels, large quantities, empty and overflowing lists,
-no available action, and source-aware errors. Other Slice 5a surfaces may use
+no available action, and source-aware errors. Other Slice 5b surfaces may use
 component-level examples and classification rather than bespoke full-screen
 wireframes.
 
@@ -301,7 +303,7 @@ List the exact presentation data and typed intents required by the approved
 critical screens and classified elements. The contract must identify which
 layer resolves labels, costs, availability, and limiting reasons, and must prove
 that the TUI neither reads hidden runtime state nor duplicates simulation rules.
-Add only fields used by an approved Slice 5a screen, component, or action.
+Add only fields used by an approved Slice 5b screen, component, or action.
 
 ### UX acceptance walkthroughs
 
@@ -322,18 +324,18 @@ seeds only to verify identity and deterministic presentation, not world quality.
 - [ ] Approve information hierarchy and formatting rules.
 - [ ] Approve command-flow state machines.
 - [ ] Approve typed intents and application-view fields.
-- [ ] Walk through all Slice 5a UX acceptance scenarios.
+- [ ] Walk through all Slice 5b UX acceptance scenarios.
 - [ ] Record deferred UI questions explicitly.
 - [ ] Link the approved design artifacts from this plan.
 
-Slice 5a implementation should not begin until this checklist is complete or a
+Slice 5b implementation should not begin until this checklist is complete or a
 specific unchecked item is explicitly accepted as implementation-owned rather
 than product-design-owned. Implementation agents may make local composition
 choices for classified elements within the approved design system; unresolved
 product behavior, new component types, and new interaction patterns require
 review.
 
-## Slice 5a — Generated-world preview and minimal playable TUI
+## Slice 5b — Generated-world preview and minimal playable TUI
 
 ### Goal
 
@@ -423,7 +425,7 @@ operable. It deliberately does not require every Stage 4b command.
 `PlayerWorldView` contains stable IDs, knowledge, missions, redacted routes, and
 commandable local snapshots, but it does not by itself provide every label,
 action availability, cost, or startup identity needed by a player interface.
-Slice 5a must define a focused application view rather than letting the TUI
+Slice 5b must define a focused application view rather than letting the TUI
 inspect private runtime state or duplicate profile rules.
 
 The view should expose only presentation-relevant data, including:
@@ -492,7 +494,7 @@ A deterministic TUI-focused journey must demonstrate:
 - [ ] Record exact crate/executable names and dependency choices.
 - [ ] Add the synchronous application/session owner.
 - [ ] Add generated preview and explicit start-session composition.
-- [ ] Define typed Slice 5a intents, outcomes, and immutable views.
+- [ ] Define typed Slice 5b intents, outcomes, and immutable views.
 - [ ] Implement minimum TUI input, state, rendering, and terminal lifecycle.
 - [ ] Cover the deterministic acceptance journey and focused adapter tests.
 - [ ] Update architecture, README/startup instructions, invariant references if
@@ -500,7 +502,7 @@ A deterministic TUI-focused journey must demonstrate:
 - [ ] Pass formatting, all-target/all-feature check, Clippy with warnings
       denied, and all-feature workspace tests with no ignored tests.
 
-## Slice 5b — Scouting loop
+## Slice 5c — Scouting loop
 
 ### Goal
 
@@ -534,7 +536,7 @@ player boundary reveals them.
 - route optimization advice; and
 - real-time ticking.
 
-## Slice 5c — Founding loop
+## Slice 5d — Founding loop
 
 ### Goal
 
