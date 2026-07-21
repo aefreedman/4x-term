@@ -527,7 +527,9 @@ Validation:
       requirement, and re-derive population, brownout, and investment validation
       so current tuning ratios or “all four shapes” rules do not become
       accidental destination contracts.
-- **Stage 4:** define exact G18 units, inequalities, parameter provenance,
+- **Stage 4:** implement the authored origin resource/infrastructure engine in
+      exact Tier 1 fixtures.
+- **Stage 4b:** define structural G18 placement contracts, parameter provenance,
       generator version, and constructive per-output tests; explicitly decide
       connectivity/topology rather than inheriting the current nearest-three,
       universally connected graph rule.

@@ -68,12 +68,14 @@ collapsed. Consequences:
   the community are fluid; groups may specialize. Verbs lean toward
   direction-setting over micromanagement, matching the
   identical-policy-component constraint.
-- **G6. Core loop = margin allocation.** Untouched systems idle at
-  subsistence via the self-correcting economy; the player's job is
-  generating and spending *surplus* above life-support burn. Three uses of
-  margin: **bank** (reserve against shocks), **expand** (expeditions),
-  **develop** (infrastructure). Runway — survivable ticks at zero income —
-  is the glanceable pivot stat; specialist capacity gives it siblings.
+- **G6. Core loop = margin allocation.** The player's job is generating and
+  allocating physical margin around life-support and infrastructure pressure.
+  Three uses of margin remain **bank** (reserve against shocks), **expand**
+  (outward actions/expeditions), and **develop** (infrastructure), but they need
+  not all be available at tick zero. Stage 4 implements the bank/develop origin
+  engine; Stage 4b owns the first bounded expand action. Runway may become a
+  glanceable pivot stat when its player-facing contract is designed; it is not
+  a Stage 4 solvency oracle.
 - **G7. Expeditions are lumpy and physical**: a reclamation attempt is a
   laden convoy using existing travel physics. No abstract resource-transfer
   button. Expeditions **can fail and can lose pops**.
@@ -142,28 +144,25 @@ collapsed. Consequences:
 - **G16. Anti-strand invariant scoped**: it protects the liveness of
   automated/delegated logistics ships, not player expeditions. Stranding a
   crewed convoy is a permitted, player-authored catastrophe.
-- **G17. The world starts dead except for the player.** One living origin
-  community; everything else is ruins, resources, and empty geography from
-  the precursor collapse. Living neighbors are outputs of play (daughters
+- **G17. The world starts dead except for the player.** One persistent origin
+  seat/community record starts at population zero and may bootstrap before
+  population arrives; everything else is ruins, resources, and empty geography
+  from the precursor collapse. Living neighbors are outputs of play (daughters
   via reclamation), never worldgen guarantees. Independent NPC communities
   are deferred entirely, possibly forever. Ships trading between living
   systems are the player community's own logistics (a delegation/fleet
   mechanic), not an ecology of independent agents.
-- **G18. Worldgen viability is constructive, not statistical.** Viability
-  is built where it matters and irrelevant everywhere else. Exactly two
-  guarantees, both exactly assertable per seed:
-  1. **Origin solvency with surplus margin**: the origin system alone
-     covers its burn through the worst seasonal phase, with margin above
-     subsistence so the bank/expand/develop choice exists from tick one.
-  2. **Neighborhood affordance**: within starting expedition/scouting
-     range there are enough extractable resources and at least one
-     reclaimable site for the expansion loop to turn.
-  Everything beyond the neighborhood is don't-care frontier. Distant
-  non-viability is not a generation failure — it is ruins, i.e. the
-  expand content. Trade gradients, tertiary-chain closure, and comms-lag
-  texture are emergent consequences of expansion, never generation-time
-  guarantees. No reject/reroll, no viability screening, no statistical
-  acceptance criteria over seed batches.
+- **G18. Worldgen viability is constructive, structural, and not
+  statistical.** Stage 4b derives exact mandatory origin and neighborhood
+  records from implemented gameplay and places them before optional texture.
+  These guarantees establish required presence and relationships; they do not
+  assert per-seed economic solvency, worst-season surplus, tick-zero access to
+  bank/expand/develop, affordability or resource-quantity floors, long-run
+  survival, a favorable distribution, or a mandatory reclaimable site unless a
+  later implemented action proves that site structurally necessary. Everything
+  beyond approved witnesses is don't-care frontier. Distant non-viability is
+  expected texture and future expansion/reclamation content. No reject/reroll,
+  viability screening, or statistical acceptance criteria over seed batches.
 - **G19. The former Slice 2 direction is obsolete.** Surviving ideas are re-derived
   from this
   document rather than inherited: the brownout ladder (now the *player's*
@@ -213,9 +212,9 @@ collapsed. Consequences:
   for the full direction):
   1. **Authored micro-fixtures** (3–6 systems, hand-computable outcomes)
      test mechanisms exactly.
-  2. **Generated worlds** test only (a) engine invariants — conservation,
-     determinism, anti-strand, no deadlock — on arbitrary seeds, and
-     (b) the constructive guarantees of G18 as exact per-seed assertions.
+  2. **Generated worlds** begin in Stage 4b and test only (a) named applicable
+     engine invariants and (b) approved structural G18 placement/relationship
+     guarantees as exact per-seed assertions.
 - No statistical acceptance criteria over seed batches. Distribution
   shape, frontier life/death rates, and emergent texture are *descriptive*
   diagnostics for tuning worldgen feel, never pass/fail.
@@ -224,8 +223,9 @@ collapsed. Consequences:
   fixtures (small world, tens of ticks, deterministic expected outcome).
 - Expeditions, surveys, training, and reclamation are all discrete,
   deterministic, fixture-testable events by construction (G7, G8).
-- Local collapse anywhere is expected and permitted (G2); only engine
-  invariant violations and G18 guarantee failures are bugs.
+- Local collapse anywhere is expected and permitted (G2); only applicable
+  engine-invariant violations and approved Stage 4b structural G18 failures are
+  bugs.
 
 ## Open directions (converging; need specs in future slices)
 

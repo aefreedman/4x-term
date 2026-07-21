@@ -1,0 +1,60 @@
+(
+    resources: [
+        (id: "core:energy", name: "Energy"),
+        (id: "core:ore", name: "Ore"),
+        (id: "core:alloy", name: "Alloy"),
+    ],
+    locations: [
+        (id: "core:origin", name: "Origin", position: (x: 0.0, y: 0.0, z: 0.0)),
+    ],
+    origin: (
+        id: "core:community",
+        location: "core:origin",
+        population: 0,
+    ),
+    systems: [
+        (
+            location: "core:origin",
+            stocks: [
+                (resource: "core:energy", quantity: 10),
+                (resource: "core:ore", quantity: 10),
+                (resource: "core:alloy", quantity: 0),
+            ],
+            resource_engine: Some((
+                collector_energy_profile: [40, 40, 30, 20, 10, 10, 20, 30, 40, 40],
+                bodies: [
+                    (
+                        id: "core:origin_body",
+                        name: "Origin Body",
+                        slots: [
+                            (id: "core:slot_0", development: Some((id: "core:initial_collector", role: Collector, condition: Functional))),
+                            (id: "core:slot_1"),
+                            (id: "core:slot_2"),
+                            (id: "core:slot_3"),
+                            (id: "core:slot_4"),
+                            (id: "core:slot_5"),
+                        ],
+                    ),
+                ],
+                config: (
+                    energy_resource: "core:energy",
+                    ore_resource: "core:ore",
+                    alloy_resource: "core:alloy",
+                    life_support_per_population: 10,
+                    origin_construction_work: 1,
+                    intrinsic_energy_capacity: 10,
+                    battery_energy_capacity: 100,
+                    collector_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:alloy", quantity: 2)], required_work: 4),
+                    battery_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:alloy", quantity: 2)], required_work: 4),
+                    extractor_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:alloy", quantity: 2)], required_work: 4),
+                    refinery_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:ore", quantity: 2)], required_work: 4),
+                    extractor: (energy_upkeep: 10, cycle_duration: 1, ore_output: 1),
+                    refinery: (energy_upkeep: 10, cycle_duration: 1, ore_input: 2, alloy_output: 1),
+                ),
+            )),
+        ),
+    ],
+    deposits: [
+        (id: "core:ore_deposit", location: "core:origin", resource: "core:ore", quantity: 200),
+    ],
+)

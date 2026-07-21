@@ -8,12 +8,10 @@
         (id: "core:origin", name: "Origin", position: (x: NaN, y: 0.0, z: 0.0)),
         (id: "core:outpost", name: "Outpost", position: (x: 1.0, y: 0.0, z: 0.0)),
     ],
-    origin: (
-        id: "core:community",
-        location: "frontier:missing",
-        population: 0,
-        stocks: [(resource: "frontier:missing", quantity: 1)],
-    ),
+    origin: (id: "core:community", location: "frontier:missing", population: 0),
+    systems: [
+        (location: "frontier:missing", stocks: [(resource: "frontier:missing", quantity: 1)]),
+    ],
     deposits: [
         (id: "frontier:ore", location: "frontier:missing", resource: "frontier:missing", quantity: 0),
     ],
