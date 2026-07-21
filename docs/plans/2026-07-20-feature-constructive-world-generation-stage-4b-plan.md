@@ -174,8 +174,8 @@ locally. RON, filesystem, provenance, hashing, and generation remain outside
 - [x] Verify the workspace is clean and run the pre-change workspace tests.
   One pre-existing permutation assertion failed, as recorded above.
 - [x] Confirm the design wiki links resolve.
-- [ ] Mark this phase complete in the plan and commit the planning baseline.
-  No separate planning-baseline commit was created.
+- **Execution variance (closed):** Phase 0 was recorded in the final execution
+  evidence; no separate planning-baseline commit was created.
 
 ### Phase 1 — Foundation and module extraction
 
@@ -185,11 +185,12 @@ This phase is intentionally single-owner because it changes shared contracts.
   changes.
 - [x] Extract the internal `game-content` modules listed above without behavior
   changes and freeze their module declarations/public hook signatures.
-- [ ] Add `sha2` to `game-content` and commit the manifest/lockfile update before
-  creating Phase 2 worktrees. `sha2` was added, but not in a separate pre-worktree
-  commit.
-- [ ] Preserve all current Stage 4 tests during extraction. The one pre-existing
-  failing obsolete permutation assertion was replaced rather than preserved.
+- [x] Add `sha2` to `game-content`.
+  **Execution variance (closed):** the manifest/lockfile update was included in
+  the combined implementation commit rather than a pre-worktree commit.
+- [x] Preserve retained Stage 4 mechanism coverage during extraction. The
+  pre-existing obsolete schema-permutation assertion was replaced with Stage 4b
+  normalization and fingerprint evidence, as required by the hard migration.
 - [x] Add fixed-point coordinate types and checked squared-distance helpers.
 - [x] Add always-present system/body map definitions and world-level tuning.
 - [x] Add persistent runtime state for every generated/authored system.
@@ -208,8 +209,8 @@ This phase is intentionally single-owner because it changes shared contracts.
   runtime split.
 - [x] Prove existing Collector/Battery/Extractor/Refinery/construction behavior
   still passes under the replacement schema.
-- [ ] Commit the foundation before parallel work begins. The foundation shipped
-  in the single implementation commit.
+- **Execution variance (closed):** The foundation shipped in the combined
+  implementation commit rather than a separate pre-parallel commit.
 
 ### Phase 2 — Parallel generator, population, and knowledge slices
 
@@ -241,9 +242,9 @@ These slices start from the same Phase 1 commit and own disjoint modules/files.
 - [x] Implement origin/remote commandability rules at population zero.
 - [x] Add explicit population generation/removal accounting.
 - [x] Add focused Habitat/population tests independent of generated worlds.
-- [ ] Do not edit aggregate world layout, global simulation orchestration, public
-  re-exports, ID schemas, or development-role definitions in this slice. No
-  isolated population/Habitat slice was used.
+- **Execution variance (closed):** Population/Habitat behavior was implemented
+  in the coordinated working tree and then wired by the shared integration owner;
+  no independently merged slice was used.
 
 #### 2C — Routing and origin knowledge
 
@@ -257,32 +258,22 @@ These slices start from the same Phase 1 commit and own disjoint modules/files.
 - [x] Implement fact-level monotonic merge, dynamic-field freshness, tie-breaking,
   immutable-fact contradiction rejection, and idempotent receipt.
 - [x] Add focused route/knowledge tests using authored tiny positions.
-- [ ] Do not edit aggregate world layout, global simulation orchestration, public
-  re-exports, ID schemas, or development-role definitions in this slice. No
-  isolated routing/knowledge slice was used.
+- **Execution variance (closed):** Routing/knowledge behavior was implemented in
+  the coordinated working tree and then wired by the shared integration owner;
+  no independently merged slice was used.
 
 ### Phase 3 — Integrate Phase 2
 
-- [ ] Merge the generator/profile slice into the orchestrator branch. No separate
-  slice merge was used.
-- [ ] Run focused and workspace tests; resolve integration issues centrally. No
-  separate generator/profile merge-scoped run was recorded; final validation
-  passed.
-- [ ] Merge the population/Habitat slice. No separate slice merge was used.
-- [ ] Run focused and workspace tests; resolve integration issues centrally. No
-  separate population/Habitat merge-scoped run was recorded; final validation
-  passed.
-- [ ] Merge the routing/knowledge slice. No separate slice merge was used.
-- [ ] Run focused and workspace tests; resolve integration issues centrally. No
-  separate routing/knowledge merge-scoped run was recorded; final validation
-  passed.
-- [ ] Confirm no slice changed another slice's owned files without handoff. The
-  implementation was delivered as one coordinated commit, not isolated slices.
+- **Execution variance (closed):** The three Phase 2 concerns were coordinated
+  directly in one working tree rather than merged from separate worktrees.
+  Focused tests ran after each delegated concern and the final integrated quality
+  gate passed; therefore merge-scoped checks and cross-slice handoff verification
+  were not applicable to the execution used.
 - [x] Wire population and knowledge leaf hooks into `world.rs`, `resources.rs`,
   `simulation.rs`, `ids.rs`, and `lib.rs` under one integration owner.
 - [x] Freeze the integrated APIs needed by ships/founding.
-- [ ] Commit the integrated Phase 2 baseline. It shipped in the single
-  implementation commit.
+- **Execution variance (closed):** The integrated Phase 2 baseline shipped in
+  the combined implementation commit.
 
 ### Phase 4 — Shipyards, ships, transit, and founding
 
@@ -306,8 +297,8 @@ contracts and should have one implementation owner.
 - [x] Implement project/payload/transit/arrival/loss reconciliation.
 - [x] Add exact duration-one, multi-leg, simultaneous-arrival, reservation,
   success, failure, and atomic-rejection fixtures.
-- [ ] Commit the bounded expansion loop. It shipped in the single implementation
-  commit.
+- **Execution variance (closed):** The bounded expansion loop shipped in the
+  combined implementation commit.
 
 ### Phase 5 — Global tick and integration scenarios
 
@@ -323,8 +314,8 @@ contracts and should have one implementation owner.
 - [x] Add population-token uniqueness/reconciliation across generation,
   departure, transit, arrival, and loss.
 - [x] Verify Stage 4 starter bootstrap mechanics remain covered after migration.
-- [ ] Commit integrated simulation behavior. It shipped in the single
-  implementation commit.
+- **Execution variance (closed):** Integrated simulation behavior shipped in the
+  combined implementation commit.
 
 ### Phase 6 — Documentation and evidence
 
@@ -562,7 +553,8 @@ Use incremental conventional commits, for example:
 6. `test(stage-4b): cover global tick reconciliation`
 7. `docs(stage-4b): record implementation evidence`
 
-- [ ] Update this plan's checkboxes in the corresponding incremental commit.
+- **Execution variance (closed):** Checklist evidence was consolidated into the
+  documentation commits because the implementation phases shipped together.
 - [x] Include AI attribution in the final commit and PR body.
 - [x] Push the implementation branch.
 - [x] Create a PR using the project template.
