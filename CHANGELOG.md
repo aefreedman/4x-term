@@ -4,6 +4,14 @@
 
 ### Added
 
+- Stage 4's authored headless origin resource engine: deterministic monthly
+  ticks, ten-phase Collector output, life support, Batteries, Extractors,
+  Refineries, generic body slots, and FIFO construction.
+- Exact system accounting for construction commitments, production cycles,
+  mutable deposit depletion, Energy retention/overflow, cancellation refunds,
+  shortages, and capacity-aware receipts.
+- Strict designer-authored Stage 4 RON definitions plus the exact 20-tick
+  zero-population Collector → Refinery → Battery → Extractor fixture.
 - Stage 3's headless origin-and-frontier substrate: resources, neutral
   locations, exactly one living origin community with physical stocks, resource
   deposits, reclaimable sites, and explicit topology.
@@ -18,8 +26,11 @@
 
 ### Changed
 
-- The workspace now contains only `game-core` and `game-content`; the retained
-  acceptance surface is headless buildability and 15 focused deterministic
+- Physical stocks, bodies, developments, queues, and accounting now belong to
+  persistent systems; communities contain population only and may start at
+  zero.
+- The workspace contains only `game-core` and `game-content`; the retained
+  acceptance surface is headless buildability and 40 focused deterministic
   tests.
 - Topology is explicit and may be empty or disconnected; locations do not gain
   living state from deposits, sites, or topology.

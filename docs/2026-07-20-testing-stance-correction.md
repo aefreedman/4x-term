@@ -15,12 +15,12 @@ at that time and supply their own exact contracts, migration inventories,
 and acceptance commands rather than treating this document as an
 executable specification.
 
-**Current migration boundary (2026-07-20):** Stages 1–3 are complete. The
-workspace retains only the headless `game-core` substrate and the
-schema-specific `game-content` compiler. It has 15 focused tests and no ignored
-tests; the app, TUI, CLI, and production authored content are absent. Stage 4,
-its Stage 4b follow-up, and Stages 5–8 remain future work; playability is
-intentionally not restored yet.
+**Current migration boundary (2026-07-20):** Stages 1–4 are complete. The
+workspace retains only the headless `game-core` substrate/resource engine and
+the schema-specific `game-content` compiler. It has 40 focused tests and no
+ignored tests; the app, TUI, CLI, generated frontier, outward actions, and
+production authored content are absent. Stage 4b and Stages 5–8 remain future
+work; playability is intentionally not restored yet.
 
 ## The problem being corrected
 
@@ -228,6 +228,10 @@ out of scope. This stage creates only the minimum truthful substrate needed
 by G17 and G18.
 
 ### Stage 4 — Implement the authored origin resource/infrastructure engine
+
+**Status:** completed on 2026-07-20 with system-owned state, strict Stage 4
+content, exact mechanism coverage, and the approved 20-tick zero-population
+bootstrap.
 
 - Add deterministic ticks, seasonal Energy, retention/overflow, life support,
   and exact shortage evidence in the headless core.

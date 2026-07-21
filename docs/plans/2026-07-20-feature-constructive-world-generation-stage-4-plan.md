@@ -2,6 +2,7 @@
 title: "Stage 4: Origin Resource and Infrastructure Engine"
 type: feature
 date: 2026-07-20
+status: completed
 ---
 # Stage 4: Origin Resource and Infrastructure Engine
 
@@ -198,13 +199,9 @@ At tick 20, construction has spent `30 Energy`, `4 Alloy`, and `2 Ore`; developm
 
 Separate focused fixtures must prove populated/underserved work, same-tick FIFO overflow across multiple items, cancellation/refund overflow, multi-tick production pauses, transfer-at-capacity reconciliation, input-order independence, and rejected-command atomicity.
 
-### Implementation readiness gate
+### Implementation readiness resolution
 
-The remaining pre-implementation work is engineering specification and evidence rather than open gameplay design:
-
-- map the approved domain contract onto core/content source types without adding speculative fields; the body schema is closed at stable ID, display name, and ordered generic slots;
-- migrate community-owned stocks, nonzero-population validation, immutable deposit snapshots, uncapped system receipts, and the dual Energy/`ResourceStore` surfaces; and
-- retain Stage 3 substrate loading while requiring complete Stage 4 prerequisites only for tick advancement.
+Implementation maps the approved contract onto core/content types without speculative body fields, migrates community-owned stocks and immutable deposit snapshots, uses `ResourceStore` as the sole quantity model, and retains Stage 3 substrate loading while requiring complete Stage 4 prerequisites for tick advancement.
 
 The controlling architecture, G18, testing stance, and invariant registry assign generation/scouting responsibilities to Stage 4b rather than Stage 4.
 
@@ -371,77 +368,77 @@ Validation:
 
 ### Phase 2: Develop the resource engine test-first
 
-- [ ] After Phase 1 approval, add failing Tier 1 tests for zero-population origin work, supported-population work, same-tick FIFO overflow, and the finalized 20-tick bootstrap scenario.
-- [ ] Migrate physical stocks from `OriginCommunityDefinition` to persistent system state.
-- [ ] Replace the current nonzero-origin-population validation with zero-population support and exact origin-bonus tests.
-- [ ] Add and validate bodies, slots, development conditions, slot occupancy, and queue reservations in `game-core` and `game-content`.
-- [ ] Add and validate approved per-Collector seasonal Energy-efficiency profiles in `game-core` and `game-content`; retain structural loading for Stage 3 fixtures without Stage 4 profiles.
-- [ ] Make runtime deposit quantities mutable and snapshot depletion caused by extractor infrastructure.
-- [ ] Implement approved development consequences, system state, construction queue, and accounting; do not add productive-work or outward commands.
-- [ ] Validate every enqueue, cancellation, production-cycle transition, transfer, and complete tick before mutation.
-- [ ] Expose the exact strategic snapshot fields defined above while retaining an omniscient engine snapshot for substrate tests.
-- [ ] Preserve input-order independence where ordering is not domain state.
+- [x] After Phase 1 approval, add failing Tier 1 tests for zero-population origin work, supported-population work, same-tick FIFO overflow, and the finalized 20-tick bootstrap scenario.
+- [x] Migrate physical stocks from `OriginCommunityDefinition` to persistent system state.
+- [x] Replace the current nonzero-origin-population validation with zero-population support and exact origin-bonus tests.
+- [x] Add and validate bodies, slots, development conditions, slot occupancy, and queue reservations in `game-core` and `game-content`.
+- [x] Add and validate approved per-Collector seasonal Energy-efficiency profiles in `game-core` and `game-content`; retain structural loading for Stage 3 fixtures without Stage 4 profiles.
+- [x] Make runtime deposit quantities mutable and snapshot depletion caused by extractor infrastructure.
+- [x] Implement approved development consequences, system state, construction queue, and accounting; do not add productive-work or outward commands.
+- [x] Validate every enqueue, cancellation, production-cycle transition, transfer, and complete tick before mutation.
+- [x] Expose the exact strategic snapshot fields defined above while retaining an omniscient engine snapshot for substrate tests.
+- [x] Preserve input-order independence where ordering is not domain state.
 
 Validation:
-- [ ] Run each new test by exact name during development.
-- [ ] Compare accepted and rejected operations with complete before/after state.
-- [ ] Demonstrate the approved staged bootstrap, passive banking, and development consequences with exact snapshots.
+- [x] Run each new test by exact name during development.
+- [x] Compare accepted and rejected operations with complete before/after state.
+- [x] Demonstrate the approved staged bootstrap, passive banking, and development consequences with exact snapshots.
 
 ### Phase 3: Stage 4b handoff
 
-- [ ] Record the implemented origin fixture’s structural inputs without promoting fixture quantities into generator floors.
+- [x] Record the implemented origin fixture’s structural inputs without promoting fixture quantities into generator floors.
 - [x] Create `docs/plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md` for constructive generation, generator identity, and the first bounded outward action.
-- [ ] Preserve the direction that required elements are placed before optional texture, with no reject/reroll or economic-quality screening.
-- [ ] Leave `ReclaimableSiteDefinition` unchanged and explicitly defer any site migration or reclamation behavior.
+- [x] Preserve the direction that required elements are placed before optional texture, with no reject/reroll or economic-quality screening.
+- [x] Leave `ReclaimableSiteDefinition` unchanged and explicitly defer any site migration or reclamation behavior.
 
 Validation:
-- [ ] Every Stage 4b candidate requirement is labeled deferred rather than claimed as Stage 4 acceptance.
-- [ ] The handoff contains no economic surplus, affordability, or distribution floor.
+- [x] Every Stage 4b candidate requirement is labeled deferred rather than claimed as Stage 4 acceptance.
+- [x] The handoff contains no economic surplus, affordability, or distribution floor.
 
 ### Phase 4: Documentation and handoff
 
 - [x] Update the engine invariant registry so reserved G18 entries are structural Stage 4b responsibilities rather than economic oracles.
-- [ ] Update architecture and README with the resource-engine boundary and continued absence of playable startup; architecture direction is reconciled, while post-implementation current-state text and README remain implementation tasks.
-- [ ] Update `CHANGELOG.md` under `Unreleased` for user-visible resource-engine behavior.
-- [ ] Link the Stage 4b plan that preserves constructive generation and bounded-expansion intent.
-- [ ] Keep map texture diagnostics and seed-corpus quality gates out of CI.
+- [x] Update architecture and README with the implemented resource-engine boundary and continued absence of playable startup.
+- [x] Update `CHANGELOG.md` under `Unreleased` for user-visible resource-engine behavior.
+- [x] Link the Stage 4b plan that preserves constructive generation and bounded-expansion intent.
+- [x] Keep map texture diagnostics and seed-corpus quality gates out of CI.
 
 Validation:
-- [ ] Review current docs for contradictory solvency, surplus-margin, neighborhood-floor, or per-seed viability-test requirements.
-- [ ] Run all workspace gates and verify no ignored soak or generated-world quality test was added.
+- [x] Review current docs for contradictory solvency, surplus-margin, neighborhood-floor, or per-seed viability-test requirements.
+- [x] Run all workspace gates and verify no ignored soak or generated-world quality test was added.
 
 ## Acceptance Criteria
 
 ### Functional Requirements
 
-- [ ] The approved 20-tick zero-population bootstrap produces its documented bank/develop outcomes.
-- [ ] Each fully supported population unit produces one construction work; underserved population produces none; the origin adds one free work.
-- [ ] A zero-population or fully underserved origin produces exactly one work per tick.
-- [ ] Construction applies allocated work in FIFO order and carries same-tick overflow across as many queued items as the budget permits.
-- [ ] Systems persistently own stocks, bodies, developments, deposits, queues, projects, and accounting evidence; communities contain population only.
-- [ ] Bodies own generic slots; each slot is empty or occupied by one development; queued construction reserves one empty slot.
-- [ ] Only functional Energy, Battery, extraction, and refining developments apply approved deterministic consequences, without consuming construction work.
-- [ ] Multiple Refineries retain independent progress and committed Ore, complete one `2 Ore → 1 Alloy` batch after their authored cycle duration, and use stable body/slot order.
-- [ ] Every Extractor retains and validates one exclusive same-system compatible deposit assignment, including queued reservation and cancellation release.
-- [ ] Battery infrastructure caps retained system Energy and routes excess through an exact overflow/curtailment accounting channel.
-- [ ] Every functional development automatically attempts its consequence each tick; there is no enable/disable control.
-- [ ] Tick processing follows Collector → life support → Extractor → Refinery → construction → retention order, with Batteries contributing passive capacity and stable body/slot order within active roles.
-- [ ] Population life support is paid before development upkeep; exact paid/unpaid support and supported/underserved counts are exposed.
-- [ ] Development operation is atomic per progress tick: complete required upkeep/inputs advance the cycle once; otherwise the development consumes nothing, produces nothing, and does not progress.
-- [ ] Construction enqueue validates atomically, commits the complete cost from available system stocks, and reserves the target slot.
-- [ ] Unstarted construction can be cancelled atomically for a complete refund; begun construction cannot; successful cancellation releases the target slot and explicitly accounts for any overflowing refunded Energy.
-- [ ] Invalid commands and invalid/arithmetic-failure ticks leave complete relevant state unchanged and identify the limiting requirement; routine scarcity advances through the shortage path.
-- [ ] The authored origin fixture has one body/six slots, the approved Energy profile, one `200 Ore` deposit, stocks `10 Energy/10 Ore/0 Alloy`, one Collector, no other developments, and population `0`.
-- [ ] No generated-world, scouting, outward-action, economic-solvency, surplus, stability, or distribution oracle is introduced.
+- [x] The approved 20-tick zero-population bootstrap produces its documented bank/develop outcomes.
+- [x] Each fully supported population unit produces one construction work; underserved population produces none; the origin adds one free work.
+- [x] A zero-population or fully underserved origin produces exactly one work per tick.
+- [x] Construction applies allocated work in FIFO order and carries same-tick overflow across as many queued items as the budget permits.
+- [x] Systems persistently own stocks, bodies, developments, deposits, queues, projects, and accounting evidence; communities contain population only.
+- [x] Bodies own generic slots; each slot is empty or occupied by one development; queued construction reserves one empty slot.
+- [x] Only functional Energy, Battery, extraction, and refining developments apply approved deterministic consequences, without consuming construction work.
+- [x] Multiple Refineries retain independent progress and committed Ore, complete one `2 Ore → 1 Alloy` batch after their authored cycle duration, and use stable body/slot order.
+- [x] Every Extractor retains and validates one exclusive same-system compatible deposit assignment, including queued reservation and cancellation release.
+- [x] Battery infrastructure caps retained system Energy and routes excess through an exact overflow/curtailment accounting channel.
+- [x] Every functional development automatically attempts its consequence each tick; there is no enable/disable control.
+- [x] Tick processing follows Collector → life support → Extractor → Refinery → construction → retention order, with Batteries contributing passive capacity and stable body/slot order within active roles.
+- [x] Population life support is paid before development upkeep; exact paid/unpaid support and supported/underserved counts are exposed.
+- [x] Development operation is atomic per progress tick: complete required upkeep/inputs advance the cycle once; otherwise the development consumes nothing, produces nothing, and does not progress.
+- [x] Construction enqueue validates atomically, commits the complete cost from available system stocks, and reserves the target slot.
+- [x] Unstarted construction can be cancelled atomically for a complete refund; begun construction cannot; successful cancellation releases the target slot and explicitly accounts for any overflowing refunded Energy.
+- [x] Invalid commands and invalid/arithmetic-failure ticks leave complete relevant state unchanged and identify the limiting requirement; routine scarcity advances through the shortage path.
+- [x] The authored origin fixture has one body/six slots, the approved Energy profile, one `200 Ore` deposit, stocks `10 Energy/10 Ore/0 Alloy`, one Collector, no other developments, and population `0`.
+- [x] No generated-world, scouting, outward-action, economic-solvency, surplus, stability, or distribution oracle is introduced.
 
 ### Quality Requirements
 
 - [x] The concrete Stage 4 origin-engine contract has explicit human design approval.
-- [ ] Gameplay behavior has short, hand-computable Tier 1 scenario coverage.
-- [ ] Tests protect mechanisms and construction responsibilities rather than mutable balance values.
-- [ ] `game-core` remains independent of RON, filesystem, terminal, and frontend concerns.
-- [ ] No unnecessary dependency or crate boundary is added.
-- [ ] Formatting, check, Clippy with warnings denied, tests, and `git diff --check` pass.
+- [x] Gameplay behavior has short, hand-computable Tier 1 scenario coverage.
+- [x] Tests protect mechanisms and construction responsibilities rather than mutable balance values.
+- [x] `game-core` remains independent of RON, filesystem, terminal, and frontend concerns.
+- [x] No unnecessary dependency or crate boundary is added.
+- [x] Formatting, check, Clippy with warnings denied, tests, and `git diff --check` pass.
 
 ## Test-Development Recommendations
 
@@ -458,20 +455,20 @@ Validation:
 
 ### Automated Validation
 
-- [ ] Focused tests for each accepted/rejected commitment and tick-order case.
-- [ ] Battery tests below, at, and above capacity; stacked-capacity overflow; completion timing; transfer-at-capacity behavior; and exact reconciliation where source decrease equals destination retention plus overflow.
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo check --workspace --all-targets --all-features`
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- [ ] `cargo test --workspace --all-features`
-- [ ] `git diff --check`
-- [ ] Search executable tests and CI for `is_solvent`, statistical seed thresholds, rerolling, and world-quality acceptance.
+- [x] Focused tests for each accepted/rejected commitment and tick-order case.
+- [x] Battery tests below, at, and above capacity; stacked-capacity overflow; completion timing; transfer-at-capacity behavior; and exact reconciliation where source decrease equals destination retention plus overflow.
+- [x] `cargo fmt --all -- --check`
+- [x] `cargo check --workspace --all-targets --all-features`
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [x] `cargo test --workspace --all-features`
+- [x] `git diff --check`
+- [x] Search executable tests and CI for `is_solvent`, statistical seed thresholds, rerolling, and world-quality acceptance.
 
 ### Manual Validation
 
-- [ ] Human designer reviews the zero-population bootstrap, passive banking, delayed development capability, seasonal retention, and shortage evidence.
-- [ ] Inspect exact bootstrap snapshots over the approved 20-tick horizon.
-- [ ] Confirm Stage 4b—not Stage 4—owns generated frontier and outward-action decisions.
+- [x] Human designer reviews the zero-population bootstrap, passive banking, delayed development capability, seasonal retention, and shortage evidence.
+- [x] Inspect exact bootstrap snapshots over the approved 20-tick horizon.
+- [x] Confirm Stage 4b—not Stage 4—owns generated frontier and outward-action decisions.
 
 ### Evidence to Capture
 
@@ -509,7 +506,7 @@ Validation:
 - [x] `docs/2026-07-20-testing-stance-correction.md` — split Stage 4 engine work from Stage 4b generation/outward work.
 - [x] `docs/2026-07-20-engine-invariant-registry.md` — reserve structural Stage 4b G18 and generation-identity entries.
 - [x] `docs/architecture.md` — document the Stage 4 engine and Stage 4b generator handoff.
-- [ ] `README.md` and `CHANGELOG.md` — report current capability without claiming playable startup.
+- [x] `README.md` and `CHANGELOG.md` — report current capability without claiming playable startup.
 
 ### Intentional Follow-up
 

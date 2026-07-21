@@ -29,6 +29,32 @@ It does not own crewed expeditions, reclamation transitions, population arrival/
 - A seed alone is not generation identity. Successful output records generator version, seed, validated configuration fingerprint, and source provenance.
 - `ReclaimableSiteDefinition` remains unchanged until a later reclamation design. Whether Stage 4b must place one is an explicit future design decision, not an inherited requirement.
 
+## Implemented Stage 4 handoff
+
+Stage 4 established these structural inputs without making them generator
+floors:
+
+- a location is the stable system identity;
+- each authored system may own persistent stocks and complete resource-engine
+  prerequisites independently of community population;
+- the map-facing engine definition carries one ten-phase per-Collector Energy
+  profile, stable bodies, ordered generic slots, and optional installed
+  developments with condition and Extractor-deposit assignment;
+- deposits are stable same-system records with mutable runtime quantities; and
+- the demonstrated origin fixture has one body, six slots, one functional
+  Collector, and one Ore deposit.
+
+The fixture's `10 Energy/10 Ore/0 Alloy` stocks, `200 Ore` deposit quantity,
+Collector profile, recipes, capacities, upkeep, and cycle values remain authored
+Tier 1 tuning. Stage 4b must not copy those numbers into universal generation
+requirements. Before generator implementation, B1 must also decide how
+map-owned profile/body/slot records are represented independently from optional
+active resource-engine configuration in generated neutral systems.
+
+`ReclaimableSiteDefinition` was not changed, and Stage 4 introduced no outward
+command, generated topology, generator identity, reroll, or quality-screening
+surface.
+
 ## Deferred design gates
 
 ### B1 — Starting-locale structural catalog

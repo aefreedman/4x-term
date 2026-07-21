@@ -36,18 +36,19 @@ population shape, or one repository universe as an oracle.
 ### INV-ORDER-001 — Deterministic substrate normalization
 
 - **Status:** active.
-- **Exact oracle:** Given semantically identical substrate input, changing only
-  resource, location, deposit, site, or topology-edge order, including
-  undirected endpoint order, produces an equal normalized `WorldDefinition` and
-  an equal complete `WorldSnapshot` after instantiation.
-- **Applicability:** Stage 3 RON compilation and `WorldState` construction, whose
-  input collection order is not domain state.
+- **Exact oracle:** Given semantically identical input, changing only resource,
+  location, system, stock, body, slot, deposit, site, or topology-edge order,
+  including undirected endpoint order, produces an equal normalized definition
+  and complete snapshot whenever that order is not domain state.
+- **Applicability:** Stage 3/4 RON compilation and `WorldState` construction;
+  construction-queue order remains intentional domain state.
 - **Non-vacuity witness:** The fixtures contain three locations and nonempty
   resources, deposits, sites, and topology edges before permutation and
   comparison.
 - **Current Tier 1 evidence:**
   - `input_permutations_produce_equal_snapshots`
-  - `normalizes_permuted_input`
+  - `resource_engine_definition_order_does_not_change_state`
+  - `stage4_input_permutations_compile_to_the_same_definition`
 - **Failure evidence:** The unequal compiled definition or complete snapshot and
   the input permutation that produced it.
 - **Generated-world applicability:** A future generator must register its own
@@ -56,17 +57,22 @@ population shape, or one repository universe as an oracle.
 ### INV-ENERGY-001 — Exact physical Energy reconciliation
 
 - **Status:** active.
-- **Exact oracle:** A successful nonzero `core:energy` resource transfer reduces
-  the source and increases the destination by exactly the transferred quantity,
-  increases the successful-flow ledger by that quantity, and leaves the exact
-  checked source-plus-destination total unchanged. The current fixture proves
-  `9 + 4 = 4 + 9` for a transfer and ledger delta of `5`.
-- **Applicability:** The current applicable Energy mutation is a successful
-  nonzero `transfer_resource` operation for `core:energy`.
-- **Non-vacuity witness:** The fixture transfers five units and asserts the
-  ledger delta is nonzero before checking exact conservation.
+- **Exact oracle:** Every applicable `core:energy` source, sink, retention, and
+  overflow channel reconciles exactly. Generic transfers conserve source plus
+  destination and advance the flow ledger; capacity-aware receipts reconcile
+  source decrease as retained plus overflow; the 20-tick fixture reconciles
+  `10 starting + 560 produced = 30 construction + 100 upkeep + 110 retained +
+  330 overflow`.
+- **Applicability:** Successful generic Energy transfers and enabled Stage 4
+  system receipts/ticks with complete accounting evidence.
+- **Non-vacuity witness:** One fixture transfers five units and asserts a
+  nonzero ledger delta; the bootstrap produces `560` Energy and exercises
+  construction, upkeep, retention, and nonzero overflow.
 - **Current Tier 1 evidence:**
   - `energy_transfer_reconciles_exactly`
+  - `incoming_energy_at_capacity_reconciles_retained_and_overflow`
+  - `cancellation_refund_overflow_is_atomic_and_explicit`
+  - `exact_twenty_tick_bootstrap_matches_the_approved_fixture`
 - **Failure evidence:** Resource ID, quantity, initial and final source and
   destination stores, ledger delta, and the unequal totals.
 - **Generated-world applicability:** Future Energy sources, sinks, in-flight
@@ -76,85 +82,94 @@ population shape, or one repository universe as an oracle.
 ### INV-ATOMIC-001 — Validate before mutate
 
 - **Status:** active.
-- **Exact oracle:** A rejected `transfer_resource` call leaves its complete
-  source store, destination store, and successful-flow ledger exactly equal to
-  their pre-operation values.
-- **Applicability:** Every current transfer rejection path: zero quantity,
-  insufficient source quantity, destination overflow, and ledger overflow.
-- **Non-vacuity witness:** Each case reaches `transfer_resource`, forces its
-  named rejection, and compares all three affected values with a saved tuple.
+- **Exact oracle:** Every rejected transfer, system receipt, construction
+  enqueue/cancellation, resource-engine definition, and complete tick leaves all
+  affected stocks, deposits, cycles, commitments, reservations, sequences,
+  ledgers, overflow evidence, and time equal to their pre-operation values.
+- **Applicability:** Typed invalid-command, invalid-state, insufficiency, ID/
+  reference, and checked-arithmetic rejection paths; routine scarcity is an
+  advancing gameplay outcome rather than a rejection.
+- **Non-vacuity witness:** Focused cases reach each named operation, force its
+  rejection after supplying otherwise-applicable state, and compare complete
+  affected before/after values.
 - **Current Tier 1 evidence:**
   - `resource_transfer_rejections_are_atomic_on_every_path`
-- **Failure evidence:** The rejection and structural before/after difference for
-  the source, destination, and ledger.
+  - `rejected_enqueue_and_sequence_overflow_leave_everything_unchanged`
+  - `extractor_reservation_cancellation_release_and_begun_rejection_are_atomic`
+  - `transfer_to_system_rejects_unknown_resource_atomically`
+  - `stage3_world_snapshots_but_tick_rejects_atomically`
+- **Failure evidence:** The typed rejection and structural before/after
+  difference for every affected store, system/deposit state, queue/reservation,
+  sequence, ledger, evidence record, and time value.
 - **Generated-world applicability:** A future multi-surface mutation needs its
   own applicable rejection setup and complete affected-state comparison.
 
 ### INV-ARITH-001 — Checked quantity arithmetic
 
 - **Status:** active.
-- **Exact oracle:** `Energy` addition, subtraction, and multiplication return the
-  exact in-range integer result or `CoreError::Overflow`. Resource-transfer
-  source subtraction, destination addition, and ledger addition reject
-  underflow or overflow before any affected value changes.
-- **Applicability:** The current `Energy` checked methods and the bounded `u64`
-  arithmetic at the atomic physical-resource transfer boundary.
-- **Non-vacuity witness:** Exact accepted Energy cases and explicit add,
-  subtract, multiply, and conversion overflow cases are exercised; transfer
-  fixtures force insufficient-source, destination-overflow, and ledger-overflow
-  boundaries.
+- **Exact oracle:** Physical-resource subtraction, addition, multiplication,
+  sequence allocation, capacity derivation, accounting totals, and tick/work
+  progression either produce their exact `u64` result or reject with
+  `CoreError::Overflow`/the typed insufficiency error before affected state
+  changes.
+- **Applicability:** Generic transfers and every Stage 4 resource-engine command
+  or tick path that changes stocks, commitments, progress, deposits, capacity,
+  overflow, or ledgers.
+- **Non-vacuity witness:** Fixtures force source insufficiency, destination and
+  ledger overflow, queue-sequence overflow, maximum-capacity cancellation, and
+  accepted exact reconciliation.
 - **Current Tier 1 evidence:**
-  - `energy_arithmetic_is_checked`
   - `resource_transfer_rejections_are_atomic_on_every_path`
+  - `rejected_enqueue_and_sequence_overflow_leave_everything_unchanged`
+  - `cancellation_refund_at_max_capacity_does_not_overflow_arithmetic`
 - **Failure evidence:** Operation, operands, expected exact result or typed
-  error, actual result, and any changed transfer state on rejection.
+  error, actual result, and complete affected before/after state.
 - **Generated-world applicability:** Generated values become applicable only
   when a generator or consuming operation exists.
 
 ### INV-ID-001 — Stable content identifiers and references
 
-- **Status:** active for stable content identity; dynamic allocation is
-  reserved until a dynamic domain exists.
+- **Status:** active for stable authored identity and Stage 4 constructed-development allocation.
 - **Exact oracle:** An accepted `ContentId` round-trips unchanged through
-  `as_str` and `Display`, malformed IDs return `CoreError::InvalidId`, and a
-  successfully compiled substrate resolves its stable location and resource
-  references before `WorldState` instantiation. Stable IDs do not depend on ECS
-  entity IDs.
-- **Applicability:** Stage 3 content IDs and references in resource, location,
-  origin, deposit, site, and topology definitions.
+  `as_str` and `Display`, malformed IDs reject, authored references resolve
+  before instantiation, and each accepted construction reserves a deterministic
+  system-scoped ID that cannot collide with installed or queued developments.
+  Stable IDs do not depend on ECS entity IDs.
+- **Applicability:** Stage 3/4 content IDs and references plus deterministic,
+  system-scoped constructed-development IDs reserved at enqueue.
 - **Non-vacuity witness:** The ID fixture checks accepted and rejected strings;
   the content fixture compiles three locations with an origin, deposit, site,
   and edge and successfully instantiates the result.
 - **Current Tier 1 evidence:**
   - `content_id_validation_and_display_are_stable`
-  - `compiles_a_dead_isolated_location_and_instantiates_world_state`
+  - `compiles_stage3_system_stocks_without_enabling_the_engine`
+  - `authored_development_id_collision_rejects_enqueue_atomically`
+  - `constructed_development_ids_are_deterministic_and_unique_across_systems`
 - **Failure evidence:** Raw ID or reference, expected accepted/rejected result,
-  and the unresolved definition/field context where applicable.
-- **Reserved dynamic clause:** If a domain later supports dynamic creation, its
-  monotonicity, rejection, and allocator-overflow contract must be specified and
-  evidenced then; Stage 3 has no dynamic allocator.
+  unresolved definition/field context, or constructed ID collision and complete
+  pre/post command state.
 - **Generated-world applicability:** Stable generated identity remains part of
   reserved replay work and does not define generator versioning here.
 
 ### INV-VALIDATE-001 — Deterministic source-aware validation
 
 - **Status:** active.
-- **Exact oracle:** Stage 3 world-source parsing reports document provenance for
-  syntax failures and rejects unknown top-level or nested fields. Semantic
+- **Exact oracle:** Stage 3/4 world-source parsing reports document provenance
+  for syntax failures and rejects unknown top-level or nested fields. Semantic
   compilation rejects malformed/duplicate IDs, unresolved references,
-  non-finite positions, zero required values, and invalid topology while
-  returning all independent diagnostics in exact sorted source, definition,
-  field, and message order, independent of duplicate-record order.
-- **Applicability:** The retained single-document Stage 3 RON world schema.
-- **Non-vacuity witness:** One fixture injects independent failures across
-  resources, locations, origin, deposits, sites, and topology and compares all
-  thirteen exact diagnostics; a separate malformed document proves parse
-  provenance.
+  non-finite positions, zero required tuning, invalid profiles/recipes/
+  development assignments, and invalid topology while returning independent
+  diagnostics in sorted source, definition, field, and message order.
+- **Applicability:** The retained single-document Stage 3/4 RON world schema.
+- **Non-vacuity witness:** Fixtures inject independent Stage 3 and Stage 4
+  failures across resources, locations, systems, stocks, tuning, bodies, slots,
+  developments, deposits, sites, and topology; a malformed document separately
+  proves parse provenance.
 - **Current Tier 1 evidence:**
-  - `aggregates_exact_source_aware_diagnostics`
+  - `invalid_stage4_content_reports_complete_sorted_source_aware_diagnostics`
   - `parse_errors_include_document_provenance`
-  - `unknown_fields_are_rejected_in_top_level_and_nested_sources`
-  - `location_diagnostics_are_complete_and_permutation_independent`
+  - `unknown_fields_are_rejected_at_top_level_and_deeply_nested`
+  - `stage4_input_permutations_compile_to_the_same_definition`
 - **Failure evidence:** The complete ordered diagnostic list, including source,
   definition, field, and message.
 - **Generated-world applicability:** Stage 4b may extend this entry only after
@@ -208,22 +223,23 @@ population shape, or one repository universe as an oracle.
   event-log requirements, runtime compatibility, and replay verification.
 - **Generation identity alone is not a complete runtime replay identity.**
 
-## Stage 3 completion evidence and classification
+## Stage 4 completion evidence and classification
 
-Stage 3 completed on 2026-07-20. The retained workspace contains only
-`game-core` and `game-content`: nine core tests plus six content tests, for 15
+Stage 4 completed on 2026-07-20. The retained workspace contains only
+`game-core` and `game-content`: 31 core tests plus nine content tests, for 40
 focused Tier 1 tests and no ignored tests. `game-app`, `game-tui`, `game-cli`,
-and the production `content/` bundle are absent. The exact names under the
-active entries above resolve in the retained crates; no removed market, trader,
-fleet, population, or commercial-contract test is current evidence.
+generated-world code, outward actions, and the production `content/` bundle are
+absent. The exact names under active entries resolve in the retained crates; no
+removed market, trader, fleet, or commercial-contract test is current evidence.
 
-| Current family | Stage 3 classification | Current evidence or disposition |
+| Current family | Stage 4 classification | Current evidence or disposition |
 | --- | --- | --- |
 | Substrate compile/instantiation ordering | Active invariant/Tier 1 | Nonempty location, deposit, site, and edge permutations normalize exactly under INV-ORDER-001. |
 | Physical `core:energy` transfer | Active invariant/Tier 1 | Exact nonzero transfer conservation and successful-flow ledger delta under INV-ENERGY-001. |
-| Checked Energy and transfer arithmetic | Active invariant/Tier 1 | Exact accepted/boundary arithmetic and atomic rejection under INV-ARITH-001 and INV-ATOMIC-001. |
+| Checked resource-engine arithmetic | Active invariant/Tier 1 | Exact transfer, sequence, capacity, commitment, tick, and accounting boundaries under INV-ARITH-001 and INV-ATOMIC-001. |
 | Stable content IDs and references | Active invariant/Tier 1 | Stable parse/display plus successful compile/instantiation under INV-ID-001; dynamic allocation is reserved. |
-| Stage 3 RON validation | Active invariant/Tier 1 | Exact aggregated semantic diagnostics and parse provenance under INV-VALIDATE-001. |
+| Stage 3/4 RON validation | Active invariant/Tier 1 | Exact aggregated semantic diagnostics, strict nested fields, and parse provenance under INV-VALIDATE-001. |
+| Authored origin resource engine | Tier 1 mechanism evidence | Exact 20-tick bootstrap, shortages, conditions, production cycles, construction FIFO/reservations/cancellation, overflow, and deterministic role/body/slot ordering. |
 | Automated logistics | Reserved | No current mechanism or evidence; future player-owned automation must define a new applicable contract. |
 | G18 origin/neighborhood structural guarantees | Reserved | Stage 4b owns exact mandatory records and placement/relationship oracles; economic inequalities are excluded. |
 | Generated-world identity | Reserved | Stage 4b owns complete generation identity; Stage 6 owns full runtime event-log replay. |
