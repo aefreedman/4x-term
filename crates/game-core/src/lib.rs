@@ -2415,6 +2415,20 @@ mod tests {
             .unwrap()
     }
 
+    fn development(
+        value: &str,
+        role: DevelopmentRole,
+        condition: DevelopmentCondition,
+        extractor_deposit: Option<&str>,
+    ) -> DevelopmentDefinition {
+        DevelopmentDefinition {
+            id: id(value),
+            role,
+            condition,
+            extractor_deposit: extractor_deposit.map(id),
+        }
+    }
+
     fn development_roles(snapshot: &ResourceEngineSnapshot) -> Vec<DevelopmentRole> {
         snapshot
             .bodies
@@ -2794,6 +2808,242 @@ mod tests {
                 .progress,
             0
         );
+    }
+
+    #[test]
+    fn damaged_and_ruined_developments_have_no_stage4_consequences() {
+        let mut definition = stage4_definition(0);
+        definition.deposits.push(ResourceDepositDefinition {
+            id: id("core:other_ore_deposit"),
+            location: id("core:origin"),
+            resource: id("core:ore"),
+            quantity: 200,
+        });
+        let engine = stage4_engine_mut(&mut definition);
+        engine.collector_energy_profile = [40; 10];
+        engine.bodies[0].slots = [
+            (
+                DevelopmentRole::Collector,
+                DevelopmentCondition::Damaged,
+                None,
+            ),
+            (
+                DevelopmentRole::Collector,
+                DevelopmentCondition::Ruined,
+                None,
+            ),
+            (
+                DevelopmentRole::Battery,
+                DevelopmentCondition::Damaged,
+                None,
+            ),
+            (DevelopmentRole::Battery, DevelopmentCondition::Ruined, None),
+            (
+                DevelopmentRole::Extractor,
+                DevelopmentCondition::Damaged,
+                Some("core:ore_deposit"),
+            ),
+            (
+                DevelopmentRole::Extractor,
+                DevelopmentCondition::Ruined,
+                Some("core:other_ore_deposit"),
+            ),
+            (
+                DevelopmentRole::Refinery,
+                DevelopmentCondition::Damaged,
+                None,
+            ),
+            (
+                DevelopmentRole::Refinery,
+                DevelopmentCondition::Ruined,
+                None,
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, (role, condition, deposit))| DevelopmentSlotDefinition {
+                id: id(&format!("core:slot_{index}")),
+                development: Some(development(
+                    &format!("core:disabled_{index}"),
+                    role,
+                    condition,
+                    deposit,
+                )),
+            },
+        )
+        .collect();
+
+        let mut state = WorldState::new(definition).unwrap();
+        let snapshot = state.advance_tick().unwrap();
+
+        assert_eq!(snapshot.energy_capacity, 10);
+        assert_eq!(
+            snapshot.stocks,
+            store(&[(ENERGY_ID, 10), ("core:ore", 10), ("core:alloy", 0)])
+        );
+        assert!(
+            snapshot
+                .deposits
+                .iter()
+                .all(|deposit| deposit.quantity == 200)
+        );
+        for resource in [ENERGY_ID, "core:ore", "core:alloy"] {
+            assert_eq!(snapshot.accounting.produced.quantity(&id(resource)), 0);
+            assert_eq!(
+                snapshot.accounting.operation_spent.quantity(&id(resource)),
+                0
+            );
+        }
+        assert!(
+            snapshot
+                .bodies
+                .iter()
+                .flat_map(|body| &body.slots)
+                .all(|slot| slot.development.as_ref().unwrap().cycle == ProductionCycle::default())
+        );
+    }
+
+    #[test]
+    fn refineries_keep_independent_cycles_and_contend_in_body_slot_order() {
+        let mut definition = stage4_definition(0);
+        stage4_system_mut(&mut definition).stocks = store(&[(ENERGY_ID, 20), ("core:ore", 4)]);
+        let engine = stage4_engine_mut(&mut definition);
+        engine.collector_energy_profile = [0; 10];
+        engine.config.intrinsic_energy_capacity = 20;
+        engine.config.refinery.cycle_duration = 2;
+        engine.bodies = vec![
+            BodyDefinition {
+                id: id("core:z_body"),
+                name: "Z".into(),
+                slots: vec![DevelopmentSlotDefinition {
+                    id: id("core:a_slot"),
+                    development: Some(development(
+                        "core:z_refinery",
+                        DevelopmentRole::Refinery,
+                        DevelopmentCondition::Functional,
+                        None,
+                    )),
+                }],
+            },
+            BodyDefinition {
+                id: id("core:a_body"),
+                name: "A".into(),
+                slots: vec![
+                    DevelopmentSlotDefinition {
+                        id: id("core:b_slot"),
+                        development: Some(development(
+                            "core:second_refinery",
+                            DevelopmentRole::Refinery,
+                            DevelopmentCondition::Functional,
+                            None,
+                        )),
+                    },
+                    DevelopmentSlotDefinition {
+                        id: id("core:a_slot"),
+                        development: Some(development(
+                            "core:first_refinery",
+                            DevelopmentRole::Refinery,
+                            DevelopmentCondition::Functional,
+                            None,
+                        )),
+                    },
+                ],
+            },
+        ];
+        let mut state = WorldState::new(definition).unwrap();
+
+        let first = state.advance_tick().unwrap();
+        assert_eq!(first.bodies[0].id, id("core:a_body"));
+        assert_eq!(first.bodies[0].slots[0].id, id("core:a_slot"));
+        for slot in &first.bodies[0].slots {
+            let cycle = &slot.development.as_ref().unwrap().cycle;
+            assert_eq!(cycle.progress, 1);
+            assert_eq!(cycle.committed_inputs.quantity(&id("core:ore")), 2);
+        }
+        assert_eq!(
+            first.bodies[1].slots[0].development.as_ref().unwrap().cycle,
+            ProductionCycle::default()
+        );
+
+        let mut source = store(&[(ENERGY_ID, 10)]);
+        state
+            .transfer_resource_to_system(
+                &id("core:origin"),
+                &mut source,
+                &mut ResourceFlowLedger::default(),
+                &id(ENERGY_ID),
+                10,
+            )
+            .unwrap();
+        let second = state.advance_tick().unwrap();
+        assert_eq!(second.stocks.quantity(&id("core:alloy")), 1);
+        assert_eq!(
+            second.bodies[0].slots[0]
+                .development
+                .as_ref()
+                .unwrap()
+                .cycle,
+            ProductionCycle::default()
+        );
+        let waiting = &second.bodies[0].slots[1]
+            .development
+            .as_ref()
+            .unwrap()
+            .cycle;
+        assert_eq!(waiting.progress, 1);
+        assert_eq!(waiting.committed_inputs.quantity(&id("core:ore")), 2);
+    }
+
+    #[test]
+    fn completion_timing_applies_battery_retention_before_other_new_operation() {
+        let mut definition = stage4_definition(0);
+        stage4_system_mut(&mut definition).stocks =
+            store(&[(ENERGY_ID, 40), ("core:ore", 12), ("core:alloy", 6)]);
+        let engine = stage4_engine_mut(&mut definition);
+        engine.collector_energy_profile = [80; 10];
+        engine.config.intrinsic_energy_capacity = 40;
+        engine.config.origin_construction_work = 4;
+        for recipe in [
+            &mut engine.config.collector_recipe,
+            &mut engine.config.battery_recipe,
+            &mut engine.config.extractor_recipe,
+            &mut engine.config.refinery_recipe,
+        ] {
+            recipe.required_work = 1;
+        }
+        let mut state = WorldState::new(definition).unwrap();
+        let system = id("core:origin");
+        let body = id("core:origin_body");
+        for (slot, role, deposit) in [
+            ("core:slot_1", DevelopmentRole::Battery, None),
+            ("core:slot_2", DevelopmentRole::Collector, None),
+            (
+                "core:slot_3",
+                DevelopmentRole::Extractor,
+                Some(id("core:ore_deposit")),
+            ),
+            ("core:slot_4", DevelopmentRole::Refinery, None),
+        ] {
+            state
+                .enqueue_construction(&system, &body, &id(slot), role, deposit.as_ref())
+                .unwrap();
+        }
+
+        let completed = state.advance_tick().unwrap();
+        assert!(completed.construction_queue.is_empty());
+        assert_eq!(completed.energy_capacity, 140);
+        assert_eq!(completed.stocks.quantity(&id(ENERGY_ID)), 80);
+        assert_eq!(completed.stocks.quantity(&id("core:ore")), 10);
+        assert_eq!(completed.stocks.quantity(&id("core:alloy")), 0);
+        assert_eq!(completed.deposits[0].quantity, 200);
+        assert_eq!(completed.accounting.operation_spent, ResourceStore::new());
+
+        let operating = state.advance_tick().unwrap();
+        assert_eq!(operating.stocks.quantity(&id(ENERGY_ID)), 140);
+        assert_eq!(operating.stocks.quantity(&id("core:ore")), 9);
+        assert_eq!(operating.stocks.quantity(&id("core:alloy")), 1);
+        assert_eq!(operating.deposits[0].quantity, 199);
     }
 
     #[test]
