@@ -19,7 +19,7 @@
 - Local collapse is expected world texture and future reclamation content, not a failure by itself.
 - Do not write acceptance criteria against a specific authored universe except for small Tier 1 fixtures whose outcomes are hand-computable.
 - Gameplay-facing behavior needs short, deterministic Tier 1 scenario coverage. A behavior observable only through a soak is a simulation behavior, not a gameplay acceptance test.
-- Construct origin and neighborhood viability; never add reject/reroll generation, post-hoc viability screening, or statistical world-quality gates.
+- Construct the approved origin scaffold directly. Do not require neighborhood viability unless a later approved design adds a concrete structural witness; never add post-hoc gameplay screening or statistical world-quality gates.
 - Treat generator parameter ranges as reviewed design decisions. Flag range changes for design review and version the generator when reproducibility requires it.
 - When a generated-world failure occurs, reproduce and retain the failure class as a Tier 1 fixture where possible before fixing it.
 

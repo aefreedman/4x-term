@@ -126,9 +126,9 @@ into CI as gates.
    feature.** Gameplay-facing features must be verifiable in Tier 1
    scenario fixtures (small world, tens of ticks, deterministic expected
    outcome).
-5. **Viability is constructed, not screened.** The generator builds a
-   valid origin and neighborhood by construction. Do not add
-   reject/reroll loops, post-hoc viability filters, or statistical
+5. **The approved scaffold is constructed, not screened.** The generator builds
+   the approved origin scaffold directly. Stage 4b has no neighborhood
+   viability guarantee. Do not add post-hoc gameplay filters or statistical
    world-quality gates.
 6. **Generator parameter ranges are design decisions, not fixes.** Do not
    adjust generation ranges to make a failing check pass without flagging
