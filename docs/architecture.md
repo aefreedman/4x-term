@@ -108,9 +108,18 @@ connectivity, and statistical world-quality gates are not Stage 3 acceptance.
 
 ## Migration boundary and future work
 
-Stage 4 will define generated-world parameters, provenance/versioning, generated
-topology, and explicit G18 origin and neighborhood guarantees. It must construct
-rather than reject, reroll, or screen worlds for viability.
+Stage 4 will add the authored, headless origin resource/infrastructure engine:
+deterministic ticks, G13 bodies/slots/developments, system-owned stocks and
+construction, population-zero bootstrap work, seasonal Energy, Batteries,
+extraction, refining, and exact accounting. It will not add population
+arrival/change, scouting/outward commands, map generation, or playable startup.
+The existing standalone reclaimable-site substrate remains unchanged.
+
+Stage 4b will derive structural G18 requirements from implemented gameplay, add
+constructive generated topology/frontier placement, record complete generation
+identity/provenance, and implement one approved bounded outward action. It must
+construct mandatory records before optional texture and never reject, reroll, or
+screen worlds for economic quality.
 
 Stage 5 may introduce a new application/session, CLI, and terminal rendering
 adapter around the headless core. If added, those are future adapters: terminal
@@ -121,8 +130,9 @@ workspace. The retained
 record useful prototype patterns and removed dependencies for consideration,
 not compatibility requirements.
 
-Later work may add persistence, actions, extraction and reclamation, community
-dynamics, and player-owned logistics only when their concrete contracts exist.
+Later work may add persistence, population arrival/change, deeper outward
+actions, reclamation, community dynamics, and player-owned logistics only when
+their concrete contracts exist.
 The retired trader/market prototype is not a compatibility target. Delete
 obsolete code and content rather than preserving adapters, shells, or archives;
 Git history is the recovery path.

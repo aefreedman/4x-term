@@ -18,8 +18,9 @@ executable specification.
 **Current migration boundary (2026-07-20):** Stages 1–3 are complete. The
 workspace retains only the headless `game-core` substrate and the
 schema-specific `game-content` compiler. It has 15 focused tests and no ignored
-tests; the app, TUI, CLI, and production authored content are absent. Stages 4–8
-remain future work, and playability is intentionally not restored yet.
+tests; the app, TUI, CLI, and production authored content are absent. Stage 4,
+its Stage 4b follow-up, and Stages 5–8 remain future work; playability is
+intentionally not restored yet.
 
 ## The problem being corrected
 
@@ -90,19 +91,16 @@ N-of-M seed thresholds, no viability screening or reject/reroll**:
    validate-before-mutate. An invariant violation on any seed is always a
    bug. (Extend this list from the invariants actually named in the repo;
    do not invent new ones.)
-2. **The constructive guarantees of G18**, as exact per-seed assertions on
-   generator output:
-   - **Origin solvency with surplus margin**: the origin system alone
-     covers its life-support burn through the worst seasonal phase, with
-     authored margin above subsistence. This is a direct inequality check
-     against the generated configuration using G22's checked physical-resource
-     arithmetic and the exact Stage 4 contract — no simulation required.
-   - **Neighborhood affordance**: within starting expedition/scouting
-     range, extractable resources meet an authored floor and at least one
-     reclaimable site exists.
+2. **The approved structural guarantees of G18**, beginning in Stage 4b as
+   exact per-seed assertions on generator output. These assert mandatory
+   records, references, placement scopes, and topology relationships derived
+   from implemented gameplay. They do not assert economic solvency, seasonal
+   surplus, affordability or quantity floors, tick-zero action availability,
+   long-run survival, favorable distributions, or a reclaimable site unless an
+   implemented action makes that site structurally required.
 
-Everything else observed in a generated world — regions dying, odd
-resource distributions, economic weirdness at the frontier — is
+Everything else observed in a generated world — regions dying, odd resource
+quantities or distributions, economic weirdness at the frontier — is
 presumptively texture. It may inform worldgen tuning; it is never a test
 failure.
 
@@ -229,25 +227,43 @@ The exact bodies, slots, ruin internals, surveys, and information model are
 out of scope. This stage creates only the minimum truthful substrate needed
 by G17 and G18.
 
-### Stage 4 — Specify and implement constructive world generation
+### Stage 4 — Implement the authored origin resource/infrastructure engine
 
-- Define the exact units, values, and inequalities for origin surplus and
-  neighborhood affordance before implementing the generator.
-- Generate an origin, starting neighborhood, and unconstrained frontier;
-  "unconstrained" means unconstrained by viability, not unconstrained by
-  the map-scale direction in G10.
-- Validate authored generator parameters and generated output through the
-  reusable content pipeline with meaningful provenance.
-- Define replay identity and compatibility in the stage plan. At minimum it
-  must account for generator version, seed, and validated configuration,
-  rather than assuming a seed alone is sufficient.
-- Assert both G18 guarantees exactly for every successful generated output;
+- Add deterministic ticks, seasonal Energy, retention/overflow, life support,
+  and exact shortage evidence in the headless core.
+- Implement G13 systems → bodies → generic slots → developments.
+- Make systems persistently own stocks, deposits, developments, queues, and
+  accounting while community state represents population.
+- Implement the designer-authored Collector, Battery, Extractor, Refinery, and
+  FIFO construction contracts in short exact Tier 1 fixtures.
+- Support the population-zero origin and its one free construction work without
+  adding population arrival, loss, growth, or mutation behavior.
+- Leave `ReclaimableSiteDefinition` unchanged.
+- Do not implement map generation, G18 output guarantees, scouting/outward
+  commands, generator identity, or playable startup.
+
+### Stage 4b — Implement constructive frontier and bounded expansion
+
+- Derive the exact structural G18 origin/neighborhood catalog from completed
+  Stage 4 gameplay and one approved bounded outward action.
+- Generate mandatory origin and neighborhood records before unconstrained
+  optional frontier texture; do not reject, reroll, or screen economic quality.
+- Validate generator parameters and output with source provenance.
+- Record complete generation identity: generator version, seed, validated
+  configuration fingerprint, and provenance. Full event-log replay remains
+  Stage 6.
+- Implement one approved bounded outward/scouting action. Deeper expeditions,
+  reclamation, population change, daughters, and logistics remain later work.
+- Assert only named engine invariants and approved structural G18 guarantees;
   seed corpora are regression coverage, not statistical viability proof.
 
 Later world axes should have explicit extension and versioning rules rather
 than an unsupported promise that all additions preserve old seed output.
 
 ### Stage 5 — Restore playable startup with the origin-and-frontier paradigm
+
+Stage 5 depends on the completed Stage 4 origin engine and Stage 4b generated
+world/bounded-expansion boundary.
 
 - Decide how a generated world is selected and composed for normal play,
   tests, diagnostics, and replay.
@@ -298,10 +314,12 @@ compatibility target for new work.
 ### Stage 8 — Hand off to expansion-gameplay slices
 
 After the world and testing foundations are truthful, carve separate plans
-for scouting, expeditions, resource ruins, site reclamation, daughter
-communities, delegated logistics, specialists, and delayed information.
-Those plans derive from G7–G16 and the open questions in the governance
-sandbox; they are not bundled into this testing/worldgen transition.
+for deeper scouting layers, crewed expeditions, resource ruins, site
+reclamation, population arrival/change, daughter communities, delegated
+logistics, specialists, and delayed information. Stage 4b may implement only
+its approved bounded first outward action. Later plans derive from G7–G16 and
+the open questions in the governance sandbox; they are not bundled into the
+origin-engine or constructive-generator slices.
 
 ## Cross-stage constraints
 
@@ -326,8 +344,8 @@ sandbox; they are not bundled into this testing/worldgen transition.
 
 This transition is complete when:
 
-- normal startup represents one living origin in a generated dead frontier;
-- the two G18 guarantees are constructive and exactly validated;
+- normal startup represents one persistent origin seat/community record in a generated dead frontier, with population arrival/change owned by its later gameplay stage;
+- approved G18 structural guarantees are constructive and exactly validated;
 - mechanism tests use small authored fixtures;
 - generated-world gates assert only named, applicable invariants;
 - texture diagnostics have no CI pass/fail semantics;

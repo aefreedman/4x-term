@@ -157,8 +157,8 @@ population shape, or one repository universe as an oracle.
   - `location_diagnostics_are_complete_and_permutation_independent`
 - **Failure evidence:** The complete ordered diagnostic list, including source,
   definition, field, and message.
-- **Generated-world applicability:** Stage 4 may extend this entry only after a
-  generator configuration or output-validation schema exists.
+- **Generated-world applicability:** Stage 4b may extend this entry only after
+  a generator configuration or output-validation schema exists.
 
 ## Reserved entries
 
@@ -172,28 +172,41 @@ population shape, or one repository universe as an oracle.
   or automated logistics operation. Removed commercial logistics tests are not
   evidence for a future player-owned mechanism.
 
-### G18-ORIGIN-SURPLUS — Constructed origin solvency
+### G18-ORIGIN-STRUCTURE — Constructed origin prerequisites
 
-- **Status:** reserved for Stage 4.
-- **Undefined here:** Units, surplus margin, time horizon, starting stores,
-  required inputs, inequality, and generator configuration identity.
-- **No current test may claim this guarantee.** Legacy bootstrap solvency and
-  market runway are not substitutes.
+- **Status:** reserved for Stage 4b.
+- **Undefined here:** Exact mandatory origin records, references, placement
+  relationships, and generator identity derived from completed Stage 4 gameplay.
+- **Excluded oracles:** Economic solvency, seasonal surplus, affordability,
+  tick-zero action availability, long-run survival, and favorable quantities.
+- **No current test may claim this guarantee.** The authored Stage 4 bootstrap
+  fixture is mechanism evidence, not a universal generator floor.
 
-### G18-NEIGHBORHOOD-AFFORDANCE — Constructed nearby expansion path
+### G18-NEIGHBORHOOD-STRUCTURE — Constructed nearby expansion prerequisites
 
-- **Status:** reserved for Stage 4.
-- **Undefined here:** Starting range, resource floor, reclaimable-site types,
-  affordability equation, topology requirement, and generation identity.
+- **Status:** reserved for Stage 4b.
+- **Undefined here:** The first bounded outward action, required nearby element
+  kinds, scopes, references, topology relationships, and whether the unchanged
+  standalone site record is structurally required.
+- **Excluded oracles:** Resource quantity or affordability floors, favorable
+  distribution, and a mandatory reclaimable site unsupported by gameplay.
 - **No current test may claim this guarantee.** Authored exporter/importer roles
   and nearest-three market routes are not substitutes.
 
-### INV-REPLAY-001 — Complete generated-world replay identity
+### INV-GENERATION-IDENTITY-001 — Complete generation identity
+
+- **Status:** reserved for Stage 4b.
+- **Undefined here:** Generator version, seed representation, validated
+  configuration fingerprint, source provenance, stable generated identity, and
+  compatibility rules for reproducing generated output.
+- **A seed alone is not a complete generation identity.**
+
+### INV-REPLAY-001 — Complete runtime replay identity
 
 - **Status:** reserved for Stage 6.
-- **Undefined here:** Generator version, validated-configuration fingerprint,
-  seed/state representation, event-log requirements, and compatibility rules.
-- **A seed alone is not a complete replay identity.**
+- **Undefined here:** Complete generation identity, initial runtime state,
+  event-log requirements, runtime compatibility, and replay verification.
+- **Generation identity alone is not a complete runtime replay identity.**
 
 ## Stage 3 completion evidence and classification
 
@@ -212,8 +225,8 @@ fleet, population, or commercial-contract test is current evidence.
 | Stable content IDs and references | Active invariant/Tier 1 | Stable parse/display plus successful compile/instantiation under INV-ID-001; dynamic allocation is reserved. |
 | Stage 3 RON validation | Active invariant/Tier 1 | Exact aggregated semantic diagnostics and parse provenance under INV-VALIDATE-001. |
 | Automated logistics | Reserved | No current mechanism or evidence; future player-owned automation must define a new applicable contract. |
-| G18 origin/neighborhood guarantees | Reserved | Stage 4 owns exact values, inequalities, and generator identity. |
-| Generated replay identity | Reserved | Stage 6 owns the complete contract. |
+| G18 origin/neighborhood structural guarantees | Reserved | Stage 4b owns exact mandatory records and placement/relationship oracles; economic inequalities are excluded. |
+| Generated-world identity | Reserved | Stage 4b owns complete generation identity; Stage 6 owns full runtime event-log replay. |
 | Market/trader/fleet/pricing/population/legacy acceptance | Removed obsolete surface | No legacy test is retained as current invariant evidence. |
 
 ## Review checklist

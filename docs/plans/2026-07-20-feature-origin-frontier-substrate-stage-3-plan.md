@@ -481,7 +481,8 @@ Validation:
   throughout deletion.
 - Existing `ContentId`, `Energy`, `Position3`, checked arithmetic, and
   source-aware diagnostics provide the neutral starting mechanisms.
-- Stage 4 owns generator configuration, generated topology, G18 inequalities,
+- Stage 4 owns the authored origin resource/infrastructure engine; Stage 4b
+  owns generator configuration, generated topology, structural G18 guarantees,
   map-scale rules, and generation identity.
 - Stage 5 owns the new app/session/CLI/TUI composition and startup acceptance.
 - Stage 6 owns generated invariant soaks, replay identity, and descriptive
@@ -493,7 +494,7 @@ Validation:
 |------|--------|------------|
 | A market/trader type survives because a retained test names it. | Obsolete gameplay remains an accidental compatibility target. | Create neutral evidence first, then delete both wrapper and obsolete test; review the registry in the same change. |
 | Core demolition removes checked arithmetic or exact reconciliation with its commercial host. | Durable G22 data-integrity contracts lose evidence. | Extract only neutral physical-resource operations and add exact non-vacuous Tier 1 tests before deletion. |
-| The new substrate prematurely defines worldgen balance or connectivity. | Stage 4 inherits accidental G18/map-quality contracts. | Permit empty/disconnected explicit topology and omit margins, floors, ranges, seed identities, and statistical checks. |
+| The new substrate prematurely defines worldgen balance or connectivity. | Stage 4b inherits accidental G18/map-quality contracts. | Permit empty/disconnected explicit topology and omit margins, floors, ranges, seed identities, and statistical checks. |
 | `OriginCommunityDefinition` grows into a premature gameplay model. | Stage 3 absorbs Stage 4/5/8 design work. | Limit it to identity, location, nonzero population, and physical stocks; add no commands, schedules, policies, surveys, or reclamation state. |
 | A production sample world becomes the new authored-universe benchmark. | Tests and tuning again solve for one repository map. | Keep only clearly named Tier 1 fixture files under the test tree; delete production world content until generation owns it. |
 | Deleting frontend crates is mistaken for an architectural regression. | Time is spent building placeholders or compatibility DTOs. | Cite the migration build policy; accept only retained core/content build and tests until Stage 5. |
@@ -522,9 +523,10 @@ Validation:
 
 ### Intentional Follow-up
 
-- **Stage 4:** define generator parameters/provenance/versioning, generated
-  topology, exact origin-surplus and neighborhood-affordance inequalities, and
-  per-output guarantee tests.
+- **Stage 4:** implement the authored origin resource/infrastructure engine.
+- **Stage 4b:** define generator parameters/provenance/versioning, generated
+  topology, structural origin/neighborhood placement guarantees, and exact
+  per-output tests without economic inequalities.
 - **Stage 5:** create the origin-first session/app/CLI/TUI boundary and truthful
   playable/headless startup without trader compatibility.
 - **Stage 6:** add complete generation replay identity, event logging,
