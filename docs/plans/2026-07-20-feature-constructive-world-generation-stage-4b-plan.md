@@ -1,7 +1,7 @@
 ---
 title: "Stage 4b: Constructive Frontier and Bounded Expansion"
 type: feature
-status: review
+status: implementation-ready
 date: 2026-07-20
 ---
 # Stage 4b: Constructive Frontier and Bounded Expansion
@@ -543,4 +543,4 @@ Use incremental conventional commits, for example:
 - [x] The foundation phase precedes every dependent worktree.
 - [x] Test expectations protect mechanics and invariants rather than one
   generated universe.
-- [ ] Human designer approves this implementation plan.
+- [x] Human designer approves this implementation plan.
