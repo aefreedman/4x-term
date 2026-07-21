@@ -1,60 +1,69 @@
 (
     resources: [
-        (id: "core:energy", name: "Energy"),
-        (id: "core:ore", name: "Ore"),
-        (id: "core:alloy", name: "Alloy"),
+        (id: "core:energy", name: "Energy", naturally_deposit_bearing: false),
+        (id: "core:ore", name: "Ore", naturally_deposit_bearing: true),
+        (id: "core:alloy", name: "Alloy", naturally_deposit_bearing: false),
     ],
     locations: [
-        (id: "core:origin", name: "Origin", position: (x: 0.0, y: 0.0, z: 0.0)),
+        (id: "core:origin", name: "Origin", position: (x: 0, y: 0, z: 0)),
     ],
-    origin: (
-        id: "core:community",
+    origin: (system: "core:origin", community: "core:community"),
+    communities: [(id: "core:community", system: "core:origin")],
+    systems: [(
         location: "core:origin",
-        population: 0,
-    ),
-    systems: [
-        (
-            location: "core:origin",
-            stocks: [
-                (resource: "core:energy", quantity: 10),
-                (resource: "core:ore", quantity: 10),
-                (resource: "core:alloy", quantity: 0),
-            ],
-            resource_engine: Some((
-                collector_energy_profile: [40, 40, 30, 20, 10, 10, 20, 30, 40, 40],
-                bodies: [
-                    (
-                        id: "core:origin_body",
-                        name: "Origin Body",
-                        slots: [
-                            (id: "core:slot_0", development: Some((id: "core:initial_collector", role: Collector, condition: Functional))),
-                            (id: "core:slot_1"),
-                            (id: "core:slot_2"),
-                            (id: "core:slot_3"),
-                            (id: "core:slot_4"),
-                            (id: "core:slot_5"),
-                        ],
-                    ),
+        stellar_strength_hundredths: 100,
+        player_founded: true,
+        stocks: [
+            (resource: "core:energy", quantity: 10),
+            (resource: "core:ore", quantity: 10),
+            (resource: "core:alloy", quantity: 0),
+        ],
+        bodies: [
+            (
+                id: "core:origin_body_0", name: "Origin Body 0", eccentricity_hundredths: 100,
+                resources: [(resource: "core:ore", quantity: 200)],
+                slots: [
+                    (id: "core:slot_0", development: Some((id: "core:initial_collector", role: Collector, condition: Functional))),
+                    (id: "core:slot_1"), (id: "core:slot_2"), (id: "core:slot_3"), (id: "core:slot_4"), (id: "core:slot_5"),
                 ],
-                config: (
-                    energy_resource: "core:energy",
-                    ore_resource: "core:ore",
-                    alloy_resource: "core:alloy",
-                    life_support_per_population: 10,
-                    origin_construction_work: 1,
-                    intrinsic_energy_capacity: 10,
-                    battery_energy_capacity: 100,
-                    collector_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:alloy", quantity: 2)], required_work: 4),
-                    battery_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:alloy", quantity: 2)], required_work: 4),
-                    extractor_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:alloy", quantity: 2)], required_work: 4),
-                    refinery_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:ore", quantity: 2)], required_work: 4),
-                    extractor: (energy_upkeep: 10, cycle_duration: 1, ore_output: 1),
-                    refinery: (energy_upkeep: 10, cycle_duration: 1, ore_input: 2, alloy_output: 1),
-                ),
-            )),
+            ),
+            (id: "core:origin_body_1", name: "Origin Body 1", eccentricity_hundredths: 100, slots: [(id: "core:b1_slot_0"), (id: "core:b1_slot_1"), (id: "core:b1_slot_2")]),
+            (id: "core:origin_body_2", name: "Origin Body 2", eccentricity_hundredths: 100, slots: [(id: "core:b2_slot_0"), (id: "core:b2_slot_1"), (id: "core:b2_slot_2")]),
+            (id: "core:origin_body_3", name: "Origin Body 3", eccentricity_hundredths: 100, slots: [(id: "core:b3_slot_0"), (id: "core:b3_slot_1"), (id: "core:b3_slot_2")]),
+        ],
+    )],
+    tuning: (
+        energy_resource: "core:energy", ore_resource: "core:ore", alloy_resource: "core:alloy",
+        seasonal_shape: [40, 40, 30, 20, 10, 10, 20, 30, 40, 40], seasonal_baseline_average: 28,
+        life_support_per_population: 10, origin_construction_work: 1,
+        intrinsic_energy_capacity: 10, battery_energy_capacity: 100, habitat_population_energy: 500,
+        coordinate_quanta_per_map_unit: 100,
+        collector_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:alloy", quantity: 2)], required_work: 4),
+        battery_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:alloy", quantity: 2)], required_work: 4),
+        extractor_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:alloy", quantity: 2)], required_work: 4),
+        refinery_recipe: (costs: [(resource: "core:energy", quantity: 10), (resource: "core:ore", quantity: 2)], required_work: 4),
+        habitat_recipe: (costs: [(resource: "core:energy", quantity: 40), (resource: "core:alloy", quantity: 4)], required_work: 8),
+        shipyard_recipe: (costs: [(resource: "core:energy", quantity: 80), (resource: "core:alloy", quantity: 8)], required_work: 12),
+        extractor: (energy_upkeep: 10, cycle_duration: 1, output: 1),
+        refinery: (energy_upkeep: 10, cycle_duration: 1, input: 2, output: 1),
+        probe_project: (
+            material_commitment: [(resource: "core:energy", quantity: 20), (resource: "core:alloy", quantity: 2)],
+            duration_ticks: 4, energy_per_progress_tick: 10,
         ),
-    ],
-    deposits: [
-        (id: "core:ore_deposit", location: "core:origin", resource: "core:ore", quantity: 200),
-    ],
+        expedition_project: (
+            hull_material_commitment: [(resource: "core:energy", quantity: 40), (resource: "core:alloy", quantity: 6)],
+            founding_stocks: [(resource: "core:energy", quantity: 10), (resource: "core:ore", quantity: 10), (resource: "core:alloy", quantity: 0)],
+            duration_ticks: 8, energy_per_progress_tick: 10,
+        ),
+        probe_travel: (maximum_jump_quanta: 1500, speed_quanta_per_tick: 500, energy_per_quantum: (numerator: 1, denominator: 200)),
+        expedition_travel: (maximum_jump_quanta: 1000, speed_quanta_per_tick: 250, energy_per_quantum: (numerator: 1, denominator: 100)),
+        probe_reveal_radius_quanta: 1500,
+        communication_delay_per_quantum: (numerator: 1, denominator: 500),
+        resource_richness: [(
+            resource: "core:ore",
+            poor_minimum: 1, poor_maximum: 199,
+            normal_minimum: 200, normal_maximum: 499,
+            rich_minimum: 500,
+        )],
+    ),
 )

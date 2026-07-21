@@ -1,7 +1,7 @@
 ---
 title: "Stage 4b: Constructive Frontier and Bounded Expansion"
 type: feature
-status: implementation-ready
+status: implemented
 date: 2026-07-20
 ---
 # Stage 4b: Constructive Frontier and Bounded Expansion
@@ -43,34 +43,31 @@ Implementation agents should load only the pages relevant to their slice:
 The wiki pages are the durable gameplay contract. This plan owns implementation
 order, migration scope, delegation, tests, and completion tracking.
 
-## Current state
+## Starting state at base `d8118fd`
 
-The workspace contains only `game-core` and `game-content`.
+The workspace contained only `game-core` and `game-content`. Stage 4 still used
+floating-point coordinates, authored topology, standalone deposits, optional
+per-system engine records, a writable origin-population count, and origin-scoped
+ticking. It had no generated-world artifacts/profiles, ships, transit,
+knowledge/transmissions, Habitats, or Shipyards.
 
-Current Stage 4 limitations that Stage 4b replaces:
-
-- `Position3` uses floating-point coordinates.
-- Authored `TopologyDefinition` edges are the route authority.
-- `ResourceDepositDefinition` is standalone and Extractors reserve deposit IDs.
-- bodies and seasonal profiles live inside optional per-system engine records.
-- one origin community stores a writable population count.
-- ticking is origin-scoped rather than world-global.
-- there are no generated-world artifacts, profiles, ships, transit records,
-  knowledge facts, pending transmissions, Habitats, or Shipyards.
-- `game-content` compiles one strict authored-world RON source and has no
-  generator/profile pipeline.
-
-The project has no save format, production startup, CLI, or TUI, so this stage
-requires no disk-save migration or compatibility adapter.
+The project had no save format, production startup, CLI, or TUI, so this stage
+required no disk-save migration or compatibility adapter.
 
 ## Execution record
 
 - Stage 4 dependency: PR [#14](https://github.com/aefreedman/4x-term/pull/14),
   merged to `main` as `3dfb7793a5c3bdfc6c7a4a2e9f8cdf9efcce6749`.
 - Design-plan branch: `stage-4b-design`.
-- Implementation branch: _record during Phase 0_.
-- Implementation base commit: _record during Phase 0 after the design-plan PR is
-  merged_.
+- Implementation branch: `feat/stage-4b-constructive-frontier`.
+- Implementation base commit: `d8118fd`.
+- Implementation commit: `458a522` (the implementation phases were delivered
+  together rather than as the suggested incremental phase commits).
+- Delivery PR: [#15](https://github.com/aefreedman/4x-term/pull/15).
+- Pre-change validation: workspace tests were run and had one pre-existing
+  failure, `stage4_input_permutations_compile_to_the_same_definition`; the
+  failing obsolete permutation assertion was replaced by current Stage 4b
+  normalization/fingerprint evidence.
 - Git workflow reference: package path `references/cg-work/git-workflow.md`.
 - Quality reference: package path `references/cg-work/quality-checklist.md`.
 - PR template: package path `references/cg-work/assets/pr-template.md`.
@@ -170,44 +167,50 @@ locally. RON, filesystem, provenance, hashing, and generation remain outside
 
 ### Phase 0 — Execution setup and contract lock
 
-- [ ] Confirm the Stage 4 PR is merged or choose an explicit stacked-branch base.
-- [ ] Create/continue a dedicated Stage 4b implementation branch.
-- [ ] Load the Git workflow and quality checklist references.
-- [ ] Record the active branch and base commit in this plan.
-- [ ] Verify the workspace is clean and run the pre-change workspace tests.
-- [ ] Confirm the design wiki links resolve.
-- [ ] Mark this phase complete in the plan and commit the planning baseline.
+- [x] Confirm the Stage 4 PR is merged or choose an explicit stacked-branch base.
+- [x] Create/continue a dedicated Stage 4b implementation branch.
+- [x] Load the Git workflow and quality checklist references.
+- [x] Record the active branch and base commit in this plan.
+- [x] Verify the workspace is clean and run the pre-change workspace tests.
+  One pre-existing permutation assertion failed, as recorded above.
+- [x] Confirm the design wiki links resolve.
+- **Execution variance (closed):** Phase 0 was recorded in the final execution
+  evidence; no separate planning-baseline commit was created.
 
 ### Phase 1 — Foundation and module extraction
 
 This phase is intentionally single-owner because it changes shared contracts.
 
-- [ ] Extract the internal `game-core` modules listed above without behavior
+- [x] Extract the internal `game-core` modules listed above without behavior
   changes.
-- [ ] Extract the internal `game-content` modules listed above without behavior
+- [x] Extract the internal `game-content` modules listed above without behavior
   changes and freeze their module declarations/public hook signatures.
-- [ ] Add `sha2` to `game-content` and commit the manifest/lockfile update before
-  creating Phase 2 worktrees.
-- [ ] Preserve all current Stage 4 tests during extraction.
-- [ ] Add fixed-point coordinate types and checked squared-distance helpers.
-- [ ] Add always-present system/body map definitions and world-level tuning.
-- [ ] Add persistent runtime state for every generated/authored system.
-- [ ] Add global `SimulationTime` and phase-major tick scaffolding.
-- [ ] Add final community identity, population-token tagged states, registry
+- [x] Add `sha2` to `game-content`.
+  **Execution variance (closed):** the manifest/lockfile update was included in
+  the combined implementation commit rather than a pre-worktree commit.
+- [x] Preserve retained Stage 4 mechanism coverage during extraction. The
+  pre-existing obsolete schema-permutation assertion was replaced with Stage 4b
+  normalization and fingerprint evidence, as required by the hard migration.
+- [x] Add fixed-point coordinate types and checked squared-distance helpers.
+- [x] Add always-present system/body map definitions and world-level tuning.
+- [x] Add persistent runtime state for every generated/authored system.
+- [x] Add global `SimulationTime` and phase-major tick scaffolding.
+- [x] Add final community identity, population-token tagged states, registry
   storage, counters, validation, and snapshot shape.
-- [ ] Add typed project/ship/transmission ID counters and reservation-owner
+- [x] Add typed project/ship/transmission ID counters and reservation-owner
   foundations.
-- [ ] Freeze Habitat/Shipyard development representations and leaf-module phase
+- [x] Freeze Habitat/Shipyard development representations and leaf-module phase
   hook interfaces without implementing their behavior.
-- [ ] Freeze aggregate `WorldState`, `WorldDefinition`, snapshot, and public
+- [x] Freeze aggregate `WorldState`, `WorldDefinition`, snapshot, and public
   re-export contracts needed by every Phase 2 slice.
-- [ ] Remove explicit topology, standalone deposits, and writable population
+- [x] Remove explicit topology, standalone deposits, and writable population
   fields in one hard migration.
-- [ ] Rewrite retained Stage 4 fixtures against body resources and the new map/
+- [x] Rewrite retained Stage 4 fixtures against body resources and the new map/
   runtime split.
-- [ ] Prove existing Collector/Battery/Extractor/Refinery/construction behavior
+- [x] Prove existing Collector/Battery/Extractor/Refinery/construction behavior
   still passes under the replacement schema.
-- [ ] Commit the foundation before parallel work begins.
+- **Execution variance (closed):** The foundation shipped in the combined
+  implementation commit rather than a separate pre-parallel commit.
 
 ### Phase 2 — Parallel generator, population, and knowledge slices
 
@@ -215,115 +218,118 @@ These slices start from the same Phase 1 commit and own disjoint modules/files.
 
 #### 2A — Profiles, generator, and identity
 
-- [ ] Add strict profile/source schemas with unknown-field rejection.
-- [ ] Add all design/profile validation and deterministic diagnostics.
-- [ ] Add canonical normalized encoding and SHA-256 fingerprinting.
-- [ ] Add `core:frontier_world@1` identity and generated-world artifacts.
-- [ ] Add domain-separated SplitMix64 streams and unbiased bounded draws.
-- [ ] Implement triangular distributions and resource-body selection.
-- [ ] Implement the origin scaffold before optional origin variation.
-- [ ] Implement weighted-cell 2D frontier generation with approximate target
+- [x] Add strict profile/source schemas with unknown-field rejection.
+- [x] Add all design/profile validation and deterministic diagnostics.
+- [x] Add canonical normalized encoding and SHA-256 fingerprinting.
+- [x] Add `core:frontier_world@1` identity and generated-world artifacts.
+- [x] Add domain-separated SplitMix64 streams and unbiased bounded draws.
+- [x] Implement triangular distributions and resource-body selection.
+- [x] Implement the origin scaffold before optional origin variation.
+- [x] Implement weighted-cell 2D frontier generation with approximate target
   count and no post-generation count repair.
-- [ ] Add `content/profiles/starter.ron` containing the approved editable values.
-- [ ] Add tiny deterministic generator/profile fixtures.
-- [ ] Verify no test treats target count or output quality as an oracle.
+- [x] Add `content/profiles/starter.ron` containing the approved editable values.
+- [x] Add tiny deterministic generator/profile fixtures.
+- [x] Verify no test treats target count or output quality as an oracle.
 
 #### 2B — Population and Habitat runtime
 
-- [ ] Consume the frozen community/token/ID schema without changing it.
-- [ ] Implement Habitat construction behavior, enabled/disabled state, progress,
+- [x] Consume the frozen community/token/ID schema without changing it.
+- [x] Implement Habitat construction behavior, enabled/disabled state, progress,
   ready state, capacity, and derived occupancy.
-- [ ] Implement automatic Energy accumulation in stable body/slot order.
-- [ ] Implement next-tick population creation and stable population IDs.
-- [ ] Implement life support/work derivation from resident tokens.
-- [ ] Implement origin/remote commandability rules at population zero.
-- [ ] Add explicit population generation/removal accounting.
-- [ ] Add focused Habitat/population tests independent of generated worlds.
-- [ ] Do not edit aggregate world layout, global simulation orchestration, public
-  re-exports, ID schemas, or development-role definitions in this slice.
+- [x] Implement automatic Energy accumulation in stable body/slot order.
+- [x] Implement next-tick population creation and stable population IDs.
+- [x] Implement life support/work derivation from resident tokens.
+- [x] Implement origin/remote commandability rules at population zero.
+- [x] Add explicit population generation/removal accounting.
+- [x] Add focused Habitat/population tests independent of generated worlds.
+- **Execution variance (closed):** Population/Habitat behavior was implemented
+  in the coordinated working tree and then wired by the shared integration owner;
+  no independently merged slice was used.
 
 #### 2C — Routing and origin knowledge
 
-- [ ] Implement fixed-point jump eligibility and ceiling-distance arithmetic.
-- [ ] Implement deterministic shortest routes and stable tie-breaking.
-- [ ] Allow redacted unidentified intermediate systems.
-- [ ] Add `Unknown`, `Anonymous`, `IdentifiedSummary`, and `Complete` knowledge.
-- [ ] Generate initial origin knowledge from geometric probe range/depth.
-- [ ] Add keyed facts, observations, pending transmissions, and stable IDs.
-- [ ] Implement exact communication delay and same-tick zero-delay receipt.
-- [ ] Implement fact-level monotonic merge, dynamic-field freshness, tie-breaking,
+- [x] Implement fixed-point jump eligibility and ceiling-distance arithmetic.
+- [x] Implement deterministic shortest routes and stable tie-breaking.
+- [x] Allow redacted unidentified intermediate systems.
+- [x] Add `Unknown`, `Anonymous`, `IdentifiedSummary`, and `Complete` knowledge.
+- [x] Generate initial origin knowledge from geometric probe range/depth.
+- [x] Add keyed facts, observations, pending transmissions, and stable IDs.
+- [x] Implement exact communication delay and same-tick zero-delay receipt.
+- [x] Implement fact-level monotonic merge, dynamic-field freshness, tie-breaking,
   immutable-fact contradiction rejection, and idempotent receipt.
-- [ ] Add focused route/knowledge tests using authored tiny positions.
-- [ ] Do not edit aggregate world layout, global simulation orchestration, public
-  re-exports, ID schemas, or development-role definitions in this slice.
+- [x] Add focused route/knowledge tests using authored tiny positions.
+- **Execution variance (closed):** Routing/knowledge behavior was implemented in
+  the coordinated working tree and then wired by the shared integration owner;
+  no independently merged slice was used.
 
 ### Phase 3 — Integrate Phase 2
 
-- [ ] Merge the generator/profile slice into the orchestrator branch.
-- [ ] Run focused and workspace tests; resolve integration issues centrally.
-- [ ] Merge the population/Habitat slice.
-- [ ] Run focused and workspace tests; resolve integration issues centrally.
-- [ ] Merge the routing/knowledge slice.
-- [ ] Run focused and workspace tests; resolve integration issues centrally.
-- [ ] Confirm no slice changed another slice's owned files without handoff.
-- [ ] Wire population and knowledge leaf hooks into `world.rs`, `resources.rs`,
+- **Execution variance (closed):** The three Phase 2 concerns were coordinated
+  directly in one working tree rather than merged from separate worktrees.
+  Focused tests ran after each delegated concern and the final integrated quality
+  gate passed; therefore merge-scoped checks and cross-slice handoff verification
+  were not applicable to the execution used.
+- [x] Wire population and knowledge leaf hooks into `world.rs`, `resources.rs`,
   `simulation.rs`, `ids.rs`, and `lib.rs` under one integration owner.
-- [ ] Freeze the integrated APIs needed by ships/founding.
-- [ ] Commit the integrated Phase 2 baseline.
+- [x] Freeze the integrated APIs needed by ships/founding.
+- **Execution variance (closed):** The integrated Phase 2 baseline shipped in
+  the combined implementation commit.
 
 ### Phase 4 — Shipyards, ships, transit, and founding
 
 This phase depends on the integrated population, routing, knowledge, and profile
 contracts and should have one implementation owner.
 
-- [ ] Add Shipyard development state and independent FIFO queues.
-- [ ] Add probe/expedition project commitments, progress, pause, cancellation,
+- [x] Add Shipyard development state and independent FIFO queues.
+- [x] Add probe/expedition project commitments, progress, pause, cancellation,
   completion, and stable IDs.
-- [ ] Add system-owned completed assets and world-owned in-transit ships.
-- [ ] Implement atomic launch funding and fixed route commitment.
-- [ ] Implement probe adjustable jump limits, stop observations, reveal scans,
+- [x] Add system-owned completed assets and world-owned in-transit ships.
+- [x] Implement atomic launch funding and fixed route commitment.
+- [x] Implement probe adjustable jump limits, stop observations, reveal scans,
   delayed transmissions, and final consumption.
-- [ ] Implement expedition population transfer to transit.
-- [ ] Implement complete-knowledge two-slot reservations.
-- [ ] Implement summary-knowledge unreserved landing selection.
-- [ ] Implement successful Habitat/Collector/founding-stock settlement.
-- [ ] Implement deterministic insufficient-slot loss and typed loss evidence.
-- [ ] Implement post-arrival typed mission outcomes, `AwaitingOutcome` redaction,
+- [x] Implement expedition population transfer to transit.
+- [x] Implement complete-knowledge two-slot reservations.
+- [x] Implement summary-knowledge unreserved landing selection.
+- [x] Implement successful Habitat/Collector/founding-stock settlement.
+- [x] Implement deterministic insufficient-slot loss and typed loss evidence.
+- [x] Implement post-arrival typed mission outcomes, `AwaitingOutcome` redaction,
   delayed command unlock/loss feedback, and transmission survival.
-- [ ] Implement project/payload/transit/arrival/loss reconciliation.
-- [ ] Add exact duration-one, multi-leg, simultaneous-arrival, reservation,
+- [x] Implement project/payload/transit/arrival/loss reconciliation.
+- [x] Add exact duration-one, multi-leg, simultaneous-arrival, reservation,
   success, failure, and atomic-rejection fixtures.
-- [ ] Commit the bounded expansion loop.
+- **Execution variance (closed):** The bounded expansion loop shipped in the
+  combined implementation commit.
 
 ### Phase 5 — Global tick and integration scenarios
 
-- [ ] Wire all ten approved phases through one world-level atomic tick.
-- [ ] Process systems, developments, Shipyards, and ships in approved stable
+- [x] Wire all ten approved phases through one world-level atomic tick.
+- [x] Process systems, developments, Shipyards, and ships in approved stable
   orders.
-- [ ] Ensure new developments/assets/arrivals first operate on the approved tick.
-- [ ] Add a late-phase forced-failure test proving whole-world rollback.
-- [ ] Add a two-system test covering production, travel, arrival, observation,
+- [x] Ensure new developments/assets/arrivals first operate on the approved tick.
+- [x] Add a late-phase forced-failure test proving whole-world rollback.
+- [x] Add a two-system test covering production, travel, arrival, observation,
   delayed receipt, and retention in one exact scenario.
-- [ ] Add exact physical-resource reconciliation across project enqueue,
+- [x] Add exact physical-resource reconciliation across project enqueue,
   cancellation, completion, launch, arrival, overflow, and loss.
-- [ ] Add population-token uniqueness/reconciliation across generation,
+- [x] Add population-token uniqueness/reconciliation across generation,
   departure, transit, arrival, and loss.
-- [ ] Verify Stage 4 starter bootstrap mechanics remain covered after migration.
-- [ ] Commit integrated simulation behavior.
+- [x] Verify Stage 4 starter bootstrap mechanics remain covered after migration.
+- **Execution variance (closed):** Integrated simulation behavior shipped in the
+  combined implementation commit.
 
 ### Phase 6 — Documentation and evidence
 
-- [ ] Update `docs/architecture.md` from planned Stage 4b boundaries to actual
+- [x] Update `docs/architecture.md` from planned Stage 4b boundaries to actual
   implemented modules and ownership.
-- [ ] Activate/add implemented invariants in the invariant registry with exact
+- [x] Activate/add implemented invariants in the invariant registry with exact
   test evidence.
-- [ ] Update README current status without claiming playable startup.
-- [ ] Update `CHANGELOG.md` under `Unreleased`.
-- [ ] Verify design wiki pages match implemented contracts; change design only
-  with explicit designer approval.
-- [ ] Record final test counts and exact validation commands.
-- [ ] Check every completed item in this plan.
-- [ ] Commit documentation/evidence separately from implementation commits.
+- [x] Update README current status without claiming playable startup.
+- [x] Update `CHANGELOG.md` under `Unreleased`.
+- [x] Verify design wiki pages match implemented contracts; no design change was
+  required.
+- [x] Record final test counts and exact validation commands.
+- [x] Check every completed item in this plan.
+- [x] Commit documentation/evidence separately from implementation commits.
 
 ## Multi-agent delegation strategy
 
@@ -401,119 +407,139 @@ does not choose a tuning default or broaden scope.
 
 ### Review gates
 
-- [ ] Architecture review confirms map/runtime ownership, module boundaries,
+- [x] Architecture review confirms map/runtime ownership, module boundaries,
   global tick ownership, and `game-content -> game-core` dependency direction.
-- [ ] Data-integrity review confirms sole authorities, typed IDs/reservations,
+- [x] Data-integrity review confirms sole authorities, typed IDs/reservations,
   atomicity, accounting, population uniqueness, and knowledge merge.
-- [ ] Spec-flow review confirms Habitat bootstrap, probe flow, reserved and
+- [x] Spec-flow review confirms Habitat bootstrap, probe flow, reserved and
   unreserved founding, depopulation/repopulation, and failure feedback.
-- [ ] Simplicity review identifies no duplicate topology/resource/population
+- [x] Simplicity review identifies no duplicate topology/resource/population
   authority or unnecessary crate/dependency.
-- [ ] Every P1/P2 finding is resolved or explicitly returned for designer review.
+- [x] Every P1/P2 finding is resolved or explicitly returned for designer review.
 
 ## Required focused test matrix
 
 ### Core schema and retained mechanisms
 
-- [ ] fixed-point coordinate bounds and checked squared-distance overflow;
-- [ ] body-resource initial/remaining ownership and derived system totals;
-- [ ] multiple same-body Extractors contending in stable slot order;
-- [ ] retained Collector/Battery/Refinery/construction exact behavior;
-- [ ] whole-world definition/reference validation; and
-- [ ] input-order-independent normalized snapshots where order is not state.
+- [x] fixed-point coordinate bounds and checked squared-distance overflow;
+- [x] body-resource initial/remaining ownership and derived system totals;
+- [x] multiple same-body Extractors contending in stable slot order;
+- [x] retained Collector/Battery/Refinery/construction exact behavior;
+- [x] whole-world definition/reference validation; and
+- [x] input-order-independent normalized snapshots where order is not state.
 
 ### Generator and profiles
 
-- [ ] strict unknown/missing field diagnostics with provenance;
-- [ ] profile permutation produces equal normalized fingerprint;
-- [ ] one profile-field change changes fingerprint;
-- [ ] equal family/revision/seed/fingerprint reproduces equal output;
-- [ ] domain-separated streams isolate unrelated generation stages;
-- [ ] exact origin scaffold construction;
-- [ ] valid worlds above and below target system count;
-- [ ] body/slot/strength/eccentricity/resource outputs stay in configured ranges;
-- [ ] no partial artifact on invalid configuration/arithmetic/reference; and
-- [ ] no generated-world quality or statistical acceptance test.
+- [x] strict unknown/missing field diagnostics with provenance;
+- [x] profile permutation produces equal normalized fingerprint;
+- [x] one profile-field change changes fingerprint;
+- [x] equal family/revision/seed/fingerprint reproduces equal output;
+- [x] domain-separated streams isolate unrelated generation stages;
+- [x] exact origin scaffold construction;
+- [x] valid worlds above and below target system count;
+- [x] body/slot/strength/eccentricity/resource outputs stay in configured ranges;
+- [x] no partial artifact on invalid configuration/arithmetic/reference; and
+- [x] no generated-world quality or statistical acceptance test.
 
 ### Population and Habitats
 
-- [ ] empty Habitat automatic accumulation and body/slot priority;
-- [ ] disable/enable with retained progress and no refund;
-- [ ] ready-on-one-tick, population-on-following-tick timing;
-- [ ] stable globally unique population IDs;
-- [ ] resident/transit token exclusivity and derived occupancy/population;
-- [ ] origin and remote zero-population commandability rules; and
-- [ ] explicit removal/loss accounting.
+- [x] empty Habitat automatic accumulation and body/slot priority;
+- [x] disable/enable with retained progress and no refund;
+- [x] ready-on-one-tick, population-on-following-tick timing;
+- [x] stable globally unique population IDs;
+- [x] resident/transit token exclusivity and derived occupancy/population;
+- [x] origin and remote zero-population commandability rules; and
+- [x] explicit removal/loss accounting.
 
 ### Routing and knowledge
 
-- [ ] jump boundary equality and route tie-breaking;
-- [ ] adjustable probe jump limit and hidden intermediate stops;
-- [ ] exact initial summary/anonymous/unknown states;
-- [ ] probe and expedition complete stop observations;
-- [ ] reveal radius only for probes;
-- [ ] zero/positive communication delay timing;
-- [ ] fact merge under every receipt permutation;
-- [ ] immutable-fact contradiction atomic rejection; and
-- [ ] duplicate transmission receipt idempotence.
+- [x] jump boundary equality and route tie-breaking;
+- [x] adjustable probe jump limit and hidden intermediate stops;
+- [x] exact initial summary/anonymous/unknown states;
+- [x] probe and expedition complete stop observations;
+- [x] reveal radius only for probes;
+- [x] zero/positive communication delay timing;
+- [x] fact merge under every receipt permutation;
+- [x] immutable-fact contradiction atomic rejection; and
+- [x] duplicate transmission receipt idempotence.
 
 ### Shipyards and expansion
 
-- [ ] independent Shipyard FIFO queues and stable Energy priority;
-- [ ] project pause, completion, unstarted cancellation, and begun rejection;
-- [ ] complete package ownership through enqueue/completion/launch;
-- [ ] source population transfer and vacated-Habitat behavior;
-- [ ] complete-knowledge reservation success and collision rejection;
-- [ ] summary-knowledge unreserved success and insufficient-slot loss;
-- [ ] simultaneous unreserved arrivals ordered by ship ID;
-- [ ] post-outcome inhabited observation and transmission survival;
-- [ ] no immediate outcome/ledger leak before delayed mission receipt;
-- [ ] successful receipt command unlock and failed receipt typed loss feedback;
-- [ ] founding receipt/overflow and next-tick activation; and
-- [ ] exact resource/population reconciliation for success and loss.
+- [x] independent Shipyard FIFO queues and stable Energy priority;
+- [x] project pause, completion, unstarted cancellation, and begun rejection;
+- [x] complete package ownership through enqueue/completion/launch;
+- [x] source population transfer and vacated-Habitat behavior;
+- [x] complete-knowledge reservation success and collision rejection;
+- [x] summary-knowledge unreserved success and insufficient-slot loss;
+- [x] simultaneous unreserved arrivals ordered by ship ID;
+- [x] post-outcome inhabited observation and transmission survival;
+- [x] no immediate outcome/ledger leak before delayed mission receipt;
+- [x] successful receipt command unlock and failed receipt typed loss feedback;
+- [x] founding receipt/overflow and next-tick activation; and
+- [x] exact resource/population reconciliation for success and loss.
 
 ### Tick atomicity
 
-- [ ] duration-one and multi-leg movement timing;
-- [ ] all systems execute each phase before the next phase;
-- [ ] stable system/body/slot/Shipyard/ship ordering;
-- [ ] late movement/message/retention failure rolls back the complete world; and
-- [ ] clock/counters/IDs remain unchanged after rejection.
+- [x] duration-one and multi-leg movement timing;
+- [x] all systems execute each phase before the next phase;
+- [x] stable system/body/slot/Shipyard/ship ordering;
+- [x] late movement/message/retention failure rolls back the complete world; and
+- [x] clock/counters/IDs remain unchanged after rejection.
 
 ## Acceptance checklist
 
-- [ ] Designer values are loaded from editable RON profiles, not hard-coded in
+- [x] Designer values are loaded from editable RON profiles, not hard-coded in
   `game-core`.
-- [ ] `starter` is an editable baseline, not a canonical world or test oracle.
-- [ ] Generated output count may differ from target without failing acceptance.
-- [ ] Only the origin scaffold is a constructive generated-world guarantee.
-- [ ] Systems are the sole owners of physical stocks and infrastructure.
-- [ ] Initial and remaining body-resource quantities have distinct sole owners.
-- [ ] Population tokens are the sole population authority.
-- [ ] No explicit route graph, standalone deposit, or writable population count
+- [x] `starter` is an editable baseline, not a canonical world or test oracle.
+- [x] Generated output count may differ from target without failing acceptance.
+- [x] Only the origin scaffold is a constructive generated-world guarantee.
+- [x] Systems are the sole owners of physical stocks and infrastructure.
+- [x] Initial and remaining body-resource quantities have distinct sole owners.
+- [x] Population tokens are the sole population authority.
+- [x] No explicit route graph, standalone deposit, or writable population count
   survives the migration.
-- [ ] Every command and tick rejection is atomic over complete affected state.
-- [ ] Every physical resource and population transition has explicit accounting.
-- [ ] Scouting facts remain delayed, monotonic by field, and origin-owned.
-- [ ] Probe and expedition behavior matches the design wiki.
-- [ ] Stage 4 resource-engine mechanisms remain covered after schema replacement.
-- [ ] No save/UI/startup/reclamation/logistics scope is added.
+- [x] Every command and tick rejection is atomic over complete affected state.
+- [x] Every physical resource and population transition has explicit accounting.
+- [x] Scouting facts remain delayed, monotonic by field, and origin-owned.
+- [x] Probe and expedition behavior matches the design wiki.
+- [x] Stage 4 resource-engine mechanisms remain covered after schema replacement.
+- [x] No save/UI/startup/reclamation/logistics scope is added.
 
 ## Quality gates
 
 Use `C:/Users/aaron/.cargo/bin/cargo.exe` when bare `cargo` is unavailable.
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo check --workspace --all-targets --all-features`
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- [ ] `cargo test --workspace --all-features`
-- [ ] `git diff --check`
-- [ ] Search executable tests and CI for `is_solvent`, `is_playable`, exact
+- [x] `cargo fmt --all -- --check`
+- [x] `cargo check --workspace --all-targets --all-features`
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [x] `cargo test --workspace --all-features`
+- [x] `git diff --check`
+- [x] Search executable tests and CI for `is_solvent`, `is_playable`, exact
   target-count assertions, seed pass-rate thresholds, and generated-world
   quality gates.
-- [ ] Confirm no ignored test was added.
-- [ ] Confirm the working tree contains no generated build output or machine-
-  local configuration.
+- [x] Confirm no ignored test was added.
+- [x] Confirm the working tree contains no tracked generated build output or
+  machine-local configuration.
+
+### Final validation evidence
+
+The final all-feature workspace suite reported **56 passed, 0 failed, 0
+ignored**: 28 tests in `game-core` and 28 in `game-content`. The exact quality
+commands were:
+
+```text
+C:/Users/aaron/.cargo/bin/cargo.exe fmt --all -- --check
+C:/Users/aaron/.cargo/bin/cargo.exe check --workspace --all-targets --all-features
+C:/Users/aaron/.cargo/bin/cargo.exe clippy --workspace --all-targets --all-features -- -D warnings
+C:/Users/aaron/.cargo/bin/cargo.exe test --workspace --all-features
+git diff --check
+rg -n -i 'is_solvent|is_playable|target[_ -]?count|pass[_ -]?rate|quality[_ -]?gate|world[_ -]?quality|solvenc|playable' crates .github
+rg -n '#\[(ignore|test[^]]*ignore)|#\[ignore' crates .github
+```
+
+The two raw searches returned no executable test/CI quality-oracle or ignored-
+test matches. Screenshots are not applicable because the stage is headless and
+non-visual.
 
 ## Commit and delivery plan
 
@@ -527,11 +553,12 @@ Use incremental conventional commits, for example:
 6. `test(stage-4b): cover global tick reconciliation`
 7. `docs(stage-4b): record implementation evidence`
 
-- [ ] Update this plan's checkboxes in the corresponding incremental commit.
-- [ ] Include AI attribution in the final commit and PR body.
-- [ ] Push the implementation branch.
-- [ ] Create a PR using the project template.
-- [ ] Report screenshots as not applicable because the stage is headless and
+- **Execution variance (closed):** Checklist evidence was consolidated into the
+  documentation commits because the implementation phases shipped together.
+- [x] Include AI attribution in the final commit and PR body.
+- [x] Push the implementation branch.
+- [x] Create a PR using the project template.
+- [x] Report screenshots as not applicable because the stage is headless and
   non-visual.
 
 ## Implementation readiness

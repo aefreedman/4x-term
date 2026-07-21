@@ -4,51 +4,52 @@
 
 ### Added
 
-- Stage 4's authored headless origin resource engine: deterministic monthly
-  ticks, ten-phase Collector output, life support, Batteries, Extractors,
-  Refineries, generic body slots, and FIFO construction.
-- Exact system accounting for construction commitments, production cycles,
-  mutable deposit depletion, Energy retention/overflow, cancellation refunds,
-  shortages, and capacity-aware receipts.
-- Strict designer-authored Stage 4 RON definitions plus the exact 20-tick
-  zero-population Collector → Refinery → Battery → Extractor fixture.
-- Stage 3's headless origin-and-frontier substrate: resources, neutral
-  locations, exactly one living origin community with physical stocks, resource
-  deposits, reclaimable sites, and explicit topology.
-- Deterministic `WorldState` snapshots, normalized topology and input ordering,
-  and checked physical-resource transfer/reconciliation evidence.
-- One-source strict RON world compilation with deterministic, source-aware
-  aggregated diagnostics and focused Tier 1 fixtures.
-- A reviewed engine-invariant registry with exact oracles, applicability rules,
-  non-vacuity witnesses, and focused test evidence.
-- Retained frontend architecture, terminal UX, testing, and removed-dependency
-  lessons for the future Stage 5 playable-surface rebuild.
+- Stage 4b's deterministic `core:frontier_world@1` generator, editable strict
+  RON profiles, canonical SHA-256 profile fingerprints, logical provenance, and
+  complete version/seed/profile generation identity.
+- Fixed-point geometric routing, initial origin knowledge, keyed observations,
+  delayed fact transmissions, monotonic deterministic merge, and redacted
+  player route/system views.
+- Habitat-backed population tokens, automatic generation, stable population
+  identity, derived occupancy/support/work, and explicit transition accounting.
+- Shipyards with independent FIFO project queues, completed probes and
+  expeditions, world-owned transit, typed slot reservations, settlement,
+  insufficient-slot loss, delayed outcome reports, and remote command unlock.
+- Whole-world ten-phase atomic ticking with exact cross-system resource and
+  population reconciliation evidence.
+- Strict authored-world support for coherent initial resident population tokens,
+  including initialized-population accounting and never-reused sequence setup.
+- An editable `content/profiles/starter.ron` baseline and 56 focused
+  deterministic tests across `game-core` and `game-content`.
 
 ### Changed
 
-- Physical stocks, bodies, developments, queues, and accounting now belong to
-  persistent systems; communities contain population only and may start at
-  zero.
-- The workspace contains only `game-core` and `game-content`; the retained
-  acceptance surface is headless buildability and 40 focused deterministic
-  tests.
-- Topology is explicit and may be empty or disconnected; locations do not gain
-  living state from deposits, sites, or topology.
-- Content compilation validates one schema-specific source instead of a fixed
-  repository bundle.
-- Migration CI gates formatting, compilation, linting, and retained workspace
-  tests instead of legacy product acceptance.
+- Every location now has persistent system runtime. Immutable map facts own
+  initial body resources while runtime bodies solely own remaining quantities;
+  systems own stocks, infrastructure, queues, assets, and accounting.
+- Population tokens are the sole mutable population authority; community
+  population and Habitat occupancy are derived views.
+- Simulation time, transit, and origin knowledge are world-owned, and each tick
+  executes phase-major across all systems in stable order before committing.
+- The public runtime boundary is a knowledge-filtered `PlayerWorldView`;
+  privileged complete snapshots are gated behind the `test-support` feature.
+- Generated-world artifacts now expose identity, provenance, and validated world
+  definitions through read-only accessors rather than public fields.
+- The retained Stage 4 Collector, Battery, Extractor, Refinery, construction,
+  life-support, overflow, and accounting mechanics now run under the Stage 4b
+  map/runtime schema.
+- The workspace remains headless and non-playable; no application, startup
+  session, CLI, TUI, save format, or production world bundle is present.
 
 ### Removed
 
-- The playable app, CLI, and terminal UI boundaries, along with their terminal
-  and async dependency chain.
-- Production authored market content and its fixed repository loader.
-- Markets, pricing, wallets, commercial reservations and Energy contracts,
-  player/NPC traders, fleets, market-per-location state, and related gameplay
-  acceptance and diagnostics.
-- Authored-world cardinality, ecology-role, bootstrap-solvency,
-  liquidation-adequacy, fleet-route, and repository-activity quality gates.
+- Floating-point map positions, explicit route topology, standalone deposits and
+  deposit reservations, origin-only ticking, and writable population totals.
+- Compatibility fields, fixtures, tests, and current-state documentation for
+  the replaced Stage 3/4 world schemas.
+- Generated-world target-count, connectivity, reachability, solvency, survival,
+  and qualitative-quality acceptance oracles; only the constructive origin
+  scaffold is guaranteed.
 
 ## 0.7.1 - 2026-07-20
 

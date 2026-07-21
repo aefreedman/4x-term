@@ -1,1265 +1,115 @@
-//! Source-aware RON loading and validation for Stage 3 substrate and Stage 4 resource-engine worlds.
+//! Strict RON adapter for Stage 4b world definitions.
 
-use game_core::{
-    BodyDefinition, ConstructionRecipe, ContentId, DevelopmentCondition, DevelopmentDefinition,
-    DevelopmentRole, DevelopmentSlotDefinition, ENERGY_ID, ExtractorParameters, LocationDefinition,
-    OriginCommunityDefinition, Position3, ReclaimableSiteDefinition, RefineryParameters,
-    ResourceDefinition, ResourceDepositDefinition, ResourceEngineConfig, ResourceEngineDefinition,
-    ResourceStore, SystemDefinition, TopologyDefinition, TopologyEdge, WorldDefinition,
+mod diagnostics;
+mod fingerprint;
+mod generator;
+mod profile;
+mod schema;
+
+pub use diagnostics::{ContentDiagnostic, ContentErrors};
+pub use fingerprint::{CanonicalEncodingError, canonical_profile_bytes, sha256_fingerprint};
+pub use generator::{
+    CompiledProfile, GeneratedWorldArtifact, GenerationError, GenerationIdentity,
+    GenerationRequest, GeneratorVersion, SourceProvenance, generate_world,
 };
-use serde::Deserialize;
+pub use profile::{
+    FrontierResourceGenerationTuning, GeneratorTuning, NormalizedProfile,
+    OriginResourceGenerationTuning, ProfileValidationError, ResourceGenerationTuning, SignedBounds,
+    SystemGenerationTuning, UnsignedRatio, UnsignedTriangle,
+};
+
+use diagnostics::push;
+use game_core::*;
+use schema::*;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::{Display, Formatter};
 use std::fs;
+use std::num::NonZeroU64;
 use std::path::Path;
-use thiserror::Error;
 
-/// One actionable content-validation problem, including its source provenance.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct ContentDiagnostic {
-    pub source: String,
-    pub definition: String,
-    pub field: String,
-    pub message: String,
-}
-
-impl Display for ContentDiagnostic {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "{}:{}:{}: {}",
-            self.source, self.definition, self.field, self.message
-        )
-    }
-}
-
-/// Deterministically ordered diagnostics emitted by parsing or compiling content.
-#[derive(Debug, Error)]
-#[error("content compilation failed:\n{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n"))]
-pub struct ContentErrors(pub Vec<ContentDiagnostic>);
-
-impl ContentErrors {
-    #[must_use]
-    pub fn diagnostics(&self) -> &[ContentDiagnostic] {
-        &self.0
-    }
-
-    fn from_one(diagnostic: ContentDiagnostic) -> Self {
-        Self(vec![diagnostic])
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorldSource {
-    resources: Vec<ResourceSource>,
-    locations: Vec<LocationSource>,
-    origin: OriginSource,
-    #[serde(default)]
-    systems: Vec<SystemSource>,
-    #[serde(default)]
-    deposits: Vec<DepositSource>,
-    #[serde(default)]
-    sites: Vec<SiteSource>,
-    #[serde(default)]
-    topology: TopologySource,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResourceSource {
-    id: String,
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LocationSource {
-    id: String,
-    name: String,
-    position: PositionSource,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PositionSource {
-    x: f64,
-    y: f64,
-    z: f64,
-}
-
-/// Community source data deliberately contains no physical stock ledger.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OriginSource {
-    id: String,
-    location: String,
-    population: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SystemSource {
-    location: String,
-    #[serde(default)]
-    stocks: Vec<ResourceAmountSource>,
-    #[serde(default)]
-    resource_engine: Option<ResourceEngineSource>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResourceAmountSource {
-    resource: String,
-    quantity: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResourceEngineSource {
-    collector_energy_profile: Vec<u64>,
-    bodies: Vec<BodySource>,
-    config: ResourceEngineConfigSource,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BodySource {
-    id: String,
-    name: String,
-    slots: Vec<SlotSource>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SlotSource {
-    id: String,
-    #[serde(default)]
-    development: Option<DevelopmentSource>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-enum DevelopmentRoleSource {
-    Collector,
-    Battery,
-    Extractor,
-    Refinery,
-}
-
-impl From<DevelopmentRoleSource> for DevelopmentRole {
-    fn from(value: DevelopmentRoleSource) -> Self {
-        match value {
-            DevelopmentRoleSource::Collector => Self::Collector,
-            DevelopmentRoleSource::Battery => Self::Battery,
-            DevelopmentRoleSource::Extractor => Self::Extractor,
-            DevelopmentRoleSource::Refinery => Self::Refinery,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-enum DevelopmentConditionSource {
-    Functional,
-    Damaged,
-    Ruined,
-}
-
-impl From<DevelopmentConditionSource> for DevelopmentCondition {
-    fn from(value: DevelopmentConditionSource) -> Self {
-        match value {
-            DevelopmentConditionSource::Functional => Self::Functional,
-            DevelopmentConditionSource::Damaged => Self::Damaged,
-            DevelopmentConditionSource::Ruined => Self::Ruined,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DevelopmentSource {
-    id: String,
-    role: DevelopmentRoleSource,
-    condition: DevelopmentConditionSource,
-    #[serde(default)]
-    extractor_deposit: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResourceEngineConfigSource {
-    energy_resource: String,
-    ore_resource: String,
-    alloy_resource: String,
-    life_support_per_population: u64,
-    origin_construction_work: u64,
-    intrinsic_energy_capacity: u64,
-    battery_energy_capacity: u64,
-    collector_recipe: ConstructionRecipeSource,
-    battery_recipe: ConstructionRecipeSource,
-    extractor_recipe: ConstructionRecipeSource,
-    refinery_recipe: ConstructionRecipeSource,
-    extractor: ExtractorParametersSource,
-    refinery: RefineryParametersSource,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ConstructionRecipeSource {
-    costs: Vec<ResourceAmountSource>,
-    required_work: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExtractorParametersSource {
-    energy_upkeep: u64,
-    cycle_duration: u64,
-    ore_output: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RefineryParametersSource {
-    energy_upkeep: u64,
-    cycle_duration: u64,
-    ore_input: u64,
-    alloy_output: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DepositSource {
-    id: String,
-    location: String,
-    resource: String,
-    quantity: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SiteSource {
-    id: String,
-    location: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TopologySource {
-    #[serde(default)]
-    edges: Vec<EdgeSource>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EdgeSource {
-    from: String,
-    to: String,
-}
-
-/// Compiles one RON world source into a format-independent definition.
-///
-/// Parsing errors have document provenance. Semantic errors are collected before
-/// any core definition is returned, then sorted by source, definition, and field.
 pub fn compile_str(
     source_name: impl AsRef<str>,
     source: &str,
 ) -> Result<WorldDefinition, ContentErrors> {
     let source_name = source_name.as_ref().to_owned();
     let parsed = ron::from_str::<WorldSource>(source).map_err(|error| {
-        ContentErrors::from_one(ContentDiagnostic {
-            source: source_name.clone(),
-            definition: "document".into(),
-            field: "parse".into(),
-            message: error.to_string(),
-        })
+        ContentErrors::one(source_name.clone(), "document", "parse", error.to_string())
     })?;
-    compile_world(source_name, parsed)
+    compile_world(&source_name, parsed)
 }
 
-/// Loads and compiles exactly one world source file; it has no repository-bundle convention.
 pub fn load_file(path: impl AsRef<Path>) -> Result<WorldDefinition, ContentErrors> {
     let path = path.as_ref();
     let source_name = path.display().to_string();
     let source = fs::read_to_string(path).map_err(|error| {
-        ContentErrors::from_one(ContentDiagnostic {
-            source: source_name.clone(),
-            definition: "document".into(),
-            field: "read".into(),
-            message: error.to_string(),
-        })
+        ContentErrors::one(source_name.clone(), "document", "read", error.to_string())
     })?;
     compile_str(source_name, &source)
 }
 
-fn compile_world(
-    source_name: String,
-    source: WorldSource,
-) -> Result<WorldDefinition, ContentErrors> {
-    let mut diagnostics = Vec::new();
-
-    let mut resources = BTreeMap::new();
-    for (index, item) in source.resources.into_iter().enumerate() {
-        let definition = definition_name("resources", index, &item.id);
-        let Some(id) = parse_id(&source_name, &definition, "id", &item.id, &mut diagnostics) else {
-            continue;
-        };
-        if resources.contains_key(&id) {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition,
-                "id",
-                format!("duplicate id {id}"),
-            );
-            continue;
-        }
-        resources.insert(
-            id.clone(),
-            ResourceDefinition {
-                id,
-                name: item.name,
-            },
-        );
-    }
-
-    let mut locations = BTreeMap::new();
-    for (index, item) in source.locations.into_iter().enumerate() {
-        let definition = definition_name("locations", index, &item.id);
-        let id = parse_id(&source_name, &definition, "id", &item.id, &mut diagnostics);
-        let position = Position3 {
-            x: item.position.x,
-            y: item.position.y,
-            z: item.position.z,
-        };
-        if !position.is_finite() {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition.clone(),
-                "position",
-                "coordinates must be finite",
-            );
-        }
-        let Some(id) = id else { continue };
-        if locations.contains_key(&id) {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition,
-                "id",
-                format!("duplicate id {id}"),
-            );
-            continue;
-        }
-        locations.insert(
-            id.clone(),
-            LocationDefinition {
-                id,
-                name: item.name,
-                position,
-            },
-        );
-    }
-
-    let origin_definition = definition_name("origin", 0, &source.origin.id);
-    let origin_id = parse_id(
-        &source_name,
-        &origin_definition,
-        "id",
-        &source.origin.id,
-        &mut diagnostics,
-    );
-    let origin_location = parse_id(
-        &source_name,
-        &origin_definition,
-        "location",
-        &source.origin.location,
-        &mut diagnostics,
-    );
-    if let Some(location) = &origin_location
-        && !locations.contains_key(location)
-    {
-        push(
-            &mut diagnostics,
-            &source_name,
-            origin_definition.clone(),
-            "location",
-            format!("unknown location {location}"),
-        );
-    }
-
-    let mut deposits = BTreeMap::new();
-    for (index, item) in source.deposits.into_iter().enumerate() {
-        let definition = definition_name("deposits", index, &item.id);
-        let id = parse_id(&source_name, &definition, "id", &item.id, &mut diagnostics);
-        let location = parse_id(
-            &source_name,
-            &definition,
-            "location",
-            &item.location,
-            &mut diagnostics,
-        );
-        let resource = parse_id(
-            &source_name,
-            &definition,
-            "resource",
-            &item.resource,
-            &mut diagnostics,
-        );
-        if let Some(location) = &location
-            && !locations.contains_key(location)
-        {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition.clone(),
-                "location",
-                format!("unknown location {location}"),
-            );
-        }
-        if let Some(resource) = &resource
-            && !resources.contains_key(resource)
-        {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition.clone(),
-                "resource",
-                format!("unknown resource {resource}"),
-            );
-        }
-        require_nonzero(
-            &source_name,
-            &definition,
-            "quantity",
-            item.quantity,
-            &mut diagnostics,
-        );
-        let Some((id, location, resource)) = id
-            .zip(location)
-            .zip(resource)
-            .map(|((id, location), resource)| (id, location, resource))
-        else {
-            continue;
-        };
-        if deposits.contains_key(&id) {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition,
-                "id",
-                format!("duplicate id {id}"),
-            );
-            continue;
-        }
-        deposits.insert(
-            id.clone(),
-            ResourceDepositDefinition {
-                id,
-                location,
-                resource,
-                quantity: item.quantity,
-            },
-        );
-    }
-
-    let mut sites = BTreeMap::new();
-    for (index, item) in source.sites.into_iter().enumerate() {
-        let definition = definition_name("sites", index, &item.id);
-        let id = parse_id(&source_name, &definition, "id", &item.id, &mut diagnostics);
-        let location = parse_id(
-            &source_name,
-            &definition,
-            "location",
-            &item.location,
-            &mut diagnostics,
-        );
-        if let Some(location) = &location
-            && !locations.contains_key(location)
-        {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition.clone(),
-                "location",
-                format!("unknown location {location}"),
-            );
-        }
-        let Some((id, location)) = id.zip(location) else {
-            continue;
-        };
-        if sites.contains_key(&id) {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition,
-                "id",
-                format!("duplicate id {id}"),
-            );
-            continue;
-        }
-        sites.insert(id.clone(), ReclaimableSiteDefinition { id, location });
-    }
-
-    let mut systems = BTreeMap::new();
-    for (index, item) in source.systems.into_iter().enumerate() {
-        let definition = definition_name("systems", index, &item.location);
-        let location = parse_id(
-            &source_name,
-            &definition,
-            "location",
-            &item.location,
-            &mut diagnostics,
-        );
-        if let Some(location) = &location
-            && !locations.contains_key(location)
-        {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition.clone(),
-                "location",
-                format!("unknown location {location}"),
-            );
-        }
-        let stocks = compile_amounts(
-            &source_name,
-            &definition,
-            "stocks",
-            item.stocks,
-            &resources,
-            false,
-            &mut diagnostics,
-        );
-        let resource_engine = item.resource_engine.and_then(|engine| {
-            compile_resource_engine(
-                &source_name,
-                &definition,
-                location.as_ref(),
-                engine,
-                &resources,
-                &deposits,
-                &stocks,
-                &mut diagnostics,
-            )
-        });
-        let Some(location) = location else { continue };
-        if systems.contains_key(&location) {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition,
-                "location",
-                format!("duplicate system for location {location}"),
-            );
-            continue;
-        }
-        systems.insert(
-            location.clone(),
-            SystemDefinition {
-                location,
-                stocks,
-                resource_engine,
-            },
-        );
-    }
-
-    let mut edges = BTreeMap::new();
-    let mut seen_edges = BTreeSet::new();
-    for (index, item) in source.topology.edges.into_iter().enumerate() {
-        let fallback = format!("topology.edges[{index}]");
-        let from = parse_id(
-            &source_name,
-            &fallback,
-            "from",
-            &item.from,
-            &mut diagnostics,
-        );
-        let to = parse_id(&source_name, &fallback, "to", &item.to, &mut diagnostics);
-        let Some((mut from, mut to)) = from.zip(to) else {
-            continue;
-        };
-        if to < from {
-            std::mem::swap(&mut from, &mut to);
-        }
-        let definition = format!("topology:{from}/{to}");
-        if from == to {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition.clone(),
-                "endpoints",
-                "self edge is not allowed",
-            );
-        }
-        for endpoint in [&from, &to] {
-            if !locations.contains_key(endpoint) {
-                push(
-                    &mut diagnostics,
-                    &source_name,
-                    definition.clone(),
-                    "endpoints",
-                    format!("unknown location {endpoint}"),
-                );
-            }
-        }
-        if !seen_edges.insert((from.clone(), to.clone())) {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition,
-                "endpoints",
-                "duplicate edge",
-            );
-            continue;
-        }
-        let Some((from_location, to_location)) = locations.get(&from).zip(locations.get(&to))
-        else {
-            continue;
-        };
-        if from == to || !from_location.position.is_finite() || !to_location.position.is_finite() {
-            continue;
-        }
-        if !from_location
-            .position
-            .distance(to_location.position)
-            .is_finite()
-        {
-            push(
-                &mut diagnostics,
-                &source_name,
-                definition,
-                "distance",
-                "derived distance must be finite",
-            );
-            continue;
-        }
-        edges.insert((from.clone(), to.clone()), TopologyEdge { from, to });
-    }
-
-    diagnostics.sort();
-    if !diagnostics.is_empty() {
-        return Err(ContentErrors(diagnostics));
-    }
-
-    Ok(WorldDefinition {
-        resources: resources.into_values().collect(),
-        locations: locations.into_values().collect(),
-        origin: OriginCommunityDefinition {
-            id: origin_id.expect("valid origin id after successful validation"),
-            location: origin_location.expect("valid origin location after successful validation"),
-            population: source.origin.population,
-        },
-        systems: systems.into_values().collect(),
-        deposits: deposits.into_values().collect(),
-        sites: sites.into_values().collect(),
-        topology: TopologyDefinition {
-            edges: edges.into_values().collect(),
-        },
-    })
+pub fn compile_profile_str(
+    source_name: impl AsRef<str>,
+    source: &str,
+) -> Result<NormalizedProfile, ContentErrors> {
+    let source_name = source_name.as_ref().to_owned();
+    let parsed = ron::from_str::<ProfileSource>(source).map_err(|error| {
+        ContentErrors::one(source_name.clone(), "document", "parse", error.to_string())
+    })?;
+    compile_profile(&source_name, parsed)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn compile_resource_engine(
-    source_name: &str,
-    system_definition: &str,
-    system_location: Option<&ContentId>,
-    source: ResourceEngineSource,
-    resources: &BTreeMap<ContentId, ResourceDefinition>,
-    deposits: &BTreeMap<ContentId, ResourceDepositDefinition>,
-    stocks: &ResourceStore,
-    diagnostics: &mut Vec<ContentDiagnostic>,
-) -> Option<ResourceEngineDefinition> {
-    let ResourceEngineSource {
-        collector_energy_profile,
-        bodies: body_sources,
-        config: config_source,
-    } = source;
-    let engine_definition = format!("{system_definition}/resource_engine");
-
-    if collector_energy_profile.len() != 10 {
-        push(
-            diagnostics,
-            source_name,
-            engine_definition.clone(),
-            "collector_energy_profile",
-            format!(
-                "must contain exactly 10 entries, found {}",
-                collector_energy_profile.len()
-            ),
-        );
-    }
-    let mut profile = [0_u64; 10];
-    for (target, value) in profile.iter_mut().zip(&collector_energy_profile) {
-        *target = *value;
-    }
-
-    let config = compile_engine_config(
-        source_name,
-        &engine_definition,
-        config_source,
-        resources,
-        diagnostics,
-    );
-    let ore_resource = config.as_ref().map(|config| &config.ore_resource);
-
-    let mut bodies = BTreeMap::new();
-    let mut development_ids = BTreeSet::new();
-    let mut assigned_deposits = BTreeSet::new();
-    for (body_index, body_source) in body_sources.into_iter().enumerate() {
-        let body_definition =
-            nested_definition(&engine_definition, "body", body_index, &body_source.id);
-        let body_id = parse_id(
-            source_name,
-            &body_definition,
-            "id",
-            &body_source.id,
-            diagnostics,
-        );
-        let mut slots = BTreeMap::new();
-        for (slot_index, slot_source) in body_source.slots.into_iter().enumerate() {
-            let slot_definition =
-                nested_definition(&body_definition, "slot", slot_index, &slot_source.id);
-            let slot_id = parse_id(
-                source_name,
-                &slot_definition,
-                "id",
-                &slot_source.id,
-                diagnostics,
-            );
-            let development = slot_source.development.and_then(|development| {
-                compile_development(
-                    source_name,
-                    &slot_definition,
-                    system_location,
-                    development,
-                    ore_resource,
-                    deposits,
-                    &mut development_ids,
-                    &mut assigned_deposits,
-                    diagnostics,
-                )
-            });
-            let Some(slot_id) = slot_id else { continue };
-            if slots.contains_key(&slot_id) {
-                push(
-                    diagnostics,
-                    source_name,
-                    slot_definition,
-                    "id",
-                    format!("duplicate slot id {slot_id}"),
-                );
-                continue;
-            }
-            slots.insert(
-                slot_id.clone(),
-                DevelopmentSlotDefinition {
-                    id: slot_id,
-                    development,
-                },
-            );
-        }
-        let Some(body_id) = body_id else { continue };
-        if bodies.contains_key(&body_id) {
-            push(
-                diagnostics,
-                source_name,
-                body_definition,
-                "id",
-                format!("duplicate body id {body_id}"),
-            );
-            continue;
-        }
-        bodies.insert(
-            body_id.clone(),
-            BodyDefinition {
-                id: body_id,
-                name: body_source.name,
-                slots: slots.into_values().collect(),
-            },
-        );
-    }
-
-    if let Some(config) = &config {
-        match config
-            .battery_energy_capacity
-            .checked_mul(functional_battery_count(&bodies))
-            .and_then(|added| config.intrinsic_energy_capacity.checked_add(added))
-        {
-            Some(capacity) => {
-                let available = stocks.quantity(&config.energy_resource);
-                if available > capacity {
-                    push(
-                        diagnostics,
-                        source_name,
-                        engine_definition.clone(),
-                        "stocks",
-                        format!("available Energy {available} exceeds capacity {capacity}"),
-                    );
-                }
-            }
-            None => push(
-                diagnostics,
-                source_name,
-                engine_definition.clone(),
-                "energy_capacity",
-                "derived Energy capacity overflows",
-            ),
-        }
-    }
-
-    config.map(|config| ResourceEngineDefinition {
-        collector_energy_profile: profile,
-        bodies: bodies.into_values().collect(),
-        config,
-    })
+pub fn load_profile_file(path: impl AsRef<Path>) -> Result<NormalizedProfile, ContentErrors> {
+    let path = path.as_ref();
+    let source_name = path.display().to_string();
+    let source = fs::read_to_string(path).map_err(|error| {
+        ContentErrors::one(source_name.clone(), "document", "read", error.to_string())
+    })?;
+    compile_profile_str(source_name, &source)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn compile_development(
-    source_name: &str,
-    slot_definition: &str,
-    system_location: Option<&ContentId>,
-    source: DevelopmentSource,
-    ore_resource: Option<&ContentId>,
-    deposits: &BTreeMap<ContentId, ResourceDepositDefinition>,
-    development_ids: &mut BTreeSet<ContentId>,
-    assigned_deposits: &mut BTreeSet<ContentId>,
-    diagnostics: &mut Vec<ContentDiagnostic>,
-) -> Option<DevelopmentDefinition> {
-    let definition = nested_definition(slot_definition, "development", 0, &source.id);
-    let id = parse_id(source_name, &definition, "id", &source.id, diagnostics);
-    if let Some(id) = &id
-        && !development_ids.insert(id.clone())
-    {
-        push(
-            diagnostics,
-            source_name,
-            definition.clone(),
-            "id",
-            format!("duplicate development id {id}"),
-        );
-    }
-    let role = DevelopmentRole::from(source.role);
-    let condition = DevelopmentCondition::from(source.condition);
-    let extractor_deposit = source.extractor_deposit.as_deref().and_then(|raw| {
-        parse_id(
-            source_name,
-            &definition,
-            "extractor_deposit",
-            raw,
-            diagnostics,
+/// Strictly parses, validates, canonically encodes, fingerprints, and records logical provenance.
+pub fn compile_generation_profile_str(
+    source_identity: impl AsRef<str>,
+    source: &str,
+) -> Result<CompiledProfile, ContentErrors> {
+    let source_identity = source_identity.as_ref();
+    let normalized = compile_profile_str(source_identity, source)?;
+    let provenance = SourceProvenance::from_source(source_identity, source.as_bytes());
+    CompiledProfile::new(normalized, provenance).map_err(|error| {
+        ContentErrors::one(
+            source_identity.to_owned(),
+            "profile",
+            "canonical_encoding",
+            error.to_string(),
         )
-    });
-
-    match (role, extractor_deposit.as_ref()) {
-        (DevelopmentRole::Extractor, None) => push(
-            diagnostics,
-            source_name,
-            definition.clone(),
-            "extractor_deposit",
-            "Extractor requires a deposit assignment",
-        ),
-        (DevelopmentRole::Extractor, Some(deposit_id)) => {
-            if let Some(deposit) = deposits.get(deposit_id) {
-                if system_location.is_some_and(|location| &deposit.location != location)
-                    || ore_resource.is_some_and(|ore| &deposit.resource != ore)
-                {
-                    push(
-                        diagnostics,
-                        source_name,
-                        definition.clone(),
-                        "extractor_deposit",
-                        format!("deposit {deposit_id} is not a compatible same-system Ore deposit"),
-                    );
-                }
-            } else {
-                push(
-                    diagnostics,
-                    source_name,
-                    definition.clone(),
-                    "extractor_deposit",
-                    format!("unknown deposit {deposit_id}"),
-                );
-            }
-            if !assigned_deposits.insert(deposit_id.clone()) {
-                push(
-                    diagnostics,
-                    source_name,
-                    definition.clone(),
-                    "extractor_deposit",
-                    format!("deposit {deposit_id} is assigned more than once"),
-                );
-            }
-        }
-        (_, Some(_)) => push(
-            diagnostics,
-            source_name,
-            definition.clone(),
-            "extractor_deposit",
-            "only an Extractor may have a deposit assignment",
-        ),
-        (_, None) => {}
-    }
-
-    id.map(|id| DevelopmentDefinition {
-        id,
-        role,
-        condition,
-        extractor_deposit,
     })
 }
 
-fn compile_engine_config(
-    source_name: &str,
-    engine_definition: &str,
-    source: ResourceEngineConfigSource,
-    resources: &BTreeMap<ContentId, ResourceDefinition>,
-    diagnostics: &mut Vec<ContentDiagnostic>,
-) -> Option<ResourceEngineConfig> {
-    let definition = format!("{engine_definition}/config");
-    let energy_resource = compile_resource_reference(
-        source_name,
-        &definition,
-        "energy_resource",
-        &source.energy_resource,
-        resources,
-        diagnostics,
-    );
-    let ore_resource = compile_resource_reference(
-        source_name,
-        &definition,
-        "ore_resource",
-        &source.ore_resource,
-        resources,
-        diagnostics,
-    );
-    let alloy_resource = compile_resource_reference(
-        source_name,
-        &definition,
-        "alloy_resource",
-        &source.alloy_resource,
-        resources,
-        diagnostics,
-    );
-
-    if energy_resource
-        .as_ref()
-        .is_some_and(|resource| resource.as_str() != ENERGY_ID)
-    {
-        push(
-            diagnostics,
-            source_name,
-            definition.clone(),
-            "energy_resource",
-            format!("must reference {ENERGY_ID}"),
-        );
-    }
-    if let (Some(energy), Some(ore), Some(alloy)) =
-        (&energy_resource, &ore_resource, &alloy_resource)
-        && (energy == ore || energy == alloy || ore == alloy)
-    {
-        push(
-            diagnostics,
-            source_name,
-            definition.clone(),
-            "resources",
-            "energy, ore, and alloy resources must be distinct",
-        );
-    }
-
-    for (field, value) in [
-        (
-            "life_support_per_population",
-            source.life_support_per_population,
-        ),
-        ("origin_construction_work", source.origin_construction_work),
-        (
-            "intrinsic_energy_capacity",
-            source.intrinsic_energy_capacity,
-        ),
-        ("battery_energy_capacity", source.battery_energy_capacity),
-    ] {
-        require_nonzero(source_name, &definition, field, value, diagnostics);
-    }
-
-    let collector_recipe = compile_recipe(
-        source_name,
-        &format!("{definition}/collector_recipe"),
-        source.collector_recipe,
-        resources,
-        diagnostics,
-    );
-    let battery_recipe = compile_recipe(
-        source_name,
-        &format!("{definition}/battery_recipe"),
-        source.battery_recipe,
-        resources,
-        diagnostics,
-    );
-    let extractor_recipe = compile_recipe(
-        source_name,
-        &format!("{definition}/extractor_recipe"),
-        source.extractor_recipe,
-        resources,
-        diagnostics,
-    );
-    let refinery_recipe = compile_recipe(
-        source_name,
-        &format!("{definition}/refinery_recipe"),
-        source.refinery_recipe,
-        resources,
-        diagnostics,
-    );
-
-    let extractor_definition = format!("{definition}/extractor");
-    for (field, value) in [
-        ("energy_upkeep", source.extractor.energy_upkeep),
-        ("cycle_duration", source.extractor.cycle_duration),
-    ] {
-        require_nonzero(
-            source_name,
-            &extractor_definition,
-            field,
-            value,
-            diagnostics,
-        );
-    }
-    if source.extractor.ore_output != 1 {
-        push(
-            diagnostics,
-            source_name,
-            &extractor_definition,
-            "ore_output",
-            "must equal 1",
-        );
-    }
-    let refinery_definition = format!("{definition}/refinery");
-    for (field, value) in [
-        ("energy_upkeep", source.refinery.energy_upkeep),
-        ("cycle_duration", source.refinery.cycle_duration),
-        ("ore_input", source.refinery.ore_input),
-        ("alloy_output", source.refinery.alloy_output),
-    ] {
-        require_nonzero(source_name, &refinery_definition, field, value, diagnostics);
-    }
-
-    if let (Some(energy), Some(ore), Some(alloy)) =
-        (&energy_resource, &ore_resource, &alloy_resource)
-    {
-        for (name, role, recipe) in [
-            (
-                "collector_recipe",
-                DevelopmentRole::Collector,
-                &collector_recipe,
-            ),
-            ("battery_recipe", DevelopmentRole::Battery, &battery_recipe),
-            (
-                "extractor_recipe",
-                DevelopmentRole::Extractor,
-                &extractor_recipe,
-            ),
-            (
-                "refinery_recipe",
-                DevelopmentRole::Refinery,
-                &refinery_recipe,
-            ),
-        ] {
-            let recipe_definition = format!("{definition}/{name}");
-            if recipe.cost.quantity(energy) == 0 {
-                push(
-                    diagnostics,
-                    source_name,
-                    recipe_definition.clone(),
-                    "costs",
-                    "Energy cost must be nonzero",
-                );
-            }
-            match role {
-                DevelopmentRole::Collector
-                | DevelopmentRole::Battery
-                | DevelopmentRole::Extractor => {
-                    if recipe.cost.quantity(alloy) == 0 || recipe.cost.quantity(ore) != 0 {
-                        push(
-                            diagnostics,
-                            source_name,
-                            recipe_definition,
-                            "costs",
-                            "must consume Alloy and never Ore",
-                        );
-                    }
-                }
-                DevelopmentRole::Refinery => {
-                    if recipe.cost.quantity(ore) == 0 || recipe.cost.quantity(alloy) != 0 {
-                        push(
-                            diagnostics,
-                            source_name,
-                            recipe_definition,
-                            "costs",
-                            "must consume Ore and never Alloy",
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    energy_resource.zip(ore_resource).zip(alloy_resource).map(
-        |((energy_resource, ore_resource), alloy_resource)| ResourceEngineConfig {
-            energy_resource,
-            ore_resource,
-            alloy_resource,
-            life_support_per_population: source.life_support_per_population,
-            origin_construction_work: source.origin_construction_work,
-            intrinsic_energy_capacity: source.intrinsic_energy_capacity,
-            battery_energy_capacity: source.battery_energy_capacity,
-            collector_recipe,
-            battery_recipe,
-            extractor_recipe,
-            refinery_recipe,
-            extractor: ExtractorParameters {
-                energy_upkeep: source.extractor.energy_upkeep,
-                cycle_duration: source.extractor.cycle_duration,
-                ore_output: source.extractor.ore_output,
-            },
-            refinery: RefineryParameters {
-                energy_upkeep: source.refinery.energy_upkeep,
-                cycle_duration: source.refinery.cycle_duration,
-                ore_input: source.refinery.ore_input,
-                alloy_output: source.refinery.alloy_output,
-            },
-        },
-    )
-}
-
-fn compile_recipe(
-    source_name: &str,
-    definition: &str,
-    source: ConstructionRecipeSource,
-    resources: &BTreeMap<ContentId, ResourceDefinition>,
-    diagnostics: &mut Vec<ContentDiagnostic>,
-) -> ConstructionRecipe {
-    require_nonzero(
-        source_name,
-        definition,
-        "required_work",
-        source.required_work,
-        diagnostics,
-    );
-    ConstructionRecipe {
-        cost: compile_amounts(
-            source_name,
-            definition,
-            "costs",
-            source.costs,
-            resources,
-            true,
-            diagnostics,
-        ),
-        required_work: source.required_work,
-    }
-}
-
-fn compile_amounts(
-    source_name: &str,
-    definition: &str,
-    field_prefix: &str,
-    amounts: Vec<ResourceAmountSource>,
-    resources: &BTreeMap<ContentId, ResourceDefinition>,
-    quantities_must_be_nonzero: bool,
-    diagnostics: &mut Vec<ContentDiagnostic>,
-) -> ResourceStore {
-    let mut store = BTreeMap::new();
-    for (index, amount) in amounts.into_iter().enumerate() {
-        let field = format!("{field_prefix}[{index}].resource");
-        let Some(resource) = parse_id(
-            source_name,
-            definition,
-            &field,
-            &amount.resource,
-            diagnostics,
-        ) else {
-            continue;
-        };
-        if !resources.contains_key(&resource) {
-            push(
-                diagnostics,
-                source_name,
-                definition,
-                field.clone(),
-                format!("unknown resource {resource}"),
-            );
-        }
-        if quantities_must_be_nonzero {
-            require_nonzero(
-                source_name,
-                definition,
-                &format!("{field_prefix}[{index}].quantity"),
-                amount.quantity,
-                diagnostics,
-            );
-        }
-        if store.insert(resource.clone(), amount.quantity).is_some() {
-            push(
-                diagnostics,
-                source_name,
-                definition,
-                field,
-                format!("duplicate resource {resource}"),
-            );
-        }
-    }
-    resource_store(store)
-}
-
-fn compile_resource_reference(
-    source_name: &str,
-    definition: &str,
-    field: &str,
-    raw: &str,
-    resources: &BTreeMap<ContentId, ResourceDefinition>,
-    diagnostics: &mut Vec<ContentDiagnostic>,
-) -> Option<ContentId> {
-    let resource = parse_id(source_name, definition, field, raw, diagnostics)?;
-    if !resources.contains_key(&resource) {
-        push(
-            diagnostics,
-            source_name,
-            definition,
-            field,
-            format!("unknown resource {resource}"),
-        );
-    }
-    Some(resource)
-}
-
-fn functional_battery_count(bodies: &BTreeMap<ContentId, BodyDefinition>) -> u64 {
-    bodies
-        .values()
-        .flat_map(|body| &body.slots)
-        .filter(|slot| {
-            slot.development.as_ref().is_some_and(|development| {
-                development.role == DevelopmentRole::Battery
-                    && development.condition == DevelopmentCondition::Functional
-            })
-        })
-        .count()
-        .try_into()
-        .unwrap_or(u64::MAX)
-}
-
-fn resource_store(stocks: BTreeMap<ContentId, u64>) -> ResourceStore {
-    stocks.into_iter().collect()
+/// Loads profile bytes from a machine-local path while retaining only logical source provenance.
+pub fn load_generation_profile_file(
+    source_identity: impl AsRef<str>,
+    path: impl AsRef<Path>,
+) -> Result<CompiledProfile, ContentErrors> {
+    let source_identity = source_identity.as_ref();
+    let path = path.as_ref();
+    let source = fs::read_to_string(path).map_err(|error| {
+        ContentErrors::one(
+            source_identity.to_owned(),
+            "document",
+            "read",
+            error.to_string(),
+        )
+    })?;
+    compile_generation_profile_str(source_identity, &source)
 }
 
 fn parse_id(
     source: &str,
     definition: &str,
     field: &str,
-    raw: &str,
+    value: &str,
     diagnostics: &mut Vec<ContentDiagnostic>,
 ) -> Option<ContentId> {
-    match ContentId::new(raw) {
+    match ContentId::new(value) {
         Ok(id) => Some(id),
         Err(error) => {
             push(diagnostics, source, definition, field, error.to_string());
@@ -1268,316 +118,1693 @@ fn parse_id(
     }
 }
 
-fn definition_name(kind: &str, index: usize, raw_id: &str) -> String {
-    ContentId::new(raw_id)
-        .map(|id| format!("{kind}:{id}"))
-        .unwrap_or_else(|_| format!("{kind}[{index}]"))
-}
-
-fn nested_definition(parent: &str, kind: &str, index: usize, raw_id: &str) -> String {
-    ContentId::new(raw_id)
-        .map(|id| format!("{parent}/{kind}:{id}"))
-        .unwrap_or_else(|_| format!("{parent}/{kind}[{index}]"))
-}
-
-fn require_nonzero(
+fn amounts(
     source: &str,
     definition: &str,
     field: &str,
-    value: u64,
+    values: Vec<ResourceAmountSource>,
+    known: &BTreeSet<ContentId>,
+    require_nonzero: bool,
     diagnostics: &mut Vec<ContentDiagnostic>,
-) {
-    if value == 0 {
-        push(diagnostics, source, definition, field, "must be nonzero");
+) -> ResourceStore {
+    let mut quantities = BTreeMap::new();
+    for (index, value) in values.into_iter().enumerate() {
+        let item = format!("{definition}/{field}[{index}]");
+        let Some(resource) = parse_id(source, &item, "resource", &value.resource, diagnostics)
+        else {
+            continue;
+        };
+        if !known.contains(&resource) {
+            push(
+                diagnostics,
+                source,
+                &item,
+                "resource",
+                format!("unknown resource {resource}"),
+            );
+        }
+        if require_nonzero && value.quantity == 0 {
+            push(diagnostics, source, &item, "quantity", "must be nonzero");
+        }
+        if quantities
+            .insert(resource.clone(), value.quantity)
+            .is_some()
+        {
+            push(
+                diagnostics,
+                source,
+                &item,
+                "resource",
+                format!("duplicate resource {resource}"),
+            );
+        }
+    }
+    ResourceStore { quantities }
+}
+
+fn rate(
+    source: &str,
+    definition: &str,
+    value: RateSource,
+    diagnostics: &mut Vec<ContentDiagnostic>,
+) -> FixedRate {
+    let denominator = NonZeroU64::new(value.denominator).unwrap_or_else(|| {
+        push(
+            diagnostics,
+            source,
+            definition,
+            "denominator",
+            "must be nonzero",
+        );
+        NonZeroU64::MIN
+    });
+    let divisor = greatest_common_divisor(value.numerator, denominator.get());
+    FixedRate::new(
+        value.numerator / divisor,
+        NonZeroU64::new(denominator.get() / divisor).expect("reduced denominator is nonzero"),
+    )
+}
+
+fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left.max(1)
+}
+
+fn recipe(
+    source: &str,
+    name: &str,
+    value: RecipeSource,
+    known: &BTreeSet<ContentId>,
+    diagnostics: &mut Vec<ContentDiagnostic>,
+) -> ConstructionRecipe {
+    ConstructionRecipe {
+        cost: amounts(source, name, "costs", value.costs, known, true, diagnostics),
+        required_work: value.required_work,
     }
 }
 
-fn push(
+fn compile_tuning(
+    source_name: &str,
+    value: TuningSource,
+    resource_ids: &BTreeSet<ContentId>,
     diagnostics: &mut Vec<ContentDiagnostic>,
-    source: &str,
-    definition: impl Into<String>,
-    field: impl Into<String>,
-    message: impl Into<String>,
-) {
-    diagnostics.push(ContentDiagnostic {
-        source: source.to_owned(),
-        definition: definition.into(),
-        field: field.into(),
-        message: message.into(),
-    });
+) -> WorldTuning {
+    let tuning_source = value;
+    let mut seasonal_shape = [0_u64; 10];
+    if tuning_source.seasonal_shape.len() != 10 {
+        push(
+            diagnostics,
+            source_name,
+            "tuning",
+            "seasonal_shape",
+            "must contain exactly 10 entries",
+        );
+    }
+    for (target, value) in seasonal_shape.iter_mut().zip(&tuning_source.seasonal_shape) {
+        *target = *value;
+    }
+    let mut resource_richness = BTreeMap::new();
+    for (index, value) in tuning_source.resource_richness.into_iter().enumerate() {
+        let definition = format!("tuning.resource_richness[{index}]");
+        let Some(resource) = parse_id(
+            source_name,
+            &definition,
+            "resource",
+            &value.resource,
+            diagnostics,
+        ) else {
+            continue;
+        };
+        if resource_richness
+            .insert(
+                resource.clone(),
+                RichnessThresholds {
+                    poor_minimum: value.poor_minimum,
+                    poor_maximum: value.poor_maximum,
+                    normal_minimum: value.normal_minimum,
+                    normal_maximum: value.normal_maximum,
+                    rich_minimum: value.rich_minimum,
+                },
+            )
+            .is_some()
+        {
+            push(
+                diagnostics,
+                source_name,
+                definition,
+                "resource",
+                format!("duplicate resource {resource}"),
+            );
+        }
+    }
+    WorldTuning {
+        energy_resource: parse_id(
+            source_name,
+            "tuning",
+            "energy_resource",
+            &tuning_source.energy_resource,
+            diagnostics,
+        )
+        .unwrap_or_else(|| ContentId::new(ENERGY_ID).expect("constant valid")),
+        ore_resource: parse_id(
+            source_name,
+            "tuning",
+            "ore_resource",
+            &tuning_source.ore_resource,
+            diagnostics,
+        )
+        .unwrap_or_else(|| ContentId::new("core:ore").expect("constant valid")),
+        alloy_resource: parse_id(
+            source_name,
+            "tuning",
+            "alloy_resource",
+            &tuning_source.alloy_resource,
+            diagnostics,
+        )
+        .unwrap_or_else(|| ContentId::new("core:alloy").expect("constant valid")),
+        seasonal_shape,
+        seasonal_baseline_average: tuning_source.seasonal_baseline_average,
+        life_support_per_population: tuning_source.life_support_per_population,
+        origin_construction_work: tuning_source.origin_construction_work,
+        intrinsic_energy_capacity: tuning_source.intrinsic_energy_capacity,
+        battery_energy_capacity: tuning_source.battery_energy_capacity,
+        habitat_population_energy: tuning_source.habitat_population_energy,
+        coordinate_quanta_per_map_unit: tuning_source.coordinate_quanta_per_map_unit,
+        collector_recipe: recipe(
+            source_name,
+            "tuning.collector_recipe",
+            tuning_source.collector_recipe,
+            resource_ids,
+            diagnostics,
+        ),
+        battery_recipe: recipe(
+            source_name,
+            "tuning.battery_recipe",
+            tuning_source.battery_recipe,
+            resource_ids,
+            diagnostics,
+        ),
+        extractor_recipe: recipe(
+            source_name,
+            "tuning.extractor_recipe",
+            tuning_source.extractor_recipe,
+            resource_ids,
+            diagnostics,
+        ),
+        refinery_recipe: recipe(
+            source_name,
+            "tuning.refinery_recipe",
+            tuning_source.refinery_recipe,
+            resource_ids,
+            diagnostics,
+        ),
+        habitat_recipe: recipe(
+            source_name,
+            "tuning.habitat_recipe",
+            tuning_source.habitat_recipe,
+            resource_ids,
+            diagnostics,
+        ),
+        shipyard_recipe: recipe(
+            source_name,
+            "tuning.shipyard_recipe",
+            tuning_source.shipyard_recipe,
+            resource_ids,
+            diagnostics,
+        ),
+        extractor: ExtractorParameters {
+            energy_upkeep: tuning_source.extractor.energy_upkeep,
+            cycle_duration: tuning_source.extractor.cycle_duration,
+            output: tuning_source.extractor.output,
+        },
+        refinery: RefineryParameters {
+            energy_upkeep: tuning_source.refinery.energy_upkeep,
+            cycle_duration: tuning_source.refinery.cycle_duration,
+            input: tuning_source.refinery.input,
+            output: tuning_source.refinery.output,
+        },
+        probe_project: ProbeProjectTuning {
+            material_commitment: amounts(
+                source_name,
+                "tuning.probe_project",
+                "material_commitment",
+                tuning_source.probe_project.material_commitment,
+                resource_ids,
+                true,
+                diagnostics,
+            ),
+            duration_ticks: tuning_source.probe_project.duration_ticks,
+            energy_per_progress_tick: tuning_source.probe_project.energy_per_progress_tick,
+        },
+        expedition_project: ExpeditionProjectTuning {
+            hull_material_commitment: amounts(
+                source_name,
+                "tuning.expedition_project",
+                "hull_material_commitment",
+                tuning_source.expedition_project.hull_material_commitment,
+                resource_ids,
+                true,
+                diagnostics,
+            ),
+            founding_stocks: amounts(
+                source_name,
+                "tuning.expedition_project",
+                "founding_stocks",
+                tuning_source.expedition_project.founding_stocks,
+                resource_ids,
+                false,
+                diagnostics,
+            ),
+            duration_ticks: tuning_source.expedition_project.duration_ticks,
+            energy_per_progress_tick: tuning_source.expedition_project.energy_per_progress_tick,
+        },
+        probe_travel: ShipTravelTuning {
+            maximum_jump_quanta: tuning_source.probe_travel.maximum_jump_quanta,
+            speed_quanta_per_tick: tuning_source.probe_travel.speed_quanta_per_tick,
+            energy_per_quantum: rate(
+                source_name,
+                "tuning.probe_travel.energy_per_quantum",
+                tuning_source.probe_travel.energy_per_quantum,
+                diagnostics,
+            ),
+        },
+        expedition_travel: ShipTravelTuning {
+            maximum_jump_quanta: tuning_source.expedition_travel.maximum_jump_quanta,
+            speed_quanta_per_tick: tuning_source.expedition_travel.speed_quanta_per_tick,
+            energy_per_quantum: rate(
+                source_name,
+                "tuning.expedition_travel.energy_per_quantum",
+                tuning_source.expedition_travel.energy_per_quantum,
+                diagnostics,
+            ),
+        },
+        probe_reveal_radius_quanta: tuning_source.probe_reveal_radius_quanta,
+        communication_delay_per_quantum: rate(
+            source_name,
+            "tuning.communication_delay_per_quantum",
+            tuning_source.communication_delay_per_quantum,
+            diagnostics,
+        ),
+        resource_richness,
+    }
 }
 
-#[cfg(test)]
+fn triangle(value: TriangleSource) -> UnsignedTriangle {
+    UnsignedTriangle {
+        minimum: value.minimum,
+        mode: value.mode,
+        maximum: value.maximum,
+    }
+}
+
+fn system_generation(value: SystemGenerationSource) -> SystemGenerationTuning {
+    SystemGenerationTuning {
+        strength_hundredths: triangle(value.strength_hundredths),
+        body_count: triangle(value.body_count),
+        eccentricity_hundredths: triangle(value.eccentricity_hundredths),
+        slots_per_body: triangle(value.slots_per_body),
+    }
+}
+
+fn compile_profile(
+    source_name: &str,
+    source: ProfileSource,
+) -> Result<NormalizedProfile, ContentErrors> {
+    let mut diagnostics = Vec::new();
+    let mut resources = BTreeMap::new();
+    for (index, item) in source.resources.into_iter().enumerate() {
+        let definition = format!("resources[{index}]");
+        let Some(id) = parse_id(source_name, &definition, "id", &item.id, &mut diagnostics) else {
+            continue;
+        };
+        if resources
+            .insert(
+                id.clone(),
+                ResourceDefinition {
+                    id: id.clone(),
+                    name: item.name,
+                    naturally_deposit_bearing: item.naturally_deposit_bearing,
+                },
+            )
+            .is_some()
+        {
+            push(
+                &mut diagnostics,
+                source_name,
+                definition,
+                "id",
+                format!("duplicate id {id}"),
+            );
+        }
+    }
+    let resource_ids = resources.keys().cloned().collect::<BTreeSet<_>>();
+    let gameplay = compile_tuning(
+        source_name,
+        source.gameplay,
+        &resource_ids,
+        &mut diagnostics,
+    );
+    let mut generated_resources = BTreeMap::new();
+    for (index, value) in source.generator.resources.into_iter().enumerate() {
+        let definition = format!("generator.resources[{index}]");
+        let Some(resource) = parse_id(
+            source_name,
+            &definition,
+            "resource",
+            &value.resource,
+            &mut diagnostics,
+        ) else {
+            continue;
+        };
+        let tuning = ResourceGenerationTuning {
+            origin: OriginResourceGenerationTuning {
+                resource_bearing_body_count: triangle(value.origin.resource_bearing_body_count),
+                quantity_per_body: triangle(value.origin.quantity_per_body),
+            },
+            frontier: FrontierResourceGenerationTuning {
+                presence_basis_points: value.frontier.presence_basis_points,
+                resource_bearing_body_count: triangle(value.frontier.resource_bearing_body_count),
+                quantity_per_body: triangle(value.frontier.quantity_per_body),
+            },
+        };
+        if generated_resources
+            .insert(resource.clone(), tuning)
+            .is_some()
+        {
+            push(
+                &mut diagnostics,
+                source_name,
+                definition,
+                "resource",
+                format!("duplicate resource {resource}"),
+            );
+        }
+    }
+    let persistence_divisor = greatest_common_divisor(
+        source.generator.persistence.numerator,
+        source.generator.persistence.denominator,
+    );
+    let generator = GeneratorTuning {
+        coordinate_quanta_per_map_unit: source.generator.coordinate_quanta_per_map_unit,
+        target_system_count: source.generator.target_system_count,
+        x_bounds: SignedBounds {
+            minimum: source.generator.x_bounds.minimum,
+            maximum_exclusive: source.generator.x_bounds.maximum_exclusive,
+        },
+        y_bounds: SignedBounds {
+            minimum: source.generator.y_bounds.minimum,
+            maximum_exclusive: source.generator.y_bounds.maximum_exclusive,
+        },
+        generated_z: source.generator.generated_z,
+        cell_width_quanta: source.generator.cell_width_quanta,
+        cell_height_quanta: source.generator.cell_height_quanta,
+        noise_octaves: source.generator.noise_octaves,
+        base_wavelength_quanta: source.generator.base_wavelength_quanta,
+        lacunarity: source.generator.lacunarity,
+        persistence: UnsignedRatio {
+            numerator: source.generator.persistence.numerator / persistence_divisor,
+            denominator: source.generator.persistence.denominator / persistence_divisor,
+        },
+        full_cell_jitter: source.generator.full_cell_jitter,
+        origin_system: system_generation(source.generator.origin_system),
+        frontier_system: system_generation(source.generator.frontier_system),
+        resources: generated_resources,
+    };
+    diagnostics.sort();
+    if !diagnostics.is_empty() {
+        return Err(ContentErrors(diagnostics));
+    }
+    NormalizedProfile::new(resources.into_values().collect(), gameplay, generator).map_err(
+        |error| {
+            ContentErrors::one(
+                source_name.into(),
+                "profile",
+                "validation",
+                error.to_string(),
+            )
+        },
+    )
+}
+
+fn compile_world(source_name: &str, source: WorldSource) -> Result<WorldDefinition, ContentErrors> {
+    let mut diagnostics = Vec::new();
+    let mut resources = BTreeMap::new();
+    for (index, item) in source.resources.into_iter().enumerate() {
+        let definition = format!("resources[{index}]");
+        let Some(id) = parse_id(source_name, &definition, "id", &item.id, &mut diagnostics) else {
+            continue;
+        };
+        if resources
+            .insert(
+                id.clone(),
+                ResourceDefinition {
+                    id: id.clone(),
+                    name: item.name,
+                    naturally_deposit_bearing: item.naturally_deposit_bearing,
+                },
+            )
+            .is_some()
+        {
+            push(
+                &mut diagnostics,
+                source_name,
+                definition,
+                "id",
+                format!("duplicate id {id}"),
+            );
+        }
+    }
+    let resource_ids = resources.keys().cloned().collect::<BTreeSet<_>>();
+
+    let mut locations = BTreeMap::new();
+    for (index, item) in source.locations.into_iter().enumerate() {
+        let definition = format!("locations[{index}]");
+        let Some(id) = parse_id(source_name, &definition, "id", &item.id, &mut diagnostics) else {
+            continue;
+        };
+        if locations
+            .insert(
+                id.clone(),
+                LocationDefinition {
+                    id: id.clone(),
+                    name: item.name,
+                    position: Position3::from_quanta(
+                        item.position.x,
+                        item.position.y,
+                        item.position.z,
+                    ),
+                },
+            )
+            .is_some()
+        {
+            push(
+                &mut diagnostics,
+                source_name,
+                definition,
+                "id",
+                format!("duplicate id {id}"),
+            );
+        }
+    }
+    let location_ids = locations.keys().cloned().collect::<BTreeSet<_>>();
+
+    let mut communities = BTreeMap::new();
+    for (index, item) in source.communities.into_iter().enumerate() {
+        let definition = format!("communities[{index}]");
+        let id = parse_id(source_name, &definition, "id", &item.id, &mut diagnostics);
+        let system = parse_id(
+            source_name,
+            &definition,
+            "system",
+            &item.system,
+            &mut diagnostics,
+        );
+        let Some((id, system)) = id.zip(system) else {
+            continue;
+        };
+        if !location_ids.contains(&system) {
+            push(
+                &mut diagnostics,
+                source_name,
+                &definition,
+                "system",
+                format!("unknown system {system}"),
+            );
+        }
+        if communities
+            .insert(
+                id.clone(),
+                CommunityDefinition {
+                    id: id.clone(),
+                    system,
+                },
+            )
+            .is_some()
+        {
+            push(
+                &mut diagnostics,
+                source_name,
+                definition,
+                "id",
+                format!("duplicate id {id}"),
+            );
+        }
+    }
+
+    let mut development_ids = BTreeSet::new();
+    let mut development_metadata = BTreeMap::new();
+    let mut body_ids = BTreeSet::new();
+    let mut systems = BTreeMap::new();
+    for (system_index, item) in source.systems.into_iter().enumerate() {
+        let definition = format!("systems[{system_index}]");
+        let Some(location) = parse_id(
+            source_name,
+            &definition,
+            "location",
+            &item.location,
+            &mut diagnostics,
+        ) else {
+            continue;
+        };
+        if !location_ids.contains(&location) {
+            push(
+                &mut diagnostics,
+                source_name,
+                &definition,
+                "location",
+                format!("unknown location {location}"),
+            );
+        }
+        let stocks = amounts(
+            source_name,
+            &definition,
+            "stocks",
+            item.stocks,
+            &resource_ids,
+            false,
+            &mut diagnostics,
+        );
+        let mut bodies = Vec::new();
+        for (body_index, body) in item.bodies.into_iter().enumerate() {
+            let body_definition = format!("{definition}/bodies[{body_index}]");
+            let Some(body_id) = parse_id(
+                source_name,
+                &body_definition,
+                "id",
+                &body.id,
+                &mut diagnostics,
+            ) else {
+                continue;
+            };
+            if !body_ids.insert(body_id.clone()) {
+                push(
+                    &mut diagnostics,
+                    source_name,
+                    &body_definition,
+                    "id",
+                    format!("duplicate body id {body_id}"),
+                );
+            }
+            let initial_resources = amounts(
+                source_name,
+                &body_definition,
+                "resources",
+                body.resources,
+                &resource_ids,
+                true,
+                &mut diagnostics,
+            );
+            let mut slot_ids = BTreeSet::new();
+            let mut slots = Vec::new();
+            for (slot_index, slot) in body.slots.into_iter().enumerate() {
+                let slot_definition = format!("{body_definition}/slots[{slot_index}]");
+                let Some(slot_id) = parse_id(
+                    source_name,
+                    &slot_definition,
+                    "id",
+                    &slot.id,
+                    &mut diagnostics,
+                ) else {
+                    continue;
+                };
+                if !slot_ids.insert(slot_id.clone()) {
+                    push(
+                        &mut diagnostics,
+                        source_name,
+                        &slot_definition,
+                        "id",
+                        format!("duplicate slot id {slot_id}"),
+                    );
+                }
+                let development = slot.development.and_then(|development| {
+                    let id = parse_id(
+                        source_name,
+                        &slot_definition,
+                        "development.id",
+                        &development.id,
+                        &mut diagnostics,
+                    )?;
+                    if !development_ids.insert(id.clone()) {
+                        push(
+                            &mut diagnostics,
+                            source_name,
+                            &slot_definition,
+                            "development.id",
+                            format!("duplicate development id {id}"),
+                        );
+                    }
+                    let role = match development.role {
+                        DevelopmentRoleSource::Collector => DevelopmentRole::Collector,
+                        DevelopmentRoleSource::Battery => DevelopmentRole::Battery,
+                        DevelopmentRoleSource::Extractor => DevelopmentRole::Extractor,
+                        DevelopmentRoleSource::Refinery => DevelopmentRole::Refinery,
+                        DevelopmentRoleSource::Habitat => DevelopmentRole::Habitat,
+                        DevelopmentRoleSource::Shipyard => DevelopmentRole::Shipyard,
+                    };
+                    let condition = match development.condition {
+                        DevelopmentConditionSource::Functional => DevelopmentCondition::Functional,
+                        DevelopmentConditionSource::Damaged => DevelopmentCondition::Damaged,
+                        DevelopmentConditionSource::Ruined => DevelopmentCondition::Ruined,
+                    };
+                    let extractor_target = development
+                        .extractor_resource
+                        .and_then(|raw| {
+                            parse_id(
+                                source_name,
+                                &slot_definition,
+                                "extractor_resource",
+                                &raw,
+                                &mut diagnostics,
+                            )
+                        })
+                        .map(|resource| BodyResourceTarget {
+                            body: body_id.clone(),
+                            resource,
+                        });
+                    development_metadata.insert(id.clone(), (location.clone(), role, condition));
+                    Some(DevelopmentDefinition {
+                        id,
+                        role,
+                        condition,
+                        extractor_target,
+                    })
+                });
+                slots.push(DevelopmentSlotDefinition {
+                    id: slot_id,
+                    development,
+                });
+            }
+            bodies.push(BodyDefinition {
+                id: body_id,
+                name: body.name,
+                eccentricity_hundredths: body.eccentricity_hundredths,
+                initial_resources,
+                slots,
+            });
+        }
+        if systems
+            .insert(
+                location.clone(),
+                SystemDefinition {
+                    location: location.clone(),
+                    stellar_strength_hundredths: item.stellar_strength_hundredths,
+                    bodies,
+                    stocks,
+                    player_founded: item.player_founded,
+                    command_unlock_received: item.command_unlock_received,
+                },
+            )
+            .is_some()
+        {
+            push(
+                &mut diagnostics,
+                source_name,
+                definition,
+                "location",
+                format!("duplicate system {location}"),
+            );
+        }
+    }
+
+    let mut population_tokens = Vec::new();
+    let mut population_ids = BTreeSet::new();
+    let mut occupied_habitats = BTreeSet::new();
+    for (index, item) in source.population_tokens.into_iter().enumerate() {
+        let definition = format!("population_tokens[{index}]");
+        let Some(birth_system) = parse_id(
+            source_name,
+            &definition,
+            "id.birth_system",
+            &item.id.birth_system,
+            &mut diagnostics,
+        ) else {
+            continue;
+        };
+        let population_id = PopulationId::new(birth_system.clone(), item.id.sequence);
+        if !systems.contains_key(&birth_system) {
+            push(
+                &mut diagnostics,
+                source_name,
+                &definition,
+                "id.birth_system",
+                format!("unknown birth system {birth_system}"),
+            );
+        }
+        if !population_ids.insert(population_id.clone()) {
+            push(
+                &mut diagnostics,
+                source_name,
+                &definition,
+                "id",
+                format!("duplicate population id {population_id:?}"),
+            );
+        }
+        let state = match item.state {
+            PopulationStateSource::Resident { community, habitat } => {
+                let community_id = parse_id(
+                    source_name,
+                    &definition,
+                    "state.community",
+                    &community,
+                    &mut diagnostics,
+                );
+                let habitat_id = parse_id(
+                    source_name,
+                    &definition,
+                    "state.habitat",
+                    &habitat,
+                    &mut diagnostics,
+                );
+                let Some((community_id, habitat_id)) = community_id.zip(habitat_id) else {
+                    continue;
+                };
+                let community_system = communities.get(&community_id).map(|value| &value.system);
+                if community_system.is_none() {
+                    push(
+                        &mut diagnostics,
+                        source_name,
+                        &definition,
+                        "state.community",
+                        format!("unknown community {community_id}"),
+                    );
+                }
+                match development_metadata.get(&habitat_id) {
+                    None => push(
+                        &mut diagnostics,
+                        source_name,
+                        &definition,
+                        "state.habitat",
+                        format!("unknown Habitat {habitat_id}"),
+                    ),
+                    Some((habitat_system, role, condition)) => {
+                        if *role != DevelopmentRole::Habitat
+                            || *condition != DevelopmentCondition::Functional
+                        {
+                            push(
+                                &mut diagnostics,
+                                source_name,
+                                &definition,
+                                "state.habitat",
+                                format!("development {habitat_id} is not a functional Habitat"),
+                            );
+                        } else if community_system.is_some_and(|system| system != habitat_system) {
+                            push(
+                                &mut diagnostics,
+                                source_name,
+                                &definition,
+                                "state.habitat",
+                                format!(
+                                    "Habitat {habitat_id} is not in community {community_id}'s system"
+                                ),
+                            );
+                        }
+                    }
+                }
+                if !occupied_habitats.insert(habitat_id.clone()) {
+                    push(
+                        &mut diagnostics,
+                        source_name,
+                        &definition,
+                        "state.habitat",
+                        format!("Habitat {habitat_id} is referenced more than once"),
+                    );
+                }
+                PopulationState::Resident {
+                    community_id,
+                    habitat_id,
+                }
+            }
+            PopulationStateSource::InTransit { ship } => {
+                let ship_system = parse_id(
+                    source_name,
+                    &definition,
+                    "state.ship.system",
+                    &ship.system,
+                    &mut diagnostics,
+                )
+                .unwrap_or_else(|| birth_system.clone());
+                push(
+                    &mut diagnostics,
+                    source_name,
+                    &definition,
+                    "state",
+                    "initial InTransit population is not supported",
+                );
+                PopulationState::InTransit {
+                    ship_id: ShipId::new(ship_system, ship.sequence),
+                }
+            }
+        };
+        population_tokens.push(PopulationToken {
+            id: population_id,
+            state,
+        });
+    }
+
+    let mut sites = BTreeMap::new();
+    for (index, item) in source.sites.into_iter().enumerate() {
+        let definition = format!("sites[{index}]");
+        let id = parse_id(source_name, &definition, "id", &item.id, &mut diagnostics);
+        let location = parse_id(
+            source_name,
+            &definition,
+            "location",
+            &item.location,
+            &mut diagnostics,
+        );
+        let Some((id, location)) = id.zip(location) else {
+            continue;
+        };
+        if !location_ids.contains(&location) {
+            push(
+                &mut diagnostics,
+                source_name,
+                &definition,
+                "location",
+                format!("unknown location {location}"),
+            );
+        }
+        if sites
+            .insert(
+                id.clone(),
+                ReclaimableSiteDefinition {
+                    id: id.clone(),
+                    location,
+                },
+            )
+            .is_some()
+        {
+            push(
+                &mut diagnostics,
+                source_name,
+                definition,
+                "id",
+                format!("duplicate id {id}"),
+            );
+        }
+    }
+
+    let origin_system = parse_id(
+        source_name,
+        "origin",
+        "system",
+        &source.origin.system,
+        &mut diagnostics,
+    );
+    let origin_community = parse_id(
+        source_name,
+        "origin",
+        "community",
+        &source.origin.community,
+        &mut diagnostics,
+    );
+    if let Some(value) = &origin_system
+        && !location_ids.contains(value)
+    {
+        push(
+            &mut diagnostics,
+            source_name,
+            "origin",
+            "system",
+            format!("unknown system {value}"),
+        );
+    }
+    if let Some(value) = &origin_community
+        && !communities.contains_key(value)
+    {
+        push(
+            &mut diagnostics,
+            source_name,
+            "origin",
+            "community",
+            format!("unknown community {value}"),
+        );
+    }
+
+    let tuning = compile_tuning(source_name, source.tuning, &resource_ids, &mut diagnostics);
+
+    diagnostics.sort();
+    if !diagnostics.is_empty() {
+        return Err(ContentErrors(diagnostics));
+    }
+    let definition = WorldDefinition {
+        resources: resources.into_values().collect(),
+        locations: locations.into_values().collect(),
+        origin_system: origin_system.expect("validated"),
+        origin_community: origin_community.expect("validated"),
+        communities: communities.into_values().collect(),
+        population_tokens,
+        systems: systems.into_values().collect(),
+        sites: sites.into_values().collect(),
+        tuning,
+    };
+    if let Err(error) = WorldState::new(definition.clone()) {
+        return Err(ContentErrors::one(
+            source_name.into(),
+            "world",
+            "validation",
+            error.to_string(),
+        ));
+    }
+    Ok(definition)
+}
+
+#[cfg(all(test, feature = "test-support"))]
 mod tests {
     use super::*;
-    use game_core::{CoreError, DevelopmentRole, WorldState};
-
-    const SUBSTRATE: &str = include_str!("../tests/fixtures/three_locations.ron");
-    const STAGE4: &str = include_str!("../tests/fixtures/stage4_origin.ron");
-    const INVALID_STAGE4: &str = include_str!("../tests/fixtures/invalid_stage4.ron");
 
     fn id(value: &str) -> ContentId {
-        ContentId::new(value).unwrap()
+        ContentId::new(value).expect("test id is valid")
     }
 
-    fn stocks(snapshot: &game_core::ResourceEngineSnapshot) -> (u64, u64, u64) {
-        (
-            snapshot.stocks.quantity(&id(ENERGY_ID)),
-            snapshot.stocks.quantity(&id("core:ore")),
-            snapshot.stocks.quantity(&id("core:alloy")),
+    fn authored_world_with_population(tokens: &str) -> String {
+        include_str!("../tests/fixtures/stage4_origin.ron")
+            .replacen(
+                "    systems: [(\n",
+                &format!("    population_tokens: [{tokens}],\n    systems: [(\n"),
+                1,
+            )
+            .replacen(
+                "                    (id: \"core:slot_1\"),",
+                concat!(
+                    "                    (id: \"core:slot_1\", development: Some((",
+                    "id: \"core:seed_habitat\", role: Habitat, condition: Functional))),"
+                ),
+                1,
+            )
+    }
+
+    #[test]
+    fn retained_stage4_bootstrap_runs_on_body_resources_and_global_time() {
+        let definition = compile_str(
+            "stage4_origin.ron",
+            include_str!("../tests/fixtures/stage4_origin.ron"),
         )
-    }
-
-    #[test]
-    fn compiles_stage3_system_stocks_without_enabling_the_engine() {
-        let definition = compile_str("three_locations.ron", SUBSTRATE).expect("valid fixture");
-        assert_eq!(definition.locations.len(), 3);
-        assert_eq!(definition.systems.len(), 3);
-        assert!(
-            definition
-                .systems
-                .iter()
-                .all(|system| system.resource_engine.is_none())
-        );
-        assert_eq!(
-            definition
-                .systems
-                .iter()
-                .find(|system| system.location == id("core:origin"))
-                .unwrap()
-                .stocks
-                .quantity(&id(ENERGY_ID)),
-            8
-        );
-        let mut state = WorldState::new(definition).expect("substrate instantiates");
-        let before = state.snapshot();
-        assert_eq!(
-            state.advance_tick(),
-            Err(CoreError::MissingResourceEnginePrerequisite)
-        );
-        assert_eq!(state.snapshot(), before);
-    }
-
-    #[test]
-    fn compiles_the_exact_authored_stage4_origin() {
-        let definition = compile_str("stage4_origin.ron", STAGE4).expect("valid Stage 4 fixture");
-        assert_eq!(definition.origin.population, 0);
-        assert_eq!(definition.resources.len(), 3);
-        assert_eq!(definition.systems.len(), 1);
-        assert_eq!(definition.deposits[0].quantity, 200);
-        let engine = definition.systems[0].resource_engine.as_ref().unwrap();
-        assert_eq!(
-            engine.collector_energy_profile,
-            [40, 40, 30, 20, 10, 10, 20, 30, 40, 40]
-        );
-        assert_eq!(engine.bodies.len(), 1);
-        assert_eq!(engine.bodies[0].slots.len(), 6);
-        let installed = engine.bodies[0]
-            .slots
-            .iter()
-            .filter_map(|slot| slot.development.as_ref())
-            .collect::<Vec<_>>();
-        assert_eq!(installed.len(), 1);
-        assert_eq!(installed[0].role, DevelopmentRole::Collector);
-        assert_eq!(installed[0].condition, DevelopmentCondition::Functional);
-        let _state = WorldState::new(definition).expect("compiled definition satisfies core");
-    }
-
-    #[test]
-    fn game_content_fixture_drives_the_approved_twenty_tick_bootstrap() {
-        let definition = compile_str("stage4_origin.ron", STAGE4).expect("valid fixture");
+        .expect("fixture compiles");
         let mut state = WorldState::new(definition).expect("fixture instantiates");
-        let system = id("core:origin");
-        let body = id("core:origin_body");
+        let origin = id("core:origin");
+        let body = id("core:origin_body_0");
+
         state
             .enqueue_construction(
-                &system,
+                &origin,
+                &body,
+                &id("core:slot_1"),
+                DevelopmentRole::Refinery,
+                None,
+            )
+            .expect("Refinery enqueues");
+        let after_enqueue = state.debug_system_snapshot(&origin).expect("snapshot");
+        assert_eq!(after_enqueue.stocks.quantity(&id(ENERGY_ID)), 0);
+        assert_eq!(after_enqueue.stocks.quantity(&id("core:ore")), 8);
+
+        for _ in 0..4 {
+            state.advance_tick().expect("tick succeeds");
+        }
+        let tick4 = state.debug_system_snapshot(&origin).expect("snapshot");
+        assert_eq!(
+            (
+                tick4.stocks.quantity(&id(ENERGY_ID)),
+                tick4.stocks.quantity(&id("core:ore")),
+                tick4.stocks.quantity(&id("core:alloy"))
+            ),
+            (10, 8, 0)
+        );
+        assert_eq!(tick4.energy_overflow.cumulative, 120);
+
+        for _ in 4..8 {
+            state.advance_tick().expect("tick succeeds");
+        }
+        let tick8 = state.debug_system_snapshot(&origin).expect("snapshot");
+        assert_eq!(
+            (
+                tick8.stocks.quantity(&id(ENERGY_ID)),
+                tick8.stocks.quantity(&id("core:ore")),
+                tick8.stocks.quantity(&id("core:alloy"))
+            ),
+            (10, 0, 4)
+        );
+        assert_eq!(tick8.energy_overflow.cumulative, 150);
+
+        state
+            .enqueue_construction(
+                &origin,
+                &body,
+                &id("core:slot_2"),
+                DevelopmentRole::Battery,
+                None,
+            )
+            .expect("Battery enqueues");
+        for _ in 8..12 {
+            state.advance_tick().expect("tick succeeds");
+        }
+        let tick12 = state.debug_system_snapshot(&origin).expect("snapshot");
+        assert_eq!(
+            (
+                tick12.stocks.quantity(&id(ENERGY_ID)),
+                tick12.stocks.quantity(&id("core:ore")),
+                tick12.stocks.quantity(&id("core:alloy"))
+            ),
+            (50, 0, 2)
+        );
+        assert_eq!(tick12.energy_overflow.cumulative, 260);
+
+        state
+            .enqueue_construction(
+                &origin,
+                &body,
+                &id("core:slot_3"),
+                DevelopmentRole::Extractor,
+                Some(&id("core:ore")),
+            )
+            .expect("Extractor enqueues");
+        for _ in 12..16 {
+            state.advance_tick().expect("tick succeeds");
+        }
+        let tick16 = state.debug_system_snapshot(&origin).expect("snapshot");
+        assert_eq!(
+            (
+                tick16.stocks.quantity(&id(ENERGY_ID)),
+                tick16.stocks.quantity(&id("core:ore")),
+                tick16.stocks.quantity(&id("core:alloy"))
+            ),
+            (110, 0, 0)
+        );
+
+        for _ in 16..20 {
+            state.advance_tick().expect("tick succeeds");
+        }
+        let tick20 = state.debug_system_snapshot(&origin).expect("snapshot");
+        assert_eq!(
+            (
+                tick20.stocks.quantity(&id(ENERGY_ID)),
+                tick20.stocks.quantity(&id("core:ore")),
+                tick20.stocks.quantity(&id("core:alloy"))
+            ),
+            (110, 0, 2)
+        );
+        assert_eq!(
+            tick20.bodies[0]
+                .remaining_resources
+                .quantity(&id("core:ore")),
+            196
+        );
+        assert_eq!(tick20.energy_overflow.cumulative, 330);
+        assert_eq!(state.time().tick, 20);
+    }
+
+    #[test]
+    fn authored_origin_bootstraps_its_first_population_through_a_habitat() {
+        let definition = compile_str(
+            "stage4_origin.ron",
+            include_str!("../tests/fixtures/stage4_origin.ron"),
+        )
+        .expect("fixture compiles");
+        let mut state = WorldState::new(definition).expect("fixture instantiates");
+        let origin = id("core:origin");
+        let body = id("core:origin_body_0");
+
+        state
+            .enqueue_construction(
+                &origin,
                 &body,
                 &id("core:slot_1"),
                 DevelopmentRole::Refinery,
                 None,
             )
             .unwrap();
-        assert_eq!(
-            stocks(&state.strategic_snapshot(&system).unwrap()),
-            (0, 8, 0)
-        );
-
-        let mut checkpoints = BTreeMap::new();
-        for tick in 1..=20 {
-            let snapshot = state.advance_tick().unwrap();
-            if [4, 8, 12, 16, 20].contains(&tick) {
-                checkpoints.insert(tick, snapshot);
-            }
-            if tick == 8 {
-                state
-                    .enqueue_construction(
-                        &system,
-                        &body,
-                        &id("core:slot_2"),
-                        DevelopmentRole::Battery,
-                        None,
-                    )
-                    .unwrap();
-                assert_eq!(
-                    stocks(&state.strategic_snapshot(&system).unwrap()),
-                    (0, 0, 2)
-                );
-            }
-            if tick == 12 {
-                state
-                    .enqueue_construction(
-                        &system,
-                        &body,
-                        &id("core:slot_3"),
-                        DevelopmentRole::Extractor,
-                        Some(&id("core:ore_deposit")),
-                    )
-                    .unwrap();
-                assert_eq!(
-                    stocks(&state.strategic_snapshot(&system).unwrap()),
-                    (40, 0, 0)
-                );
-            }
+        for _ in 0..8 {
+            state.advance_tick().unwrap();
+        }
+        state
+            .enqueue_construction(
+                &origin,
+                &body,
+                &id("core:slot_2"),
+                DevelopmentRole::Battery,
+                None,
+            )
+            .unwrap();
+        for _ in 0..4 {
+            state.advance_tick().unwrap();
+        }
+        state
+            .enqueue_construction(
+                &origin,
+                &body,
+                &id("core:slot_3"),
+                DevelopmentRole::Extractor,
+                Some(&id("core:ore")),
+            )
+            .unwrap();
+        for _ in 0..12 {
+            state.advance_tick().unwrap();
+        }
+        state
+            .enqueue_construction(
+                &origin,
+                &body,
+                &id("core:slot_4"),
+                DevelopmentRole::Habitat,
+                None,
+            )
+            .expect("authored infrastructure can fund a Habitat");
+        for _ in 0..8 {
+            state.advance_tick().unwrap();
         }
 
-        for (tick, expected_stocks, deposit, overflow) in [
-            (4, (10, 8, 0), 200, 120),
-            (8, (10, 0, 4), 200, 150),
-            (12, (50, 0, 2), 200, 260),
-            (16, (110, 0, 0), 200, 260),
-            (20, (110, 0, 2), 196, 330),
-        ] {
-            let snapshot = &checkpoints[&tick];
-            assert_eq!(stocks(snapshot), expected_stocks);
-            assert_eq!(snapshot.deposits[0].quantity, deposit);
-            assert_eq!(snapshot.energy_overflow.cumulative, overflow);
+        for _ in 0..100 {
+            if state.debug_snapshot().populations.tokens.len() == 1 {
+                break;
+            }
+            state.advance_tick().unwrap();
         }
+        let snapshot = state.debug_snapshot();
+        assert_eq!(snapshot.populations.tokens.len(), 1);
+        assert_eq!(snapshot.population_accounting.generated, 1);
+        assert_eq!(state.commandability(&origin), Ok(Commandability::Origin));
+        assert!(matches!(
+            snapshot.populations.tokens.values().next().unwrap().state,
+            PopulationState::Resident { .. }
+        ));
     }
 
     #[test]
-    fn zero_seasonal_profile_phases_have_content_and_core_parity() {
-        let zero_profile = STAGE4.replace(
-            "collector_energy_profile: [40, 40, 30, 20, 10, 10, 20, 30, 40, 40]",
-            "collector_energy_profile: [0, 40, 30, 20, 10, 10, 20, 30, 40, 0]",
-        );
-        let definition = compile_str("zero_profile.ron", &zero_profile).unwrap();
+    fn body_resources_keep_distinct_initial_and_remaining_authorities() {
+        let definition = compile_str(
+            "stage4_origin.ron",
+            include_str!("../tests/fixtures/stage4_origin.ron"),
+        )
+        .expect("fixture compiles");
+        let state = WorldState::new(definition).expect("fixture instantiates");
+        let snapshot = state
+            .debug_system_snapshot(&id("core:origin"))
+            .expect("snapshot");
+        assert_eq!(snapshot.initial_resource_total(&id("core:ore")), Ok(200));
+        assert_eq!(snapshot.remaining_resource_total(&id("core:ore")), Ok(200));
         assert_eq!(
-            definition.systems[0]
-                .resource_engine
+            snapshot.bodies[0]
+                .initial_resources
+                .quantity(&id("core:ore")),
+            200
+        );
+    }
+
+    #[test]
+    fn construction_cancellation_refunds_and_never_reuses_project_ids() {
+        let definition = compile_str(
+            "stage4_origin.ron",
+            include_str!("../tests/fixtures/stage4_origin.ron"),
+        )
+        .expect("fixture compiles");
+        let mut state = WorldState::new(definition).expect("fixture instantiates");
+        let origin = id("core:origin");
+        let project = state
+            .enqueue_construction(
+                &origin,
+                &id("core:origin_body_0"),
+                &id("core:slot_1"),
+                DevelopmentRole::Refinery,
+                None,
+            )
+            .expect("enqueue");
+        state
+            .cancel_construction(&project)
+            .expect("unbegun cancellation");
+        let snapshot = state.debug_system_snapshot(&origin).expect("snapshot");
+        assert_eq!(snapshot.stocks.quantity(&id(ENERGY_ID)), 10);
+        assert_eq!(snapshot.stocks.quantity(&id("core:ore")), 10);
+        assert!(snapshot.construction_queue.is_empty());
+        assert_eq!(snapshot.counters.next_project_sequence, 1);
+        assert!(snapshot.bodies[0].slots[1].reserved_by.is_none());
+    }
+
+    #[test]
+    fn same_body_extractors_contend_in_stable_slot_order() {
+        let mut definition = compile_str(
+            "stage4_origin.ron",
+            include_str!("../tests/fixtures/stage4_origin.ron"),
+        )
+        .expect("fixture compiles");
+        let body = &mut definition.systems[0].bodies[0];
+        body.initial_resources.set(id("core:ore"), 1);
+        body.slots[1].id = id("core:z_first_slot");
+        body.slots[2].id = id("core:a_second_slot");
+        definition.tuning.extractor.cycle_duration = 2;
+        for (slot_index, name) in [(1_usize, "core:extractor_z"), (2, "core:extractor_a")] {
+            body.slots[slot_index].development = Some(DevelopmentDefinition {
+                id: id(name),
+                role: DevelopmentRole::Extractor,
+                condition: DevelopmentCondition::Functional,
+                extractor_target: Some(BodyResourceTarget {
+                    body: body.id.clone(),
+                    resource: id("core:ore"),
+                }),
+            });
+        }
+        let mut state =
+            WorldState::new(definition).expect("two Extractors may share a body resource");
+        state.advance_tick().expect("first progress tick succeeds");
+        state.advance_tick().expect("contention tick succeeds");
+        let snapshot = state
+            .debug_system_snapshot(&id("core:origin"))
+            .expect("snapshot");
+        assert_eq!(snapshot.remaining_resource_total(&id("core:ore")), Ok(0));
+        assert_eq!(snapshot.stocks.quantity(&id("core:ore")), 11);
+        assert_eq!(
+            snapshot.bodies[0].slots[1]
+                .development
                 .as_ref()
                 .unwrap()
-                .collector_energy_profile,
-            [0, 40, 30, 20, 10, 10, 20, 30, 40, 0]
+                .cycle
+                .progress,
+            0,
+            "authored-first lexical-z slot wins"
         );
-        let snapshot = WorldState::new(definition)
-            .unwrap()
-            .strategic_snapshot(&id("core:origin"))
-            .unwrap();
         assert_eq!(
-            snapshot.collector_energy_profile,
-            [0, 40, 30, 20, 10, 10, 20, 30, 40, 0]
+            snapshot.bodies[0].slots[2]
+                .development
+                .as_ref()
+                .unwrap()
+                .cycle
+                .progress,
+            1,
+            "lexical-a slot remains behind despite its lower ID"
         );
     }
 
     #[test]
-    fn non_unit_extractor_output_is_rejected_by_content() {
-        let non_unit = STAGE4.replace("ore_output: 1", "ore_output: 2");
-        let errors = compile_str("non_unit.ron", &non_unit).expect_err("non-unit output fails");
-        assert!(errors.diagnostics().iter().any(|diagnostic| {
-            diagnostic.field == "ore_output" && diagnostic.message == "must equal 1"
+    fn unordered_definition_collection_permutations_produce_equal_snapshots() {
+        let definition = compile_str(
+            "stage4_origin.ron",
+            include_str!("../tests/fixtures/stage4_origin.ron"),
+        )
+        .expect("fixture compiles");
+        let mut permuted = definition.clone();
+        permuted.resources.reverse();
+        permuted.locations.reverse();
+        permuted.systems.reverse();
+        assert_eq!(
+            WorldState::new(definition).expect("valid").debug_snapshot(),
+            WorldState::new(permuted).expect("valid").debug_snapshot()
+        );
+    }
+
+    #[test]
+    fn normalized_map_retains_semantic_body_and_slot_order_separately_from_runtime() {
+        let mut definition = compile_str(
+            "stage4_origin.ron",
+            include_str!("../tests/fixtures/stage4_origin.ron"),
+        )
+        .expect("fixture compiles");
+        let bodies = &mut definition.systems[0].bodies;
+        bodies[0].id = id("core:z_first_body");
+        bodies[1].id = id("core:a_second_body");
+        bodies[0].slots[0].id = id("core:z_first_slot");
+        bodies[0].slots[1].id = id("core:a_second_slot");
+
+        let state = WorldState::new(definition).expect("semantic vector order is valid");
+        let debug = state.debug_snapshot();
+        let map = debug
+            .map_systems
+            .iter()
+            .find(|system| system.location == id("core:origin"))
+            .unwrap();
+        assert_eq!(map.bodies[0].id, id("core:z_first_body"));
+        assert_eq!(map.bodies[1].id, id("core:a_second_body"));
+        assert_eq!(
+            map.bodies[0].slots[..2],
+            [id("core:z_first_slot"), id("core:a_second_slot")]
+        );
+        let runtime = state.debug_system_snapshot(&id("core:origin")).unwrap();
+        assert_eq!(runtime.bodies[0].id, map.bodies[0].id);
+        assert_eq!(
+            runtime.bodies[0].initial_resources,
+            map.bodies[0].initial_resources
+        );
+    }
+
+    #[test]
+    fn global_tick_persists_and_advances_neutral_systems() {
+        let mut definition = compile_str(
+            "stage4_origin.ron",
+            include_str!("../tests/fixtures/stage4_origin.ron"),
+        )
+        .expect("fixture compiles");
+        let frontier = id("core:frontier");
+        definition.locations.push(LocationDefinition {
+            id: frontier.clone(),
+            name: "Frontier".into(),
+            position: Position3::from_quanta(300, 400, 0),
+        });
+        definition.systems.push(SystemDefinition {
+            location: frontier.clone(),
+            stellar_strength_hundredths: 100,
+            bodies: vec![BodyDefinition {
+                id: id("core:frontier_body"),
+                name: "Frontier Body".into(),
+                eccentricity_hundredths: 100,
+                initial_resources: ResourceStore::new(),
+                slots: vec![DevelopmentSlotDefinition {
+                    id: id("core:frontier_slot"),
+                    development: Some(DevelopmentDefinition {
+                        id: id("core:frontier_collector"),
+                        role: DevelopmentRole::Collector,
+                        condition: DevelopmentCondition::Functional,
+                        extractor_target: None,
+                    }),
+                }],
+            }],
+            stocks: [(id(ENERGY_ID), 0)].into_iter().collect(),
+            player_founded: false,
+            command_unlock_received: false,
+        });
+        let mut state = WorldState::new(definition).expect("two-system definition is valid");
+        state.advance_tick().expect("global tick succeeds");
+        let snapshot = state
+            .debug_system_snapshot(&frontier)
+            .expect("frontier snapshot");
+        assert_eq!(snapshot.stocks.quantity(&id(ENERGY_ID)), 10);
+        assert_eq!(snapshot.energy_overflow.cumulative, 30);
+        assert!(!snapshot.player_founded);
+        assert_eq!(snapshot.commandability, Commandability::Neutral);
+        assert_eq!(
+            state.debug_snapshot().knowledge.level(&frontier),
+            KnowledgeLevel::IdentifiedSummary
+        );
+        assert_eq!(
+            state.commandability(&id("core:origin")),
+            Ok(Commandability::Origin)
+        );
+    }
+
+    #[test]
+    fn late_system_failure_rolls_back_the_whole_world_and_clock() {
+        let mut definition = compile_str(
+            "stage4_origin.ron",
+            include_str!("../tests/fixtures/stage4_origin.ron"),
+        )
+        .expect("fixture compiles");
+        definition.tuning.intrinsic_energy_capacity = u64::MAX;
+        let failing = id("core:failing");
+        definition.locations.push(LocationDefinition {
+            id: failing.clone(),
+            name: "Failing".into(),
+            position: Position3::from_quanta(1, 0, 0),
+        });
+        definition.systems.push(SystemDefinition {
+            location: failing.clone(),
+            stellar_strength_hundredths: 100,
+            bodies: vec![BodyDefinition {
+                id: id("core:failing_body"),
+                name: "Failing Body".into(),
+                eccentricity_hundredths: 100,
+                initial_resources: ResourceStore::new(),
+                slots: vec![DevelopmentSlotDefinition {
+                    id: id("core:failing_slot"),
+                    development: Some(DevelopmentDefinition {
+                        id: id("core:failing_collector"),
+                        role: DevelopmentRole::Collector,
+                        condition: DevelopmentCondition::Functional,
+                        extractor_target: None,
+                    }),
+                }],
+            }],
+            stocks: [(id(ENERGY_ID), u64::MAX)].into_iter().collect(),
+            player_founded: false,
+            command_unlock_received: false,
+        });
+        let mut state = WorldState::new(definition).expect("overflow setup is structurally valid");
+        let before = state.debug_snapshot();
+        assert_eq!(state.advance_tick(), Err(CoreError::Overflow));
+        assert_eq!(state.debug_snapshot(), before);
+        assert_eq!(state.time().tick, 0);
+    }
+
+    #[test]
+    fn strict_schema_rejects_removed_topology_and_population_fields() {
+        let old = "(resources: [], locations: [], origin: (id: \"core:c\", location: \"core:o\", population: 0), systems: [], topology: (edges: []), tuning: ())";
+        let error = compile_str("old.ron", old).expect_err("removed fields are rejected");
+        assert_eq!(error.diagnostics()[0].definition, "document");
+        assert_eq!(error.diagnostics()[0].field, "parse");
+    }
+
+    #[test]
+    fn authored_resident_population_is_strictly_compiled_and_initialized() {
+        let token = concat!(
+            "(id: (birth_system: \"core:origin\", sequence: 7), ",
+            "state: Resident(community: \"core:community\", habitat: \"core:seed_habitat\"))"
+        );
+        let source = authored_world_with_population(token);
+        let definition = compile_str("seeded.ron", &source).expect("resident token compiles");
+        assert_eq!(definition.population_tokens.len(), 1);
+        let state = WorldState::new(definition).expect("resident token initializes");
+        let snapshot = state.debug_snapshot();
+        assert_eq!(snapshot.population_accounting.initialized, 1);
+        assert_eq!(snapshot.population_accounting.generated, 0);
+        assert_eq!(snapshot.systems[0].counters.next_population_sequence, 8);
+
+        let unknown_field = source.replacen("sequence: 7)", "sequence: 7, unexpected: true)", 1);
+        let error = compile_str("strict-seeded.ron", &unknown_field)
+            .expect_err("population token fields are strict");
+        assert_eq!(error.diagnostics()[0].definition, "document");
+        assert_eq!(error.diagnostics()[0].field, "parse");
+    }
+
+    #[test]
+    fn authored_population_diagnostics_cover_duplicates_references_and_transit() {
+        let first = concat!(
+            "(id: (birth_system: \"core:origin\", sequence: 7), ",
+            "state: Resident(community: \"core:community\", habitat: \"core:seed_habitat\"))"
+        );
+        let second = concat!(
+            "(id: (birth_system: \"core:origin\", sequence: 8), ",
+            "state: Resident(community: \"core:community\", habitat: \"core:seed_habitat\"))"
+        );
+        let duplicate_habitat = authored_world_with_population(&format!("{first}, {second}"));
+        let error = compile_str("duplicate-habitat.ron", &duplicate_habitat)
+            .expect_err("one population per Habitat");
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.definition == "population_tokens[1]"
+                && diagnostic.field == "state.habitat"
+                && diagnostic.message.contains("referenced more than once")
+        }));
+
+        let duplicate_id = authored_world_with_population(&format!("{first}, {first}"));
+        let error = compile_str("duplicate-id.ron", &duplicate_id)
+            .expect_err("population IDs are globally unique");
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.definition == "population_tokens[1]"
+                && diagnostic.field == "id"
+                && diagnostic.message.contains("duplicate population id")
+        }));
+
+        for (field, changed) in [
+            (
+                "id.birth_system",
+                first.replace("core:origin\", sequence", "core:missing\", sequence"),
+            ),
+            (
+                "state.community",
+                first.replace("core:community", "core:missing_community"),
+            ),
+            (
+                "state.habitat",
+                first.replace("core:seed_habitat", "core:missing_habitat"),
+            ),
+        ] {
+            let error = compile_str(
+                "bad-reference.ron",
+                &authored_world_with_population(&changed),
+            )
+            .expect_err("bad population reference is rejected");
+            assert!(
+                error
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.field == field)
+            );
+        }
+
+        let transit = authored_world_with_population(concat!(
+            "(id: (birth_system: \"core:origin\", sequence: 7), ",
+            "state: InTransit(ship: (system: \"core:origin\", sequence: 2)))"
+        ));
+        let error = compile_str("initial-transit.ron", &transit)
+            .expect_err("initial transit has no restorable physical authority");
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.definition == "population_tokens[0]"
+                && diagnostic.field == "state"
+                && diagnostic.message.contains("not supported")
         }));
     }
 
     #[test]
-    fn stage4_input_permutations_compile_to_the_same_definition() {
-        let permuted = STAGE4
-            .replace(
-                "(id: \"core:energy\", name: \"Energy\"),\n        (id: \"core:ore\", name: \"Ore\"),\n        (id: \"core:alloy\", name: \"Alloy\"),",
-                "(id: \"core:alloy\", name: \"Alloy\"),\n        (id: \"core:ore\", name: \"Ore\"),\n        (id: \"core:energy\", name: \"Energy\"),",
-            )
-            .replace(
-                "(id: \"core:slot_0\", development: Some((id: \"core:initial_collector\", role: Collector, condition: Functional))),\n                            (id: \"core:slot_1\"),\n                            (id: \"core:slot_2\"),\n                            (id: \"core:slot_3\"),\n                            (id: \"core:slot_4\"),\n                            (id: \"core:slot_5\"),",
-                "(id: \"core:slot_5\"),\n                            (id: \"core:slot_4\"),\n                            (id: \"core:slot_3\"),\n                            (id: \"core:slot_2\"),\n                            (id: \"core:slot_1\"),\n                            (id: \"core:slot_0\", development: Some((id: \"core:initial_collector\", role: Collector, condition: Functional))),",
-            )
-            .replace(
-                "(resource: \"core:energy\", quantity: 10), (resource: \"core:alloy\", quantity: 2)",
-                "(resource: \"core:alloy\", quantity: 2), (resource: \"core:energy\", quantity: 10)",
-            );
-        assert!(
-            permuted.find("core:slot_5").unwrap() < permuted.find("core:slot_0").unwrap(),
-            "slot order was actually permuted"
-        );
-        let first = compile_str("first.ron", STAGE4).unwrap();
-        let second = compile_str("second.ron", &permuted).unwrap();
-        assert_eq!(first, second);
+    fn tuning_derives_the_complete_expedition_commitment() {
+        let definition = compile_str(
+            "stage4_origin.ron",
+            include_str!("../tests/fixtures/stage4_origin.ron"),
+        )
+        .expect("fixture compiles");
+        let commitment = definition
+            .tuning
+            .expedition_enqueue_commitment()
+            .expect("commitment adds without overflow");
+        assert_eq!(commitment.quantity(&id(ENERGY_ID)), 60);
+        assert_eq!(commitment.quantity(&id("core:ore")), 10);
+        assert_eq!(commitment.quantity(&id("core:alloy")), 8);
+    }
+
+    #[test]
+    fn generation_request_carries_normalized_configuration_and_artifact_provenance() {
+        let definition = compile_str(
+            "stage4_origin.ron",
+            include_str!("../tests/fixtures/stage4_origin.ron"),
+        )
+        .expect("fixture compiles");
+        let origin_system = SystemGenerationTuning {
+            strength_hundredths: UnsignedTriangle {
+                minimum: 100,
+                mode: 100,
+                maximum: 100,
+            },
+            body_count: UnsignedTriangle {
+                minimum: 4,
+                mode: 4,
+                maximum: 12,
+            },
+            eccentricity_hundredths: UnsignedTriangle {
+                minimum: 100,
+                mode: 100,
+                maximum: 100,
+            },
+            slots_per_body: UnsignedTriangle {
+                minimum: 3,
+                mode: 3,
+                maximum: 8,
+            },
+        };
+        let frontier_system = SystemGenerationTuning {
+            strength_hundredths: UnsignedTriangle {
+                minimum: 10,
+                mode: 100,
+                maximum: 300,
+            },
+            body_count: UnsignedTriangle {
+                minimum: 1,
+                mode: 4,
+                maximum: 12,
+            },
+            eccentricity_hundredths: UnsignedTriangle {
+                minimum: 0,
+                mode: 100,
+                maximum: 150,
+            },
+            slots_per_body: UnsignedTriangle {
+                minimum: 1,
+                mode: 3,
+                maximum: 8,
+            },
+        };
+        let normalized = NormalizedProfile::new(
+            definition.resources.clone(),
+            definition.tuning.clone(),
+            GeneratorTuning {
+                coordinate_quanta_per_map_unit: 100,
+                target_system_count: 128,
+                x_bounds: SignedBounds {
+                    minimum: -5_000,
+                    maximum_exclusive: 5_000,
+                },
+                y_bounds: SignedBounds {
+                    minimum: -5_000,
+                    maximum_exclusive: 5_000,
+                },
+                generated_z: 0,
+                cell_width_quanta: 500,
+                cell_height_quanta: 500,
+                noise_octaves: 4,
+                base_wavelength_quanta: 4_000,
+                lacunarity: 2,
+                persistence: UnsignedRatio {
+                    numerator: 1,
+                    denominator: 2,
+                },
+                full_cell_jitter: true,
+                origin_system,
+                frontier_system,
+                resources: BTreeMap::from([(
+                    id("core:ore"),
+                    ResourceGenerationTuning {
+                        origin: OriginResourceGenerationTuning {
+                            resource_bearing_body_count: UnsignedTriangle {
+                                minimum: 1,
+                                mode: 2,
+                                maximum: 4,
+                            },
+                            quantity_per_body: UnsignedTriangle {
+                                minimum: 200,
+                                mode: 300,
+                                maximum: 500,
+                            },
+                        },
+                        frontier: FrontierResourceGenerationTuning {
+                            presence_basis_points: 6_500,
+                            resource_bearing_body_count: UnsignedTriangle {
+                                minimum: 1,
+                                mode: 1,
+                                maximum: 4,
+                            },
+                            quantity_per_body: UnsignedTriangle {
+                                minimum: 50,
+                                mode: 200,
+                                maximum: 500,
+                            },
+                        },
+                    },
+                )]),
+            },
+        )
+        .expect("approved starter values normalize");
+        let provenance = SourceProvenance::from_source("core:starter", b"source");
+        let compiled = CompiledProfile::new(normalized, provenance.clone())
+            .expect("normalized profile canonically encodes");
+        let expected_fingerprint = compiled.fingerprint();
+        let request = GenerationRequest {
+            version: GeneratorVersion::frontier_revision_1(),
+            seed: 42,
+            configuration: compiled,
+        };
+        let artifact = generate_world(&request).expect("validated generation succeeds");
+        assert_eq!(artifact.identity().seed, 42);
+        assert_eq!(artifact.provenance(), &provenance);
         assert_eq!(
-            WorldState::new(first).unwrap().snapshot(),
-            WorldState::new(second).unwrap().snapshot()
+            artifact.identity().configuration_fingerprint,
+            expected_fingerprint
+        );
+        assert_eq!(
+            request
+                .configuration
+                .normalized()
+                .generator()
+                .target_system_count,
+            128
         );
     }
 
     #[test]
-    fn invalid_stage4_content_reports_complete_sorted_source_aware_diagnostics() {
-        let errors = compile_str("invalid_stage4.ron", INVALID_STAGE4).expect_err("invalid");
-        let diagnostics = errors.diagnostics();
-        assert!(diagnostics.windows(2).all(|pair| pair[0] <= pair[1]));
-        assert!(
-            diagnostics
-                .iter()
-                .all(|diagnostic| diagnostic.source == "invalid_stage4.ron")
+    fn sha256_hook_is_stable() {
+        assert_eq!(
+            sha256_fingerprint(b"abc"),
+            [
+                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
+                0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
+                0xf2, 0x00, 0x15, 0xad
+            ]
         );
-        for expected in [
-            ("collector_energy_profile", "exactly 10 entries"),
-            ("life_support_per_population", "must be nonzero"),
-            ("origin_construction_work", "must be nonzero"),
-            ("intrinsic_energy_capacity", "must be nonzero"),
-            ("battery_energy_capacity", "must be nonzero"),
-            ("required_work", "must be nonzero"),
-            ("costs[1].resource", "duplicate resource core:energy"),
-            ("energy_upkeep", "must be nonzero"),
-            ("cycle_duration", "must be nonzero"),
-            ("ore_output", "must equal 1"),
-            ("ore_input", "must be nonzero"),
-            ("alloy_output", "must be nonzero"),
-            (
-                "extractor_deposit",
-                "Extractor requires a deposit assignment",
-            ),
-        ] {
-            assert!(
-                diagnostics.iter().any(|diagnostic| {
-                    diagnostic.field == expected.0 && diagnostic.message.contains(expected.1)
-                }),
-                "missing diagnostic {expected:?}: {diagnostics:#?}"
-            );
-        }
-        assert!(
-            diagnostics.len() >= 20,
-            "expected aggregation, got {diagnostics:#?}"
-        );
-    }
-
-    #[test]
-    fn unknown_fields_are_rejected_at_top_level_and_deeply_nested() {
-        let top_level = STAGE4.replacen("resources:", "depostis: [], resources:", 1);
-        let nested = STAGE4.replacen("cycle_duration: 1,", "cycle_duration: 1, cadence: 1,", 1);
-        for (name, text, unknown) in [
-            ("top.ron", top_level, "depostis"),
-            ("nested.ron", nested, "cadence"),
-        ] {
-            let error = compile_str(name, &text).expect_err("unknown fields fail");
-            assert_eq!(error.diagnostics()[0].definition, "document");
-            assert_eq!(error.diagnostics()[0].field, "parse");
-            assert!(error.diagnostics()[0].message.contains(unknown));
-        }
-    }
-
-    #[test]
-    fn parse_errors_include_document_provenance() {
-        let errors = compile_str("broken.ron", "not valid world RON").expect_err("invalid RON");
-        assert_eq!(errors.diagnostics()[0].source, "broken.ron");
-        assert_eq!(errors.diagnostics()[0].definition, "document");
-        assert_eq!(errors.diagnostics()[0].field, "parse");
     }
 }

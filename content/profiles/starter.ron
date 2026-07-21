@@ -1,0 +1,143 @@
+(
+    resources: [
+        (id: "core:energy", name: "Energy", naturally_deposit_bearing: false),
+        (id: "core:ore", name: "Ore", naturally_deposit_bearing: true),
+        (id: "core:alloy", name: "Alloy", naturally_deposit_bearing: false),
+    ],
+    gameplay: (
+        energy_resource: "core:energy",
+        ore_resource: "core:ore",
+        alloy_resource: "core:alloy",
+        seasonal_shape: [40, 40, 30, 20, 10, 10, 20, 30, 40, 40],
+        seasonal_baseline_average: 28,
+        life_support_per_population: 10,
+        origin_construction_work: 1,
+        intrinsic_energy_capacity: 10,
+        battery_energy_capacity: 100,
+        habitat_population_energy: 500,
+        coordinate_quanta_per_map_unit: 100,
+        collector_recipe: (
+            costs: [
+                (resource: "core:energy", quantity: 10),
+                (resource: "core:alloy", quantity: 2),
+            ],
+            required_work: 4,
+        ),
+        battery_recipe: (
+            costs: [
+                (resource: "core:energy", quantity: 10),
+                (resource: "core:alloy", quantity: 2),
+            ],
+            required_work: 4,
+        ),
+        extractor_recipe: (
+            costs: [
+                (resource: "core:energy", quantity: 10),
+                (resource: "core:alloy", quantity: 2),
+            ],
+            required_work: 4,
+        ),
+        refinery_recipe: (
+            costs: [
+                (resource: "core:energy", quantity: 10),
+                (resource: "core:ore", quantity: 2),
+            ],
+            required_work: 4,
+        ),
+        habitat_recipe: (
+            costs: [
+                (resource: "core:energy", quantity: 40),
+                (resource: "core:alloy", quantity: 4),
+            ],
+            required_work: 8,
+        ),
+        shipyard_recipe: (
+            costs: [
+                (resource: "core:energy", quantity: 80),
+                (resource: "core:alloy", quantity: 8),
+            ],
+            required_work: 12,
+        ),
+        extractor: (energy_upkeep: 10, cycle_duration: 1, output: 1),
+        refinery: (energy_upkeep: 10, cycle_duration: 1, input: 2, output: 1),
+        probe_project: (
+            material_commitment: [
+                (resource: "core:energy", quantity: 20),
+                (resource: "core:alloy", quantity: 2),
+            ],
+            duration_ticks: 4,
+            energy_per_progress_tick: 10,
+        ),
+        expedition_project: (
+            hull_material_commitment: [
+                (resource: "core:energy", quantity: 40),
+                (resource: "core:alloy", quantity: 6),
+            ],
+            founding_stocks: [
+                (resource: "core:energy", quantity: 10),
+                (resource: "core:ore", quantity: 10),
+                (resource: "core:alloy", quantity: 0),
+            ],
+            duration_ticks: 8,
+            energy_per_progress_tick: 10,
+        ),
+        probe_travel: (
+            maximum_jump_quanta: 1500,
+            speed_quanta_per_tick: 500,
+            energy_per_quantum: (numerator: 1, denominator: 200),
+        ),
+        expedition_travel: (
+            maximum_jump_quanta: 1000,
+            speed_quanta_per_tick: 250,
+            energy_per_quantum: (numerator: 1, denominator: 100),
+        ),
+        probe_reveal_radius_quanta: 1500,
+        communication_delay_per_quantum: (numerator: 1, denominator: 500),
+        resource_richness: [(
+            resource: "core:ore",
+            poor_minimum: 1,
+            poor_maximum: 199,
+            normal_minimum: 200,
+            normal_maximum: 499,
+            rich_minimum: 500,
+        )],
+    ),
+    generator: (
+        coordinate_quanta_per_map_unit: 100,
+        target_system_count: 128,
+        x_bounds: (minimum: -5000, maximum_exclusive: 5000),
+        y_bounds: (minimum: -5000, maximum_exclusive: 5000),
+        generated_z: 0,
+        cell_width_quanta: 500,
+        cell_height_quanta: 500,
+        noise_octaves: 4,
+        base_wavelength_quanta: 4000,
+        lacunarity: 2,
+        persistence: (numerator: 1, denominator: 2),
+        full_cell_jitter: true,
+        origin_system: (
+            strength_hundredths: (minimum: 100, mode: 100, maximum: 100),
+            body_count: (minimum: 4, mode: 4, maximum: 12),
+            eccentricity_hundredths: (minimum: 100, mode: 100, maximum: 100),
+            slots_per_body: (minimum: 3, mode: 3, maximum: 8),
+        ),
+        frontier_system: (
+            strength_hundredths: (minimum: 10, mode: 100, maximum: 300),
+            body_count: (minimum: 1, mode: 4, maximum: 12),
+            eccentricity_hundredths: (minimum: 0, mode: 100, maximum: 150),
+            slots_per_body: (minimum: 1, mode: 3, maximum: 8),
+        ),
+        resources: [(
+            resource: "core:ore",
+            origin: (
+                resource_bearing_body_count: (minimum: 1, mode: 2, maximum: 4),
+                quantity_per_body: (minimum: 200, mode: 300, maximum: 500),
+            ),
+            frontier: (
+                presence_basis_points: 6500,
+                resource_bearing_body_count: (minimum: 1, mode: 1, maximum: 4),
+                quantity_per_body: (minimum: 50, mode: 200, maximum: 500),
+            ),
+        )],
+    ),
+)

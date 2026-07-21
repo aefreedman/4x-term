@@ -25,10 +25,11 @@ Every generated system also has persistent runtime state keyed to that map
 definition. Runtime state owns remaining body-resource quantities, available
 stocks, developments, construction and Shipyard queues, committed projects,
 completed assets, reservations, accounting, founded/control state, and any
-system-owned simulation state. Neutral systems begin without stocks,
-developments, projects, ships, or population, but their generated remaining
-resource quantities still live in runtime state rather than in the map
-definition.
+system-owned simulation state. Revision-1 generated neutral systems begin
+without stocks, developments, projects, ships, or population, but their generated
+remaining resource quantities still live in runtime state rather than in the map
+definition. This is a generated-start property, not a universal restriction on
+coherent authored Tier 1 scenarios.
 
 The world owns gameplay tuning shared by all systems. A neutral system does not
 carry an optional private copy of recipes, capacities, upkeep, seasonal curves,
