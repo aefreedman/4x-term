@@ -124,11 +124,14 @@ engine. It intentionally does not add population arrival/change,
 scouting/outward commands, map generation, or playable startup. The standalone
 reclaimable-site substrate remains unchanged.
 
-Stage 4b will derive structural G18 requirements from implemented gameplay, add
-constructive generated topology/frontier placement, record complete generation
-identity/provenance, and implement one approved bounded outward action. It must
-construct mandatory records before optional texture and never reject, reroll, or
-screen worlds for economic quality.
+The approved Stage 4b plan replaces explicit topology/deposits with fixed-point
+procedural positions, geometric ship routes, and body-owned resources; records
+complete generation identity/provenance; and adds Habitats, Shipyards, probes,
+expeditions, Habitat-backed population, founding, and delayed origin knowledge.
+Only the origin has a constructive structural guarantee. Frontier count,
+connectivity, reachability, and qualitative outcomes are not acceptance oracles;
+tests verify generator and gameplay mechanics rather than playing generated
+worlds.
 
 Stage 5 may introduce a new application/session, CLI, and terminal rendering
 adapter around the headless core. If added, those are future adapters: terminal
@@ -139,9 +142,9 @@ workspace. The retained
 record useful prototype patterns and removed dependencies for consideration,
 not compatibility requirements.
 
-Later work may add persistence, population arrival/change, deeper outward
-actions, reclamation, community dynamics, and player-owned logistics only when
-their concrete contracts exist.
+Later work may add persistence, deeper expedition/reclamation behavior,
+community cultural influence/delegation, automated freight, and broader
+player-owned logistics only when their concrete contracts exist.
 The retired trader/market prototype is not a compatibility target. Delete
 obsolete code and content rather than preserving adapters, shells, or archives;
 Git history is the recovery path.

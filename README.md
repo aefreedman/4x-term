@@ -17,7 +17,8 @@ slots, and FIFO construction with exact accounting. `game-content` compiles
 strict Stage 3 or Stage 4 RON sources into normalized definitions with
 source-aware aggregated diagnostics.
 
-See [docs/architecture.md](docs/architecture.md) for the current boundaries.
+See [docs/architecture.md](docs/architecture.md) for the current boundaries and
+the [Game Design Wiki](docs/design/README.md) for durable gameplay contracts.
 The [Governance Sandbox](docs/2026-07-20-design-direction-governance-sandbox.md),
 [Testing Stance](docs/2026-07-20-testing-stance-correction.md), and
 [Engine Invariant Registry](docs/2026-07-20-engine-invariant-registry.md) define
