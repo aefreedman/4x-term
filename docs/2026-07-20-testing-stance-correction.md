@@ -248,18 +248,21 @@ bootstrap.
 
 ### Stage 4b — Implement constructive frontier and bounded expansion
 
-- Derive the exact structural G18 origin/neighborhood catalog from completed
-  Stage 4 gameplay and one approved bounded outward action.
-- Generate mandatory origin and neighborhood records before unconstrained
-  optional frontier texture; do not reject, reroll, or screen economic quality.
-- Validate generator parameters and output with source provenance.
-- Record complete generation identity: generator version, seed, validated
-  configuration fingerprint, and provenance. Full event-log replay remains
-  Stage 6.
-- Implement one approved bounded outward/scouting action. Deeper expeditions,
-  reclamation, population change, daughters, and logistics remain later work.
-- Assert only named engine invariants and approved structural G18 guarantees;
-  seed corpora are regression coverage, not statistical viability proof.
+- Construct the approved origin-only G18 scaffold, then generate unconstrained
+  frontier systems from explicit profiles. Target count, connectivity,
+  reachability, quantities, and distributions are not generated-world quality
+  oracles.
+- Validate generator parameters/output with provenance and record generator
+  family/revision, seed, normalized profile fingerprint, and complete generated
+  definition. Full event-log replay remains Stage 6.
+- Replace explicit edges and standalone deposits with fixed-point procedural
+  positions, geometric ship routes, and body-owned resource quantities.
+- Implement Habitat population generation, Shipyards, probes, delayed origin
+  knowledge, one-population expedition ships, and bounded founding with exact
+  physical accounting.
+- Test short authored mechanics, deterministic generator identity, ranges,
+  references, and named invariants. Do not play generated worlds, require the
+  target count exactly, or classify seed quality statistically.
 
 Later world axes should have explicit extension and versioning rules rather
 than an unsupported promise that all additions preserve old seed output.
@@ -318,10 +321,10 @@ compatibility target for new work.
 ### Stage 8 — Hand off to expansion-gameplay slices
 
 After the world and testing foundations are truthful, carve separate plans
-for deeper scouting layers, crewed expeditions, resource ruins, site
-reclamation, population arrival/change, daughter communities, delegated
-logistics, specialists, and delayed information. Stage 4b may implement only
-its approved bounded first outward action. Later plans derive from G7–G16 and
+for deeper scouting/expedition layers, resource ruins, site reclamation,
+cultural influence and delegation, automated freight/logistics, specialists,
+and richer delayed information. Stage 4b implements only its approved Habitat,
+probe, one-population founding, and origin-recipient information contracts. Later plans derive from G7–G16 and
 the open questions in the governance sandbox; they are not bundled into the
 origin-engine or constructive-generator slices.
 
@@ -348,7 +351,7 @@ origin-engine or constructive-generator slices.
 
 This transition is complete when:
 
-- normal startup represents one persistent origin seat/community record in a generated dead frontier, with population arrival/change owned by its later gameplay stage;
+- normal startup represents one persistent origin seat/community in a generated dead frontier and uses the approved Habitat-backed population/founding model;
 - approved G18 structural guarantees are constructive and exactly validated;
 - mechanism tests use small authored fixtures;
 - generated-world gates assert only named, applicable invariants;

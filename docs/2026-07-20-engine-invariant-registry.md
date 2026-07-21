@@ -190,31 +190,34 @@ population shape, or one repository universe as an oracle.
 ### G18-ORIGIN-STRUCTURE — Constructed origin prerequisites
 
 - **Status:** reserved for Stage 4b.
-- **Undefined here:** Exact mandatory origin records, references, placement
-  relationships, and generator identity derived from completed Stage 4 gameplay.
+- **Planned contract:** Stage 4b constructs the approved origin scaffold exactly:
+  strength/eccentricity `1.0`, `4..=12` bodies, `3..=8` slots per body,
+  mandatory naturally deposit-bearing resources, one first-body/first-slot
+  Collector, no other starting development, and approved starting stocks.
 - **Excluded oracles:** Economic solvency, seasonal surplus, affordability,
   tick-zero action availability, long-run survival, and favorable quantities.
 - **No current test may claim this guarantee.** The authored Stage 4 bootstrap
   fixture is mechanism evidence, not a universal generator floor.
 
-### G18-NEIGHBORHOOD-STRUCTURE — Constructed nearby expansion prerequisites
+### G18-NEIGHBORHOOD-STRUCTURE — No Stage 4b neighborhood guarantee
 
-- **Status:** reserved for Stage 4b.
-- **Undefined here:** The first bounded outward action, required nearby element
-  kinds, scopes, references, topology relationships, and whether the unchanged
-  standalone site record is structurally required.
-- **Excluded oracles:** Resource quantity or affordability floors, favorable
-  distribution, and a mandatory reclaimable site unsupported by gameplay.
-- **No current test may claim this guarantee.** Authored exporter/importer roles
-  and nearest-three market routes are not substitutes.
+- **Status:** not adopted for Stage 4b.
+- **Decision:** The procedural frontier has no mandatory nearby witness,
+  connectivity, reachability, target count, resource floor, favorable
+  distribution, or reclaimable site. Scouting/founding mechanics use focused
+  authored fixtures instead of requiring a generated seed to support them.
+- **Bug boundary:** A frontier outcome is a defect only when generation violates
+  configuration, identity, references, arithmetic, or another named invariant;
+  qualitative difficulty or inaccessible texture is not a test failure.
 
 ### INV-GENERATION-IDENTITY-001 — Complete generation identity
 
 - **Status:** reserved for Stage 4b.
-- **Undefined here:** Generator version, seed representation, validated
-  configuration fingerprint, source provenance, stable generated identity, and
-  compatibility rules for reproducing generated output.
-- **A seed alone is not a complete generation identity.**
+- **Planned contract:** Reproduction identity is generator family/revision
+  (`core:frontier_world@1` initially), unsigned 64-bit seed, and SHA-256 of the
+  normalized profile. Provenance and normalized output accompany it. Equal
+  identity produces equal normalized definitions; algorithm changes increment
+  revision. A seed alone is not complete identity.
 
 ### INV-REPLAY-001 — Complete runtime replay identity
 
@@ -241,7 +244,7 @@ removed market, trader, fleet, or commercial-contract test is current evidence.
 | Stage 3/4 RON validation | Active invariant/Tier 1 | Exact aggregated semantic diagnostics, strict nested fields, and parse provenance under INV-VALIDATE-001. |
 | Authored origin resource engine | Tier 1 mechanism evidence | Exact 20-tick bootstrap, shortages, conditions, production cycles, construction FIFO/reservations/cancellation, overflow, and deterministic role/body/slot ordering. |
 | Automated logistics | Reserved | No current mechanism or evidence; future player-owned automation must define a new applicable contract. |
-| G18 origin/neighborhood structural guarantees | Reserved | Stage 4b owns exact mandatory records and placement/relationship oracles; economic inequalities are excluded. |
+| G18 origin structural guarantee | Reserved | Stage 4b owns the exact approved origin scaffold; there is no neighborhood/frontier quality guarantee. |
 | Generated-world identity | Reserved | Stage 4b owns complete generation identity; Stage 6 owns full runtime event-log replay. |
 | Market/trader/fleet/pricing/population/legacy acceptance | Removed obsolete surface | No legacy test is retained as current invariant evidence. |
 

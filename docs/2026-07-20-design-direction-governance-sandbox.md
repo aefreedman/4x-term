@@ -57,9 +57,10 @@ collapsed. Consequences:
 - **G2. Metastability bar relaxed**: the world must be *possible*, not
   provably stable. Local collapse is permitted, expected, and is content
   (future reclamation sites), not a bug.
-- **G3. eXpand = reclamation** of broken/abandoned places. Phase (a):
-  worldgen-scattered ruins only. Phase (c), later: the live simulation also
-  produces ruins.
+- **G3. eXpand begins with founding and later adds reclamation.** Stage 4b
+  implements bounded one-population founding in generated empty systems.
+  Reclamation of broken/abandoned places and live ruin production remain later
+  expansion layers.
 - **G4. eXterminate deferred** to an environmental conflict engine
   (ecological disaster, disease). Seed for later: hazards should travel
   along the same routes trade does.
@@ -83,10 +84,13 @@ collapsed. Consequences:
   is committed at worldgen seed time; uncertainty lives only in the
   player's information state. The simulation stays deterministic
   end-to-end.
-- **G9. Scouting is layered**: chart → flyby → deep survey → ground truth,
-  each layer costing margin. Surveys yield estimates with error bars, never
-  paywalled truth. Failure should be player-authored ("went in
-  under-scouted"), not dice-authored.
+- **G9. Scouting information is layered.** Stage 4b uses anonymous existence,
+  identified summary, and complete probe/ship observation. Probes can be
+  constrained to expedition jump paths; an unprobed summary target may be
+  founded without slot reservation and can fail deterministically if no landing
+  capacity remains. Additional flyby/deep-survey/error-bar layers may be added
+  later; truth is never permanently paywalled and failure is player-authored,
+  not dice-authored.
 - **G10. Two-channel information model: comms + ships.**
   - **Comms (light-speed): fast, thin, continuous.** Systems broadcast a
     summary layer (stocks, population, alerts, prices) received at a
@@ -147,22 +151,21 @@ collapsed. Consequences:
 - **G17. The world starts dead except for the player.** One persistent origin
   seat/community record starts at population zero and may bootstrap before
   population arrives; everything else is ruins, resources, and empty geography
-  from the precursor collapse. Living neighbors are outputs of play (daughters
-  via reclamation), never worldgen guarantees. Independent NPC communities
+  from the precursor collapse. Living neighbors are outputs of Habitat-backed
+  founding and later reclamation, never worldgen guarantees. Independent NPC communities
   are deferred entirely, possibly forever. Ships trading between living
   systems are the player community's own logistics (a delegation/fleet
   mechanic), not an ecology of independent agents.
-- **G18. Worldgen viability is constructive, structural, and not
-  statistical.** Stage 4b derives exact mandatory origin and neighborhood
-  records from implemented gameplay and places them before optional texture.
-  These guarantees establish required presence and relationships; they do not
-  assert per-seed economic solvency, worst-season surplus, tick-zero access to
-  bank/expand/develop, affordability or resource-quantity floors, long-run
-  survival, a favorable distribution, or a mandatory reclaimable site unless a
-  later implemented action proves that site structurally necessary. Everything
-  beyond approved witnesses is don't-care frontier. Distant non-viability is
-  expected texture and future expansion/reclamation content. No reject/reroll,
-  viability screening, or statistical acceptance criteria over seed batches.
+- **G18. Worldgen construction is structural and tests are not gameplay
+  judges.** Stage 4b constructs only the approved origin scaffold before
+  procedural frontier texture. It does not guarantee a neighborhood witness,
+  connectivity, reachability, target system count, affordability, resource-
+  quantity floor, survival, favorable distribution, or reclaimable site.
+  Generated-world tests verify deterministic mechanics, identity, references,
+  ranges, arithmetic, and the origin scaffold; they do not play worlds, reject
+  seeds for qualitative outcomes, or apply statistical desirability thresholds.
+  Difficult, disconnected, sparse, or non-viable frontier outcomes are texture
+  unless a named engine invariant is violated.
 - **G19. The former Slice 2 direction is obsolete.** Surviving ideas are re-derived
   from this
   document rather than inherited: the brownout ladder (now the *player's*
@@ -212,9 +215,10 @@ collapsed. Consequences:
   for the full direction):
   1. **Authored micro-fixtures** (3–6 systems, hand-computable outcomes)
      test mechanisms exactly.
-  2. **Generated worlds** begin in Stage 4b and test only (a) named applicable
-     engine invariants and (b) approved structural G18 placement/relationship
-     guarantees as exact per-seed assertions.
+  2. **Generated worlds** begin in Stage 4b and test only named applicable
+     engine invariants, deterministic generator identity/mechanics, and the
+     approved origin scaffold. Target count and frontier quality are not exact
+     per-seed assertions.
 - No statistical acceptance criteria over seed batches. Distribution
   shape, frontier life/death rates, and emergent texture are *descriptive*
   diagnostics for tuning worldgen feel, never pass/fail.
@@ -224,8 +228,8 @@ collapsed. Consequences:
 - Expeditions, surveys, training, and reclamation are all discrete,
   deterministic, fixture-testable events by construction (G7, G8).
 - Local collapse anywhere is expected and permitted (G2); only applicable
-  engine-invariant violations and approved Stage 4b structural G18 failures are
-  bugs.
+  engine-invariant violations, generator-mechanic defects, and failure to build
+  the approved origin scaffold are bugs.
 
 ## Open directions (converging; need specs in future slices)
 

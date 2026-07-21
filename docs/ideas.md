@@ -50,19 +50,65 @@ A later feature could allow partial upkeep, partial recipe consumption, or propo
 - how partial operation interacts with priority, shortages, and automatic curtailment; and
 - a Tier 1 scenario where partial operation creates a meaningful choice rather than obscuring resource accounting.
 
-## Extractor expansion, upgrades, and stacking
+## Extractor upgrades and specialization
 
-Stage 4 permits at most one queued or installed Extractor assignment per deposit. Extractor throughput is therefore fixed by that development’s approved recipe rather than increased by placing additional Extractors on the same deposit.
+Stage 4b plans to replace standalone deposits with body-owned resource totals and
+allow multiple same-body Extractors to draw from one total in stable slot order.
+That stacking behavior is therefore no longer deferred here.
 
-A later feature could expand extraction through:
+A later feature could further expand extraction through:
 
 - upgrading an existing Extractor;
 - development states or tiers with greater throughput or efficiency;
-- adding specialized slots or attached facilities;
-- allowing multiple Extractors to share one sufficiently large deposit; or
-- logistical investments that increase effective extraction without another mine.
+- adding specialized slots or attached facilities; or
+- logistical investments that increase effective extraction without another
+  mine.
 
-Before implementation, define construction and replacement semantics, throughput and upkeep scaling, deposit contention, slot usage, deterministic ordering, and a Tier 1 scenario where expansion creates a meaningful investment choice.
+Before implementation, define construction and replacement semantics,
+throughput and upkeep scaling, slot usage, deterministic ordering, and a Tier 1
+scenario where upgrades create a meaningful investment choice.
+
+## Three-dimensional frontier positions
+
+Stage 4b generates the frontier in two dimensions with `z = 0` while retaining
+the existing three-coordinate position type.
+
+A later feature could generate systems throughout a true three-dimensional
+volume if vertical separation creates enough strategic value to justify its
+presentation and navigation costs. Before implementation, define:
+
+- what decisions the third axis adds beyond additional geometric distance;
+- map projection, overlap handling, depth cues, slicing, and route presentation;
+- volume dimensions relative to system count, noise scale, and ship jump ranges;
+- deterministic 3D density sampling and minimum-separation behavior;
+- checked squared-distance bounds; and
+- focused route and projection scenarios without treating connectivity or visual
+  preference as generated-world quality gates.
+
+## Cultural influence and coherent management
+
+Stage 4b keeps the origin as the sole information recipient and treats remote
+inhabited systems as parts of one player-directed community for now.
+
+A later cultural-influence mechanic could determine the distance over which the
+origin community can manage itself as one coherent community. Beyond that
+influence, remote communities might require delegation, gain local priorities,
+or gradually become distinct political entities without becoming adversarial
+NPC factions by default.
+
+Before implementation, define:
+
+- whether influence is measured by geometric distance, travel time,
+  communication delay, network hops, or several factors;
+- how Habitats, population, institutions, communication infrastructure, and
+  cultural investment extend or resist influence;
+- which commands, policies, information, and resource commitments remain under
+  direct origin control at each influence level;
+- how remote community identity forms and whether transitions are gradual or
+  threshold-based;
+- how this interacts with delayed observations and delegation-by-distance; and
+- short deterministic scenarios that test authority mechanics without judging a
+  generated world's political quality.
 
 ## Multiple production chains
 
