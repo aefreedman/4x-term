@@ -86,6 +86,11 @@ The workspace contains only `game-core` and `game-content`.
 12. Construction begins from a selected empty body slot.
 13. Energy receives a dedicated information render rather than being shown
     only as one row in the general stock list.
+14. The overall TUI design sensibility draws from *Caves of Qud* first and
+    *Dwarf Fortress* second. Use them as references for atmosphere,
+    information density, keyboard-first inspectability, map-and-panel
+    composition, and systemic legibility—not as layouts, terminology,
+    keybindings, color palettes, or widgets to copy literally.
 
 ## Target architecture
 
@@ -156,18 +161,23 @@ concrete need for Tokio, channels, background tasks, or a wall clock.
 
 ## Preparation phase — Slice 5a UI design lock
 
-Complete and review the human-interaction contract before implementation agents
-choose crate APIs, Ratatui widgets, or input handlers. Markdown and exact-cell
-ASCII wireframes are sufficient; this phase should not build a throwaway TUI or
-make a generated seed into a gameplay acceptance target.
+Complete and review the minimum human-interaction foundation before
+implementation agents choose crate APIs, Ratatui widgets, or input handlers.
+The goal is not to pre-design every screen. Approve critical reference screens,
+a reusable UI design system, and an element classification that lets later
+screens be composed consistently without requiring agents to invent a new
+visual language.
 
-Store the approved design artifacts under `docs/design/` and link them from this
-plan. The artifacts may be separate documents or one reviewed Slice 5a TUI
-specification, but together they must cover the following contracts.
+Markdown and exact-cell ASCII wireframes are sufficient; this phase should not
+build a throwaway TUI or make a generated seed into a gameplay acceptance
+target. Store the approved design artifacts under `docs/design/` and link them
+from this plan. The artifacts may be separate documents or one reviewed Slice
+5a TUI specification, but together they must cover the following contracts.
 
-### Screen and navigation map
+### Surface inventory and navigation map
 
-Define every Slice 5a screen, panel, overlay, and transition, including:
+Inventory the required Slice 5a surfaces and their transitions without fully
+designing each one:
 
 - profile/seed selection;
 - content or generation failure;
@@ -181,19 +191,62 @@ Define every Slice 5a screen, panel, overlay, and transition, including:
 - contextual help; and
 - below-minimum terminal-size behavior.
 
-For each state, record its entry/exit paths, default focus, selectable elements,
-available actions, and whether it replaces the screen or overlays it.
+For each surface, record its entry/exit path, default focus, available actions,
+and classification as a full-screen shell, standard panel composition, overlay,
+confirmation, message, or safety state. Detailed dimensions and widget choices
+are required only for critical reference screens or where the design system
+cannot determine the answer.
 
-### Exact `160x45` wireframes
+### UI design system and element classification
 
-Create reviewed cell-based wireframes for every primary screen and command flow.
-The main-play wireframe must include a synchronized knowledge-filtered frontier
-map and system list plus a dedicated Energy information render. Include
-representative edge states: long labels and IDs, large quantities, empty and
-overflowing lists, no available action, a correctable rejection, and
-source-aware startup errors. Record panel dimensions, scrolling, truncation,
-and overflow indicators. Color is optional in the wireframes and cannot be the
-only semantic cue.
+Begin with a short reviewed reference-sensibility note. *Caves of Qud* is the
+primary reference: favor a strong map-centered composition, compact but
+readable side information, evocative terminal texture, clear focus, and
+keyboard-first contextual interaction. *Dwarf Fortress* is the secondary
+reference for dense systemic information, inspectability, and the ability to
+drill from an overview into exact state. Preserve this project's accessibility
+and architecture constraints: meaning cannot depend on color, dense data must
+retain hierarchy, and presentation must not leak hidden simulation state.
+Record which principles are being adopted and which tempting reference patterns
+are intentionally rejected. Do not require implementation agents to infer the
+reference games' design from memory.
+
+Define a small reusable terminal design system for the `160x45` canvas. It must
+cover:
+
+- screen shell, title/status regions, panel grid, spacing, borders, and focus;
+- list, table, detail, metric, resource, progress, form-field, action,
+  key-hint, message, and map elements;
+- overlays, confirmations, errors, warnings, disabled states, empty states, and
+  below-minimum safety presentation;
+- default, focused, selected, pending, accepted, rejected, and unavailable
+  variants where applicable;
+- truncation, scrolling, selected-row viewport, and overflow indicators; and
+- semantic text markers so color is never the only carrier of meaning.
+
+Create a classification matrix mapping every inventoried Slice 5a element to a
+design-system component and variant. An implementation agent may compose an
+unwireframed surface from approved components, but must not create a new
+component, state language, or navigation pattern without recording the gap for
+review.
+
+### Critical `160x45` reference wireframes
+
+Create reviewed exact-cell wireframes only for the screens that establish the
+system's composition and highest-risk interactions:
+
+1. startup/profile/seed entry and generated-world preview;
+2. the main-play dashboard with synchronized knowledge-filtered frontier map
+   and system list, selected-system detail, and dedicated Energy render;
+3. slot-initiated construction through role/Extractor-target confirmation,
+   including a correctable rejection; and
+4. manual multi-tick advancement with intermediate changes and interruption.
+
+Use these reference screens to prove the design system against representative
+edge states such as long labels, large quantities, empty and overflowing lists,
+no available action, and source-aware errors. Other Slice 5a surfaces may use
+component-level examples and classification rather than bespoke full-screen
+wireframes.
 
 ### Interaction grammar
 
@@ -245,10 +298,10 @@ rejection retains the player's draft and selection.
 ### Application-view and intent contract
 
 List the exact presentation data and typed intents required by the approved
-screens. The contract must identify which layer resolves labels, costs,
-availability, and limiting reasons, and must prove that the TUI neither reads
-hidden runtime state nor duplicates simulation rules. Add only fields used by
-an approved Slice 5a screen or action.
+critical screens and classified elements. The contract must identify which
+layer resolves labels, costs, availability, and limiting reasons, and must prove
+that the TUI neither reads hidden runtime state nor duplicates simulation rules.
+Add only fields used by an approved Slice 5a screen, component, or action.
 
 ### UX acceptance walkthroughs
 
@@ -260,8 +313,11 @@ seeds only to verify identity and deterministic presentation, not world quality.
 
 ### Design-lock checklist
 
-- [ ] Approve the screen and navigation map.
-- [ ] Approve primary and edge-state `160x45` wireframes.
+- [ ] Approve the surface inventory and navigation map.
+- [ ] Approve the *Caves of Qud*/*Dwarf Fortress* reference-sensibility note.
+- [ ] Approve the UI design system and element classification matrix.
+- [ ] Approve the critical `160x45` reference wireframes and component edge
+      states.
 - [ ] Approve keybindings and input precedence.
 - [ ] Approve information hierarchy and formatting rules.
 - [ ] Approve command-flow state machines.
@@ -272,7 +328,10 @@ seeds only to verify identity and deterministic presentation, not world quality.
 
 Slice 5a implementation should not begin until this checklist is complete or a
 specific unchecked item is explicitly accepted as implementation-owned rather
-than product-design-owned.
+than product-design-owned. Implementation agents may make local composition
+choices for classified elements within the approved design system; unresolved
+product behavior, new component types, and new interaction patterns require
+review.
 
 ## Slice 5a — Generated-world preview and minimal playable TUI
 
