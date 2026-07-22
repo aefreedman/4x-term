@@ -127,3 +127,85 @@ A later feature could add multiple raw resources, intermediate products, refined
 Current recipes use minimal differentiation to avoid a bootstrap cycle: the first Refinery is constructed from Energy and Ore, while Collectors, Batteries, and Extractors use Energy and Alloy. All recipes remain within the single Ore → Alloy chain.
 
 As the resource catalog expands, later development kinds could require broader combinations of raw, refined, intermediate, or tertiary goods. Recipe differentiation should be designed together with multiple production chains so each material requirement traces to a concrete strategic responsibility. Before implementation, define supply paths, substitution rules if any, construction commitment accounting, frontier availability responsibilities, and Tier 1 scenarios demonstrating meaningful specialization rather than arbitrary recipe complexity.
+
+## Deeper scouting layers
+
+Current scouting distinguishes anonymous systems, identified summaries, and complete probe or ship observations.
+
+A later feature could add intermediate information layers such as flyby observations, deep surveys, uncertainty ranges, and preliminary ruin classifications. Hidden truth should remain deterministic and committed by world generation; uncertainty belongs to the player's information state rather than random resolution at inspection time.
+
+Before implementation, define:
+
+- the facts and uncertainty represented by each information layer;
+- which probes, ships, specialists, or mission actions produce each layer;
+- how newer evidence merges with stale or incomplete observations;
+- how the TUI distinguishes estimated, classified, and confirmed facts;
+- whether incomplete scouting can constrain expedition planning without permanently paywalling truth; and
+- deterministic Tier 1 scenarios for evidence acquisition and knowledge transitions.
+
+## Richer expeditions
+
+Current expeditions provide the bounded founding action needed for expansion. A later feature could make expeditions broader physical commitments: laden convoys carrying people, specialists, supplies, equipment, or reclamation payloads through normal ship travel.
+
+Before implementation, define:
+
+- mission types and their required payloads;
+- loading, reservation, launch, diversion, abort, and recovery semantics;
+- which outcomes follow deterministically from destination truth and player preparation;
+- how ship, cargo, and population loss is represented and reported;
+- how scouting quality affects available plans without turning outcomes into dice rolls; and
+- Tier 1 scenarios for successful arrival, authored risk, loss, and recovery.
+
+## Resource ruins
+
+A later feature could place precursor resource ruins in the frontier as finite deposits that expeditions can identify and strip. They would provide lower-commitment targets than permanent settlement while exercising scouting, payload planning, and return logistics.
+
+Before implementation, define:
+
+- the world-generated truth and player-visible evidence for each ruin;
+- resource kinds, quantities, depletion, and extraction requirements;
+- whether recovery needs developments, specialist capabilities, or only expedition equipment;
+- how recovered material is carried, lost, and deposited;
+- whether ruins can contain people or other non-resource discoveries; and
+- deterministic scenarios for discovery, partial recovery, depletion, and failed retrieval.
+
+## Site ruins and reclamation
+
+A later feature could add precursor sites that can be reclaimed into functional developments or outposts. Reclamation should be a state transition for a damaged or ruined development, not a separate parallel infrastructure model.
+
+Before implementation, define:
+
+- damaged, ruined, reclaimable, and functional states;
+- scouting evidence needed to distinguish a site ruin from a resource ruin;
+- compatible bodies, slots, development kinds, and reclamation outcomes;
+- required people, specialists, materials, Energy, equipment, and time;
+- authority, ownership, abandonment, repeat-attempt, and failure semantics;
+- how reclamation can found or reinforce a remote community; and
+- Tier 1 scenarios for identification, commitment, success, loss, and state transition.
+
+## Specialists
+
+A later feature could make specialization a persistent state on population rather than introducing specialist resource counters. Pops could lock into roles that enable advanced surveys, expeditions, reclamation, or infrastructure operation, with their life-support and capacity requirements continuing to travel with them.
+
+Before implementation, define:
+
+- specialization types and the concrete decisions each enables;
+- training inputs, duration, location, and any tertiary-goods requirements;
+- whether specialization locks are permanent, reversible, or replaceable at a cost;
+- assignment, travel, capacity, upkeep, injury, and loss semantics;
+- how specialist capability is presented without exposing hidden destination truth; and
+- Tier 1 scenarios for training, assignment, movement, capability use, and loss.
+
+## Richer delayed information
+
+Current reports establish deterministic distance-based delay and observation timestamps. A later feature could expand this into two complementary information channels: fast, thin periodic communications and slow, detailed observations carried by ships.
+
+Before implementation, define:
+
+- which summaries, alerts, stocks, policies, and requests travel through communications;
+- which surveys, samples, detailed state, people, goods, or authority require physical transport;
+- broadcast cadence, delay calculation, observation timestamps, and merge rules;
+- how contradictory or differently aged observations are retained and presented;
+- TUI treatment for freshness, missing detail, distress calls, and responses already in transit;
+- how delayed information interacts with remote delegation and cultural influence; and
+- deterministic scenarios for stale summaries, ship-delivered updates, and delayed responses.

@@ -341,15 +341,18 @@ remain; it is not a holding area for deferred demolition.
 This stage is complete only when obsolete gameplay is no longer the hidden
 compatibility target for new work.
 
-### Stage 8 — Hand off to expansion-gameplay slices
+### Stage 8 — Hand off expansion-gameplay ideas
 
-After the world and testing foundations are truthful, carve separate plans for
-deeper scouting/expedition layers, resource ruins, site reclamation, cultural
-influence and delegation, automated freight/logistics, specialists, and richer
-delayed information. Stage 4b implements only its approved Habitat, probe,
-one-population founding, and origin-recipient information contracts. Later
-plans derive from G7–G16 and the open questions in the governance sandbox; they
-are not bundled into the origin-engine or constructive-generator slices.
+**Status:** completed. The future directions for deeper scouting and
+expeditions, resource ruins, site reclamation, cultural influence and
+delegation, specialists, richer delayed information, and expanded production
+chains are recorded in [Future Feature Ideas](../ideas.md). Automated
+freight/logistics was deliberately not carried forward in this handoff.
+
+These ideas are not implementation contracts. Each requires an approved design
+and focused implementation plan before development. Stage 4b remains limited to
+its approved Habitat, probe, one-population founding, and origin-recipient
+information contracts.
 
 ## Cross-stage constraints
 

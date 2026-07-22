@@ -531,9 +531,10 @@ Validation:
   playable/headless startup without trader compatibility.
 - **Stage 7:** independently verify that no unjustified market-network surface
   or compatibility copy remains.
-- **Stage 8/content slices:** define resource chains, community dynamics,
-  scouting, expeditions, reclamation, daughter communities, specialists, and
-  delegated logistics from current G-decisions.
+- **Stage 8/future ideas:** completed by recording resource chains, community
+  dynamics, scouting, expeditions, reclamation, daughter communities,
+  specialists, and delayed information in `docs/ideas.md`; automated freight
+  and delegated logistics were deliberately not carried forward.
 
 ## References & Research
 
