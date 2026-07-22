@@ -7,7 +7,7 @@ use crate::state::{
 use components::{panel, selected_line, truncate_cells, unavailable};
 use game_app::{
     ActionAvailability, AssetKindView, DevelopmentCondition, DevelopmentRole, KnownFactView,
-    MissionView, PreviewStatus, RouteView, SlotCoordinate,
+    MapVisualAssignment, MapVisualFamily, MissionView, PreviewStatus, RouteView, SlotCoordinate,
 };
 use ratatui::{
     Frame,
@@ -230,7 +230,6 @@ fn render_startup(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         frame.render_widget(
             Paragraph::new(preview_fog_map(
                 &generated.frontier_fog,
-                generated.seed,
                 map_width,
                 map_height,
             ))
@@ -249,7 +248,6 @@ fn render_startup(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
 
 fn preview_fog_map(
     fog: &[game_app::MapTexturePoint],
-    seed: u64,
     width: usize,
     height: usize,
 ) -> Vec<Line<'static>> {
@@ -261,7 +259,7 @@ fn preview_fog_map(
             &mut grid,
             center_x + point.coordinate.x,
             center_y - point.coordinate.y,
-            assignment_hash(seed, point.visual_key),
+            point.visual,
             false,
         );
     }
@@ -277,36 +275,6 @@ fn preview_fog_map(
             )
         })
         .collect()
-}
-
-fn stable_hash(value: &str) -> u64 {
-    value.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3)
-    })
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SystemVisual {
-    Plain,
-    Irregular,
-    Interference,
-    Directional,
-    Compact,
-}
-
-fn visual_assignment(hash: u64) -> (SystemVisual, u8) {
-    let visual = match hash % 5 {
-        0 => SystemVisual::Plain,
-        1 => SystemVisual::Irregular,
-        2 => SystemVisual::Interference,
-        3 => SystemVisual::Directional,
-        _ => SystemVisual::Compact,
-    };
-    (visual, ((hash / 5) % 12) as u8)
-}
-
-fn assignment_hash(seed: u64, visual_key: u64) -> u64 {
-    stable_hash(&format!("{seed}:{visual_key}"))
 }
 
 fn transformed(dx: isize, dy: isize, variant: u8) -> (isize, isize) {
@@ -352,7 +320,7 @@ fn place_system_visual(
     grid: &mut [Vec<(&'static str, Color)>],
     center_x: i64,
     center_y: i64,
-    hash: u64,
+    assignment: MapVisualAssignment,
     selected: bool,
 ) {
     const A: &[(isize, isize, &str)] = &[
@@ -460,13 +428,12 @@ fn place_system_visual(
         (0, 2, "▒"),
         (1, 2, "░"),
     ];
-    let (visual, variant) = visual_assignment(hash);
-    let cells = match visual {
-        SystemVisual::Plain => &[(0, 0, "*")][..],
-        SystemVisual::Irregular => A,
-        SystemVisual::Interference => C,
-        SystemVisual::Directional => D,
-        SystemVisual::Compact => E,
+    let cells = match assignment.family {
+        MapVisualFamily::Plain => &[(0, 0, "*")][..],
+        MapVisualFamily::Irregular => A,
+        MapVisualFamily::Interference => C,
+        MapVisualFamily::Directional => D,
+        MapVisualFamily::Compact => E,
     };
     let color = if selected {
         Color::White
@@ -476,7 +443,7 @@ fn place_system_visual(
     let height = i64::try_from(grid.len()).unwrap_or(0);
     let width = i64::try_from(grid.first().map_or(0, Vec::len)).unwrap_or(0);
     for &(dx, dy, glyph) in cells {
-        let (dx, dy) = transformed(dx, dy, variant);
+        let (dx, dy) = transformed(dx, dy, assignment.variant);
         let x = center_x + dx as i64;
         let y = center_y + dy as i64;
         if x >= 0 && x < width && y >= 0 && y < height {
@@ -529,7 +496,7 @@ fn render_dashboard(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
             &mut grid,
             map_center_x + point.coordinate.x,
             map_center_y - point.coordinate.y,
-            assignment_hash(view.seed, point.visual_key),
+            point.visual,
             false,
         );
     }
@@ -538,7 +505,7 @@ fn render_dashboard(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
             &mut grid,
             map_center_x + system.visual_coordinate.x,
             map_center_y - system.visual_coordinate.y,
-            assignment_hash(view.seed, system.visual_key),
+            system.visual,
             selected_id == Some(&system.system_id),
         );
     }
@@ -1594,7 +1561,16 @@ mod tests {
     #[test]
     fn chart_marker_replaces_only_the_actual_position_inside_a_persistent_cloud() {
         let mut grid = vec![vec![(" ", Color::Reset); 21]; 21];
-        place_system_visual(&mut grid, 10, 10, 1, false);
+        place_system_visual(
+            &mut grid,
+            10,
+            10,
+            MapVisualAssignment {
+                family: MapVisualFamily::Irregular,
+                variant: 0,
+            },
+            false,
+        );
         let before = grid.clone();
 
         place_chart_marker(&mut grid, 10, 10, false);
@@ -1621,12 +1597,22 @@ mod tests {
 
     #[test]
     fn every_cloud_family_has_twelve_question_mark_free_variants() {
-        for family in 1_u64..=4 {
+        for family in [
+            MapVisualFamily::Irregular,
+            MapVisualFamily::Interference,
+            MapVisualFamily::Directional,
+            MapVisualFamily::Compact,
+        ] {
             let mut variants = HashSet::new();
-            for variant in 0_u64..12 {
-                let hash = family + 5 * variant;
+            for variant in 0..12 {
                 let mut grid = vec![vec![(" ", Color::Reset); 80]; 35];
-                place_system_visual(&mut grid, 40, 17, hash, false);
+                place_system_visual(
+                    &mut grid,
+                    40,
+                    17,
+                    MapVisualAssignment { family, variant },
+                    false,
+                );
                 let rendered = grid
                     .into_iter()
                     .flat_map(|row| row.into_iter().map(|cell| cell.0))
@@ -1636,7 +1622,6 @@ mod tests {
             }
             assert_eq!(variants.len(), 12);
         }
-        assert_eq!(visual_assignment(0).0, SystemVisual::Plain);
     }
 
     #[test]

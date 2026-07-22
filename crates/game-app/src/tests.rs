@@ -78,7 +78,7 @@ fn preview_is_allowlisted_stale_after_edit_and_exactly_consumed() {
     let preview_visuals = current
         .frontier_fog
         .iter()
-        .map(|point| (point.visual_key, point.coordinate))
+        .map(|point| (point.visual_key, (point.coordinate, point.visual)))
         .collect::<std::collections::BTreeMap<_, _>>();
     startup.request_start_current_preview().expect("request");
     let session = startup
@@ -92,14 +92,11 @@ fn preview_is_allowlisted_stale_after_edit_and_exactly_consumed() {
         "identified summaries are player knowledge"
     );
     assert!(playing.uncharted_indication_count > 0);
-    assert!(
-        playing
-            .frontier_fog
-            .iter()
-            .all(|point| { preview_visuals.get(&point.visual_key) == Some(&point.coordinate) })
-    );
+    assert!(playing.frontier_fog.iter().all(|point| {
+        preview_visuals.get(&point.visual_key) == Some(&(point.coordinate, point.visual))
+    }));
     assert!(playing.systems.iter().all(|system| {
-        preview_visuals.get(&system.visual_key) == Some(&system.visual_coordinate)
+        preview_visuals.get(&system.visual_key) == Some(&(system.visual_coordinate, system.visual))
     }));
     assert_eq!(
         playing.local_systems.len(),
@@ -110,7 +107,7 @@ fn preview_is_allowlisted_stale_after_edit_and_exactly_consumed() {
 }
 
 #[test]
-fn map_visual_pivots_stay_within_four_units_of_actual_positions() {
+fn map_visual_pivots_stay_within_four_units_and_plain_is_never_offset() {
     let actual = Position3::from_quanta(17, -9, 4);
     for seed in [0, 1, u64::MAX] {
         for visual_key in 0..128 {
@@ -118,8 +115,19 @@ fn map_visual_pivots_stay_within_four_units_of_actual_positions() {
             let dx = visual.x - actual.x.0;
             let dy = visual.y - actual.y.0;
             assert!(dx * dx + dy * dy <= 16, "offset ({dx}, {dy})");
+            if map_visual_assignment(seed, visual_key).family == MapVisualFamily::Plain {
+                assert_eq!((dx, dy), (0, 0));
+            }
         }
     }
+}
+
+#[test]
+fn origin_receives_the_same_seeded_visual_assignment_as_every_other_system() {
+    let families = (0..100)
+        .map(|seed| map_visual_assignment(seed, 0).family)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(families.len(), 5);
 }
 
 #[test]

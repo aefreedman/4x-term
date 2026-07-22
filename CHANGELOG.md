@@ -43,8 +43,9 @@
   systems open local management directly, active ships appear at their current
   map position as a simple `+`, and system uncertainty
   visuals are deterministically assigned from Plain plus twelve variants each
-  of Irregular, Interference, Directional, and Compact forms. Visual pivots
-  remain within four map units of their systems, collisions are allowed, and
+  of Irregular, Interference, Directional, and Compact forms. Origin receives
+  the same seeded assignment as every other system, Plain is never offset, visual
+  pivots remain within four map units of their systems, collisions are allowed, and
   discovery overlays the exact `*` or selected `@` without removing the visual.
   Anonymous texture renders as frontier fog, and generated startup previews use
   gameplay scale.

@@ -188,8 +188,9 @@ claim.
 allowlisted preview, marks it stale after edits, and consumes exactly the
 confirmed artifact. Its generated preview may render anonymous frontier fog at
 gameplay map scale without exposing neutral identities or facts. Session-owned
-map-visual pivots remain within four map units of actual systems and stay stable
-as knowledge changes; discovery overlays the exact chart point rather than
+map-visual assignments apply uniformly to Origin and frontier systems, remain
+stable as knowledge changes, and keep non-Plain pivots within four map units of
+actual systems while Plain stays exact; discovery overlays the chart point rather than
 removing its surrounding visual. Machine paths
 and reproduction metadata do not enter play views. `Session` exclusively owns
 mutable simulation state and accepts typed

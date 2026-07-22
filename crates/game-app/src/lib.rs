@@ -422,6 +422,7 @@ fn preview_view(
                         visual_key,
                     ),
                     visual_key,
+                    visual: map_visual_assignment(artifact.identity().seed, visual_key),
                 })
             })
             .collect(),
@@ -477,13 +478,34 @@ fn map_visual_coordinate(
     }
 }
 
-fn map_visual_pivot_offset(seed: u64, visual_key: u64) -> (i64, i64) {
-    let hash = format!("{seed}:{visual_key}")
+fn map_visual_hash(seed: u64, visual_key: u64) -> u64 {
+    format!("{seed}:{visual_key}")
         .bytes()
         .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3)
-        });
-    let mut selected = (hash >> 16) % 49;
+        })
+}
+
+fn map_visual_assignment(seed: u64, visual_key: u64) -> MapVisualAssignment {
+    let hash = map_visual_hash(seed, visual_key);
+    let family = match hash % 5 {
+        0 => MapVisualFamily::Plain,
+        1 => MapVisualFamily::Irregular,
+        2 => MapVisualFamily::Interference,
+        3 => MapVisualFamily::Directional,
+        _ => MapVisualFamily::Compact,
+    };
+    MapVisualAssignment {
+        family,
+        variant: ((hash / 5) % 12) as u8,
+    }
+}
+
+fn map_visual_pivot_offset(seed: u64, visual_key: u64) -> (i64, i64) {
+    if map_visual_assignment(seed, visual_key).family == MapVisualFamily::Plain {
+        return (0, 0);
+    }
+    let mut selected = (map_visual_hash(seed, visual_key) >> 16) % 49;
     for y in -4_i64..=4 {
         for x in -4_i64..=4 {
             if x * x + y * y > 16 {
@@ -498,16 +520,33 @@ fn map_visual_pivot_offset(seed: u64, visual_key: u64) -> (i64, i64) {
     (0, 0)
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum MapVisualFamily {
+    Plain,
+    Irregular,
+    Interference,
+    Directional,
+    Compact,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MapVisualAssignment {
+    pub family: MapVisualFamily,
+    pub variant: u8,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MapTexturePoint {
     pub coordinate: ChartCoordinate,
     pub visual_key: u64,
+    pub visual: MapVisualAssignment,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SystemListEntry {
     pub system_id: ContentId,
     pub visual_key: u64,
+    pub visual: MapVisualAssignment,
     pub visual_coordinate: ChartCoordinate,
     pub catalogue_label: String,
     pub alias: Option<String>,
@@ -1380,6 +1419,7 @@ impl Session {
             systems.push(SystemListEntry {
                 system_id: system.system.clone(),
                 visual_key: system.map_visual_key,
+                visual: map_visual_assignment(self.seed, system.map_visual_key),
                 visual_coordinate: *self
                     .visual_coordinates
                     .get(&system.map_visual_key)
@@ -1457,6 +1497,7 @@ impl Session {
                         .get(&point.map_visual_key)
                         .expect("every fog point retains its generated map visual"),
                     visual_key: point.map_visual_key,
+                    visual: map_visual_assignment(self.seed, point.map_visual_key),
                 })
                 .collect(),
             details,
