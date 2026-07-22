@@ -2,54 +2,39 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-07-21
+
 ### Added
 
-- Stage 4b's deterministic `core:frontier_world@1` generator, editable strict
-  RON profiles, canonical SHA-256 profile fingerprints, logical provenance, and
-  complete version/seed/profile generation identity.
-- Fixed-point geometric routing, initial origin knowledge, keyed observations,
-  delayed fact transmissions, monotonic deterministic merge, and redacted
-  player route/system views.
-- Habitat-backed population tokens, automatic generation, stable population
-  identity, derived occupancy/support/work, and explicit transition accounting.
-- Shipyards with independent FIFO project queues, completed probes and
-  expeditions, world-owned transit, typed slot reservations, settlement,
-  insufficient-slot loss, delayed outcome reports, and remote command unlock.
-- Whole-world ten-phase atomic ticking with exact cross-system resource and
-  population reconciliation evidence.
-- Strict authored-world support for coherent initial resident population tokens,
-  including initialized-population accounting and never-reused sequence setup.
-- An editable `content/profiles/starter.ron` baseline and 56 focused
-  deterministic tests across `game-core` and `game-content`.
+- A new human-play `4x-term` terminal experience with editable or random seeds,
+  generated-world previews, explicit start, safe terminal restoration, and a
+  keyboard-first `160x45` reference layout.
+- Origin development through resource production, construction queues,
+  Batteries, Extractors, Refineries, Habitats, population growth, and Shipyards.
+- Frontier expansion through probe scouting, delayed knowledge reports,
+  Shipyard projects, expedition travel, settlement, and expedition loss.
+- A synchronized frontier map and system list with deterministic uncertainty
+  visuals, aliases, active ship positions, and read-only knowledge details.
+- QWERTY and Colemak-DH navigation, contextual help, terminal-size recovery,
+  and interruptible manual batches at 1, 5, or 10 ticks per second.
+- Deterministic world identity derived from generator revision, seed, and strict
+  RON profile content, with `content/profiles/starter.ron` as the default profile.
+- Player knowledge and communication delay: hidden systems and routes stay
+  redacted, scouting and founding outcomes arrive later, and remote systems
+  become controllable only after settlement reports arrive.
+- Whole-world atomic simulation of Energy, resources, population, construction,
+  ships, and time.
 
 ### Changed
 
-- Every location now has persistent system runtime. Immutable map facts own
-  initial body resources while runtime bodies solely own remaining quantities;
-  systems own stocks, infrastructure, queues, assets, and accounting.
-- Population tokens are the sole mutable population authority; community
-  population and Habitat occupancy are derived views.
-- Simulation time, transit, and origin knowledge are world-owned, and each tick
-  executes phase-major across all systems in stable order before committing.
-- The public runtime boundary is a knowledge-filtered `PlayerWorldView`;
-  privileged complete snapshots are gated behind the `test-support` feature.
-- Generated-world artifacts now expose identity, provenance, and validated world
-  definitions through read-only accessors rather than public fields.
-- The retained Stage 4 Collector, Battery, Extractor, Refinery, construction,
-  life-support, overflow, and accounting mechanics now run under the Stage 4b
-  map/runtime schema.
-- The workspace remains headless and non-playable; no application, startup
-  session, CLI, TUI, save format, or production world bundle is present.
+- **Breaking:** replaced the trader-first authored market game with an
+  origin-first generated-world expansion game. Existing sessions and content
+  from earlier releases are not compatible.
 
 ### Removed
 
-- Floating-point map positions, explicit route topology, standalone deposits and
-  deposit reservations, origin-only ticking, and writable population totals.
-- Compatibility fields, fixtures, tests, and current-state documentation for
-  the replaced Stage 3/4 world schemas.
-- Generated-world target-count, connectivity, reachability, solvency, survival,
-  and qualitative-quality acceptance oracles; only the constructive origin
-  scaffold is guaranteed.
+- The previous trader fleets, markets, Energy logistics contracts, governance,
+  intelligence, encyclopedia, and activity-based terminal interface.
 
 ## 0.7.1 - 2026-07-20
 

@@ -90,6 +90,60 @@ pub enum FoundingLossReason {
     InsufficientSlots,
 }
 
+/// Minimal player-safe state for a launched probe whose observations are not all received.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProbeReportStatus {
+    AwaitingReport,
+}
+
+/// Read-only probe launch availability. Labels and explanatory copy remain adapter-owned.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProbeLaunchAssessment {
+    pub source: ContentId,
+    pub ship_id: ShipId,
+    pub target: ContentId,
+    pub requested_jump_limit: u64,
+    pub minimum_jump_limit: u64,
+    pub maximum_jump_limit: u64,
+    pub target_knowledge: KnowledgeLevel,
+    pub asset_ready: bool,
+    pub travel_energy: Option<u64>,
+    pub route: Option<RedactedRoute>,
+    pub limiting_reason: Option<CoreError>,
+}
+
+impl ProbeLaunchAssessment {
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        self.limiting_reason.is_none()
+    }
+}
+
+/// Read-only expedition launch availability and complete core-owned commitments.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExpeditionLaunchAssessment {
+    pub source: ContentId,
+    pub ship_id: ShipId,
+    pub target: ContentId,
+    pub reservations: Option<ExpeditionReservations>,
+    pub complete_commitment: ResourceStore,
+    pub resident_population_required: u64,
+    pub resident_population_available: u64,
+    pub resident_population_ready: bool,
+    pub target_knowledge: KnowledgeLevel,
+    pub asset_ready: bool,
+    pub travel_energy: Option<u64>,
+    pub route: Option<RedactedRoute>,
+    pub limiting_reason: Option<CoreError>,
+}
+
+impl ExpeditionLaunchAssessment {
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        self.limiting_reason.is_none()
+    }
+}
+
 /// Origin-facing mission state. Physical arrival never changes this state directly;
 /// only receipt of the final transmission resolves `AwaitingOutcome`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -160,6 +214,57 @@ pub struct TransitRecord {
     pub kind: TransitKind,
 }
 
+impl TransitRecord {
+    pub(crate) fn current_position(
+        &self,
+        locations: &[LocationDefinition],
+        tuning: &WorldTuning,
+    ) -> Result<Position3, CoreError> {
+        let leg = self
+            .route
+            .legs
+            .get(self.next_leg_index)
+            .ok_or(CoreError::Overflow)?;
+        let from = location_position(locations, &leg.from)?;
+        let to = location_position(locations, &leg.to)?;
+        let speed = match self.kind {
+            TransitKind::Probe { .. } => tuning.probe_travel.speed_quanta_per_tick,
+            TransitKind::Expedition { .. } => tuning.expedition_travel.speed_quanta_per_tick,
+        };
+        let duration = leg_duration(&self.route, self.next_leg_index, speed)?;
+        let elapsed = duration
+            .checked_sub(self.remaining_leg_ticks)
+            .ok_or(CoreError::Overflow)?;
+        Ok(Position3::from_quanta(
+            interpolate_coordinate(from.x.0, to.x.0, elapsed, duration)?,
+            interpolate_coordinate(from.y.0, to.y.0, elapsed, duration)?,
+            interpolate_coordinate(from.z.0, to.z.0, elapsed, duration)?,
+        ))
+    }
+}
+
+fn interpolate_coordinate(
+    from: i64,
+    to: i64,
+    elapsed: u64,
+    duration: u64,
+) -> Result<i64, CoreError> {
+    let delta = i128::from(to)
+        .checked_sub(i128::from(from))
+        .ok_or(CoreError::Overflow)?;
+    let travelled = delta
+        .checked_mul(i128::from(elapsed))
+        .ok_or(CoreError::Overflow)?
+        .checked_div(i128::from(duration))
+        .ok_or(CoreError::Overflow)?;
+    i64::try_from(
+        i128::from(from)
+            .checked_add(travelled)
+            .ok_or(CoreError::Overflow)?,
+    )
+    .map_err(|_| CoreError::Overflow)
+}
+
 /// Aggregate mutable state needed by phase 6 for one system.
 pub(crate) struct ShipyardPhaseContext<'a> {
     pub time: SimulationTime,
@@ -189,6 +294,7 @@ pub(crate) fn progress_shipyards(context: ShipyardPhaseContext<'_>) -> Result<()
                             development.definition.role == DevelopmentRole::Shipyard
                                 && development.definition.condition
                                     == DevelopmentCondition::Functional
+                                && development.enabled
                                 && development.shipyard.is_some()
                         })
                         .then_some((body_index, slot_index))
@@ -263,6 +369,16 @@ pub(crate) fn progress_shipyards(context: ShipyardPhaseContext<'_>) -> Result<()
             .sort_by(|left, right| left.ship_id().cmp(right.ship_id()));
     }
     Ok(())
+}
+
+struct ProbeLaunchPlan {
+    candidate: WorldState,
+    route: Route,
+}
+
+struct ExpeditionLaunchPlan {
+    candidate: WorldState,
+    route: Route,
 }
 
 impl WorldState {
@@ -429,6 +545,66 @@ impl WorldState {
         Ok(())
     }
 
+    /// Assesses probe launch without mutating authoritative state. Commit invokes
+    /// the same private launch plan again, so stale state is revalidated.
+    #[must_use]
+    pub fn assess_probe_launch(
+        &self,
+        source: &ContentId,
+        ship_id: &ShipId,
+        target: &ContentId,
+        desired_jump_limit: u64,
+    ) -> ProbeLaunchAssessment {
+        let source_commandable = self.ensure_commandable(source).is_ok();
+        let asset_ready = source_commandable
+            && self.systems.get(source).is_some_and(|system| {
+                has_operational_shipyard(system)
+                    && completed_asset_index(&system.completed_assets, ship_id).is_some_and(
+                        |index| {
+                            matches!(
+                                &system.completed_assets[index],
+                                CompletedAsset::Probe { available_at_tick, .. }
+                                    if self.time.tick >= *available_at_tick
+                            )
+                        },
+                    )
+            });
+        let route = (source_commandable
+            && validate_target_knowledge(&self.knowledge, source, target).is_ok()
+            && desired_jump_limit != 0
+            && desired_jump_limit <= self.tuning.probe_travel.maximum_jump_quanta)
+            .then(|| self.route(source, target, desired_jump_limit))
+            .transpose()
+            .ok()
+            .flatten();
+        let travel_energy = route.as_ref().and_then(|route| {
+            route
+                .checked_energy(self.tuning.probe_travel.energy_per_quantum)
+                .ok()
+        });
+        let player_route = route.as_ref().map(|route| {
+            route.player_route(
+                &self.knowledge.identified_systems(),
+                &BTreeSet::from([source.clone()]),
+            )
+        });
+        ProbeLaunchAssessment {
+            source: source.clone(),
+            ship_id: ship_id.clone(),
+            target: target.clone(),
+            requested_jump_limit: desired_jump_limit,
+            minimum_jump_limit: 1,
+            maximum_jump_limit: self.tuning.probe_travel.maximum_jump_quanta,
+            target_knowledge: self.knowledge.level(target),
+            asset_ready,
+            travel_energy,
+            route: player_route,
+            limiting_reason: self
+                .plan_probe_launch(source, ship_id, target, desired_jump_limit)
+                .err(),
+        }
+    }
+
     /// Launches a completed probe using an explicit jump limit no larger than the
     /// authored maximum. Route and complete travel Energy are committed atomically.
     pub fn launch_probe(
@@ -438,15 +614,107 @@ impl WorldState {
         target: &ContentId,
         desired_jump_limit: u64,
     ) -> Result<RedactedRoute, CoreError> {
+        let plan = self.plan_probe_launch(source, ship_id, target, desired_jump_limit)?;
+        let player_route = plan.route.player_route(
+            &plan.candidate.knowledge.identified_systems(),
+            &BTreeSet::from([source.clone()]),
+        );
+        *self = plan.candidate;
+        Ok(player_route)
+    }
+
+    fn plan_probe_launch(
+        &self,
+        source: &ContentId,
+        ship_id: &ShipId,
+        target: &ContentId,
+        desired_jump_limit: u64,
+    ) -> Result<ProbeLaunchPlan, CoreError> {
         let mut candidate = self.clone_full();
         let route = candidate.launch_probe_inner(source, ship_id, target, desired_jump_limit)?;
         candidate.validate_runtime_integrity()?;
-        let player_route = route.player_route(
-            &candidate.knowledge.identified_systems(),
-            &BTreeSet::from([source.clone()]),
-        );
-        *self = candidate;
-        Ok(player_route)
+        Ok(ProbeLaunchPlan { candidate, route })
+    }
+
+    /// Assesses expedition launch without exposing population identities or
+    /// authoritative target slots beyond the explicit reservation draft.
+    #[must_use]
+    pub fn assess_expedition_launch(
+        &self,
+        source: &ContentId,
+        ship_id: &ShipId,
+        target: &ContentId,
+        reservations: Option<ExpeditionReservations>,
+    ) -> ExpeditionLaunchAssessment {
+        let source_commandable = self.ensure_commandable(source).is_ok();
+        let target_knowledge = self.knowledge.level(target);
+        let resident_population_available = if source_commandable {
+            self.populations
+                .system_population(&self.communities, source)
+        } else {
+            0
+        };
+        let resident_population_ready = source_commandable
+            && self.systems.get(source).is_some_and(|system| {
+                select_departing_population(system, &self.populations, &self.communities, source)
+                    .is_ok()
+            });
+        let asset_ready = source_commandable
+            && self.systems.get(source).is_some_and(|system| {
+                has_operational_shipyard(system)
+                    && completed_asset_index(&system.completed_assets, ship_id).is_some_and(
+                        |index| {
+                            matches!(
+                                &system.completed_assets[index],
+                                CompletedAsset::Expedition { available_at_tick, .. }
+                                    if self.time.tick >= *available_at_tick
+                            )
+                        },
+                    )
+            });
+        let route = (source_commandable
+            && validate_target_knowledge(&self.knowledge, source, target).is_ok())
+        .then(|| {
+            self.route(
+                source,
+                target,
+                self.tuning.expedition_travel.maximum_jump_quanta,
+            )
+        })
+        .transpose()
+        .ok()
+        .flatten();
+        let travel_energy = route.as_ref().and_then(|route| {
+            route
+                .checked_energy(self.tuning.expedition_travel.energy_per_quantum)
+                .ok()
+        });
+        let player_route = route.as_ref().map(|route| {
+            route.player_route(
+                &self.knowledge.identified_systems(),
+                &BTreeSet::from([source.clone()]),
+            )
+        });
+        ExpeditionLaunchAssessment {
+            source: source.clone(),
+            ship_id: ship_id.clone(),
+            target: target.clone(),
+            reservations: reservations.clone(),
+            complete_commitment: self
+                .tuning
+                .expedition_enqueue_commitment()
+                .expect("validated tuning has a representable expedition commitment"),
+            resident_population_required: 1,
+            resident_population_available,
+            resident_population_ready,
+            target_knowledge,
+            asset_ready,
+            travel_energy,
+            route: player_route,
+            limiting_reason: self
+                .plan_expedition_launch(source, ship_id, target, reservations)
+                .err(),
+        }
     }
 
     /// Launches a completed expedition. Complete target knowledge requires two
@@ -458,15 +726,26 @@ impl WorldState {
         target: &ContentId,
         reservations: Option<ExpeditionReservations>,
     ) -> Result<RedactedRoute, CoreError> {
+        let plan = self.plan_expedition_launch(source, ship_id, target, reservations)?;
+        let player_route = plan.route.player_route(
+            &plan.candidate.knowledge.identified_systems(),
+            &BTreeSet::from([source.clone()]),
+        );
+        *self = plan.candidate;
+        Ok(player_route)
+    }
+
+    fn plan_expedition_launch(
+        &self,
+        source: &ContentId,
+        ship_id: &ShipId,
+        target: &ContentId,
+        reservations: Option<ExpeditionReservations>,
+    ) -> Result<ExpeditionLaunchPlan, CoreError> {
         let mut candidate = self.clone_full();
         let route = candidate.launch_expedition_inner(source, ship_id, target, reservations)?;
         candidate.validate_runtime_integrity()?;
-        let player_route = route.player_route(
-            &candidate.knowledge.identified_systems(),
-            &BTreeSet::from([source.clone()]),
-        );
-        *self = candidate;
-        Ok(player_route)
+        Ok(ExpeditionLaunchPlan { candidate, route })
     }
 
     fn launch_probe_inner(
@@ -492,6 +771,9 @@ impl WorldState {
             .systems
             .get_mut(source)
             .ok_or_else(|| CoreError::UnknownSystem(source.clone()))?;
+        if !has_operational_shipyard(system) {
+            return Err(CoreError::NoOperationalShipyard(source.clone()));
+        }
         let asset_index = completed_asset_index(&system.completed_assets, ship_id)
             .ok_or_else(|| CoreError::UnknownCompletedShip(ship_id.clone()))?;
         match &system.completed_assets[asset_index] {
@@ -571,6 +853,9 @@ impl WorldState {
             .systems
             .get(source)
             .ok_or_else(|| CoreError::UnknownSystem(source.clone()))?;
+        if !has_operational_shipyard(source_system) {
+            return Err(CoreError::NoOperationalShipyard(source.clone()));
+        }
         let asset_index = completed_asset_index(&source_system.completed_assets, ship_id)
             .ok_or_else(|| CoreError::UnknownCompletedShip(ship_id.clone()))?;
         let (payload, available_at_tick) = match &source_system.completed_assets[asset_index] {
@@ -1138,6 +1423,7 @@ fn install_arrival_development(
         extractor_target: None,
     };
     slot.development = Some(DevelopmentState {
+        enabled: true,
         habitat: (role == DevelopmentRole::Habitat).then(HabitatState::default),
         shipyard: None,
         definition,
@@ -1200,6 +1486,21 @@ fn vacate_habitat(bodies: &mut [BodyState], habitat_id: &ContentId) -> Result<()
     Ok(())
 }
 
+fn has_operational_shipyard(system: &SystemState) -> bool {
+    system
+        .bodies
+        .iter()
+        .flat_map(|body| &body.slots)
+        .any(|slot| {
+            slot.development.as_ref().is_some_and(|development| {
+                development.definition.role == DevelopmentRole::Shipyard
+                    && development.definition.condition == DevelopmentCondition::Functional
+                    && development.enabled
+                    && development.shipyard.is_some()
+            })
+        })
+}
+
 fn ensure_functional_shipyard(
     bodies: &[BodyState],
     body: &ContentId,
@@ -1211,6 +1512,7 @@ fn ensure_functional_shipyard(
         .filter(|development| {
             development.definition.role == DevelopmentRole::Shipyard
                 && development.definition.condition == DevelopmentCondition::Functional
+                && development.enabled
                 && development.shipyard.is_some()
         })
         .ok_or_else(|| CoreError::NotFunctionalShipyard {
@@ -1232,6 +1534,7 @@ fn functional_shipyard_mut<'a>(
         .filter(|development| {
             development.definition.role == DevelopmentRole::Shipyard
                 && development.definition.condition == DevelopmentCondition::Functional
+                && development.enabled
         })
         .and_then(|development| development.shipyard.as_mut())
         .ok_or_else(|| CoreError::NotFunctionalShipyard {

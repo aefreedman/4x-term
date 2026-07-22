@@ -155,6 +155,7 @@ impl WorldState {
         system.life_support = derive_life_support(LifeSupportPhaseContext {
             is_origin: id == &self.origin_system,
             community_id,
+            bodies: &system.bodies,
             stocks: &mut system.stocks,
             populations: &self.populations,
             resource_accounting: &mut system.accounting,
@@ -327,6 +328,7 @@ impl WorldState {
                     extractor_target: item.extractor_target,
                 };
                 slot.development = Some(DevelopmentState {
+                    enabled: true,
                     habitat: (definition.role == DevelopmentRole::Habitat)
                         .then(HabitatState::default),
                     shipyard: (definition.role == DevelopmentRole::Shipyard)
@@ -394,6 +396,7 @@ fn functional_coordinates(system: &SystemState, role: DevelopmentRole) -> Vec<(u
                             development.definition.role == role
                                 && development.definition.condition
                                     == DevelopmentCondition::Functional
+                                && development.enabled
                         })
                         .then_some((body_index, slot_index))
                 })

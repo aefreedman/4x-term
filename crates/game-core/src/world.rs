@@ -69,6 +69,14 @@ pub struct SystemState {
     pub completed_assets: Vec<CompletedAsset>,
 }
 
+/// Player-safe resident population evidence for one commandable local system.
+/// Population token identities and transit state are intentionally omitted.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LocalPopulationSnapshot {
+    pub population_count: u64,
+    pub occupied_habitat_slots: Vec<SlotCoordinate>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SystemSnapshot {
     pub location: ContentId,
@@ -86,6 +94,7 @@ pub struct SystemSnapshot {
     pub command_unlock_received: bool,
     pub commandability: Commandability,
     pub completed_assets: Vec<CompletedAsset>,
+    pub local_population: LocalPopulationSnapshot,
 }
 
 impl SystemSnapshot {
@@ -134,13 +143,87 @@ pub struct WorldSnapshot {
     pub knowledge: KnowledgeState,
 }
 
+/// Read-only construction availability and exact core-owned commitment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConstructionAssessment {
+    pub system: ContentId,
+    pub body: ContentId,
+    pub slot: ContentId,
+    pub role: DevelopmentRole,
+    pub extractor_resource: Option<ContentId>,
+    pub cost: ResourceStore,
+    pub required_work: u64,
+    pub limiting_reason: Option<CoreError>,
+}
+
+impl ConstructionAssessment {
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        self.limiting_reason.is_none()
+    }
+}
+
+/// Read-only operational toggle availability for any installed development.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DevelopmentOperationalAssessment {
+    pub system: ContentId,
+    pub body: ContentId,
+    pub slot: ContentId,
+    pub enabled: bool,
+    pub limiting_reason: Option<CoreError>,
+}
+
+impl DevelopmentOperationalAssessment {
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        self.limiting_reason.is_none()
+    }
+}
+
+/// Read-only Habitat generation toggle availability. Presentation labels remain adapter-owned.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HabitatToggleAssessment {
+    pub system: ContentId,
+    pub body: ContentId,
+    pub slot: ContentId,
+    pub enabled: bool,
+    pub limiting_reason: Option<CoreError>,
+}
+
+impl HabitatToggleAssessment {
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        self.limiting_reason.is_none()
+    }
+}
+
+struct ConstructionPlan {
+    system: SystemState,
+    project_id: ProjectId,
+}
+
+struct DevelopmentOperationalPlan {
+    system: SystemState,
+}
+
+struct HabitatTogglePlan {
+    system: SystemState,
+}
+
 /// One identified system in the player-facing projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlayerSystemView {
     pub system: ContentId,
+    /// Stable opaque map-visual assignment key; it carries no system facts.
+    pub map_visual_key: u64,
     pub knowledge: SystemKnowledge,
     /// Authoritative local state exists only for origin or a founded system whose outcome arrived.
     pub local_state: Option<SystemSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrontierFogPoint {
+    pub map_visual_key: u64,
 }
 
 /// Knowledge-filtered player projection. It exposes only redacted active physical
@@ -148,11 +231,20 @@ pub struct PlayerSystemView {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlayerWorldView {
     pub time: SimulationTime,
+    /// Zero-based phase of the core's ten-phase seasonal collector cycle.
+    pub seasonal_phase: u8,
     pub systems: Vec<PlayerSystemView>,
     pub anonymous_indication_count: usize,
+    /// Anonymous map texture points for systems whose identity is not player-visible.
+    /// Adapters may render these as fog but must not associate them with system rows.
+    pub frontier_fog: Vec<FrontierFogPoint>,
     pub missions: BTreeMap<ShipId, MissionState>,
+    /// Probe missions with at least one active leg or report not yet received.
+    pub probe_reports: BTreeMap<ShipId, ProbeReportStatus>,
     /// Active physical routes, recomputed so each hidden stop is named only once reached.
     pub active_routes: BTreeMap<ShipId, RedactedRoute>,
+    /// Current physical positions of player-owned ships, without route or ship metadata.
+    pub active_ship_positions: Vec<Position3>,
 }
 
 #[cfg_attr(
@@ -246,6 +338,12 @@ impl WorldState {
                             self.populations
                                 .system_population(&self.communities, location),
                         ),
+                        local_population_snapshot(
+                            state,
+                            &self.populations,
+                            &self.communities,
+                            location,
+                        ),
                     )
                     .expect("validated system remains snapshotable")
                 })
@@ -279,12 +377,39 @@ impl WorldState {
                     }
                     systems.push(PlayerSystemView {
                         system: system_id.clone(),
+                        map_visual_key: self
+                            .locations
+                            .iter()
+                            .position(|location| &location.id == system_id)
+                            .and_then(|index| u64::try_from(index).ok())
+                            .expect("known system has an indexed location"),
                         knowledge: knowledge.clone(),
                         local_state,
                     });
                 }
             }
         }
+        let frontier_fog = self
+            .locations
+            .iter()
+            .enumerate()
+            .filter(|(_, location)| {
+                self.knowledge
+                    .systems
+                    .get(&location.id)
+                    .is_none_or(|knowledge| {
+                        matches!(
+                            knowledge.level,
+                            KnowledgeLevel::Unknown | KnowledgeLevel::Anonymous
+                        )
+                    })
+            })
+            .filter_map(|(index, _)| {
+                Some(FrontierFogPoint {
+                    map_visual_key: u64::try_from(index).ok()?,
+                })
+            })
+            .collect();
         let identified = self.knowledge.identified_systems();
         let active_routes = self
             .transit
@@ -298,12 +423,36 @@ impl WorldState {
                 )
             })
             .collect();
+        let active_ship_positions = self
+            .transit
+            .iter()
+            .map(|transit| transit.current_position(&self.locations, &self.tuning))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut probe_reports = self
+            .transit
+            .iter()
+            .filter(|transit| matches!(transit.kind, TransitKind::Probe { .. }))
+            .map(|transit| (transit.ship_id.clone(), ProbeReportStatus::AwaitingReport))
+            .collect::<BTreeMap<_, _>>();
+        for transmission in self.knowledge.pending_transmissions.values() {
+            let ObserverId::Ship(ship_id) = &transmission.id.observer else {
+                continue;
+            };
+            if !self.knowledge.mission_states.contains_key(ship_id) {
+                probe_reports.insert(ship_id.clone(), ProbeReportStatus::AwaitingReport);
+            }
+        }
         Ok(PlayerWorldView {
             time: self.time,
+            seasonal_phase: u8::try_from(self.time.tick % 10)
+                .expect("seasonal phase is always below ten"),
             systems,
             anonymous_indication_count,
+            frontier_fog,
             missions: self.knowledge.mission_states.clone(),
+            probe_reports,
             active_routes,
+            active_ship_positions,
         })
     }
 
@@ -356,6 +505,7 @@ impl WorldState {
                 self.populations
                     .system_population(&self.communities, location),
             ),
+            local_population_snapshot(system, &self.populations, &self.communities, location),
         )
     }
 
@@ -454,6 +604,103 @@ impl WorldState {
         validate_population_accounting(&self.populations, &self.population_accounting)
     }
 
+    /// Read-only assessment using the same private plan as the operational command.
+    #[must_use]
+    pub fn assess_development_operational_toggle(
+        &self,
+        system_id: &ContentId,
+        body_id: &ContentId,
+        slot_id: &ContentId,
+        enabled: bool,
+    ) -> DevelopmentOperationalAssessment {
+        DevelopmentOperationalAssessment {
+            system: system_id.clone(),
+            body: body_id.clone(),
+            slot: slot_id.clone(),
+            enabled,
+            limiting_reason: self
+                .plan_development_operational_toggle(system_id, body_id, slot_id, enabled)
+                .err(),
+        }
+    }
+
+    /// Enables or disables any installed development. The command is atomic and
+    /// preserves production cycles, Habitat generation, and Shipyard queues.
+    pub fn set_development_operational_enabled(
+        &mut self,
+        system_id: &ContentId,
+        body_id: &ContentId,
+        slot_id: &ContentId,
+        enabled: bool,
+    ) -> Result<(), CoreError> {
+        let plan =
+            self.plan_development_operational_toggle(system_id, body_id, slot_id, enabled)?;
+        *self
+            .systems
+            .get_mut(system_id)
+            .expect("planned system remains present") = plan.system;
+        Ok(())
+    }
+
+    fn plan_development_operational_toggle(
+        &self,
+        system_id: &ContentId,
+        body_id: &ContentId,
+        slot_id: &ContentId,
+        enabled: bool,
+    ) -> Result<DevelopmentOperationalPlan, CoreError> {
+        self.ensure_commandable(system_id)?;
+        let mut system = self
+            .systems
+            .get(system_id)
+            .ok_or_else(|| CoreError::UnknownSystem(system_id.clone()))?
+            .clone();
+        let slot = find_slot_mut(&mut system.bodies, body_id, slot_id)?;
+        let development =
+            slot.development
+                .as_mut()
+                .ok_or_else(|| CoreError::DevelopmentSlotUnavailable {
+                    body: body_id.clone(),
+                    slot: slot_id.clone(),
+                })?;
+        development.enabled = enabled;
+        let capacity = energy_capacity(&system, &self.tuning)?;
+        let available = system.stocks.quantity(&self.tuning.energy_resource);
+        if available > capacity {
+            let overflow = available - capacity;
+            system
+                .stocks
+                .set(self.tuning.energy_resource.clone(), capacity);
+            record_overflow(
+                &mut system.overflow,
+                self.time,
+                EnergyOverflowCause::DevelopmentOperationalToggle,
+                overflow,
+            )?;
+        }
+        Ok(DevelopmentOperationalPlan { system })
+    }
+
+    /// Read-only assessment of a Habitat generation toggle.
+    #[must_use]
+    pub fn assess_habitat_generation_toggle(
+        &self,
+        system_id: &ContentId,
+        body_id: &ContentId,
+        slot_id: &ContentId,
+        enabled: bool,
+    ) -> HabitatToggleAssessment {
+        HabitatToggleAssessment {
+            system: system_id.clone(),
+            body: body_id.clone(),
+            slot: slot_id.clone(),
+            enabled,
+            limiting_reason: self
+                .plan_habitat_generation_toggle(system_id, body_id, slot_id, enabled)
+                .err(),
+        }
+    }
+
     /// Enables or disables automatic generation on an empty, functional Habitat.
     /// The command is atomic and preserves existing progress and readiness.
     pub fn set_habitat_generation_enabled(
@@ -463,18 +710,35 @@ impl WorldState {
         slot_id: &ContentId,
         enabled: bool,
     ) -> Result<(), CoreError> {
-        self.ensure_commandable(system_id)?;
-        let system = self
+        let plan = self.plan_habitat_generation_toggle(system_id, body_id, slot_id, enabled)?;
+        *self
             .systems
             .get_mut(system_id)
-            .ok_or_else(|| CoreError::UnknownSystem(system_id.clone()))?;
+            .expect("planned system remains present") = plan.system;
+        Ok(())
+    }
+
+    fn plan_habitat_generation_toggle(
+        &self,
+        system_id: &ContentId,
+        body_id: &ContentId,
+        slot_id: &ContentId,
+        enabled: bool,
+    ) -> Result<HabitatTogglePlan, CoreError> {
+        self.ensure_commandable(system_id)?;
+        let mut system = self
+            .systems
+            .get(system_id)
+            .ok_or_else(|| CoreError::UnknownSystem(system_id.clone()))?
+            .clone();
         crate::set_habitat_generation_enabled(
             &mut system.bodies,
             &self.populations,
             body_id,
             slot_id,
             enabled,
-        )
+        )?;
+        Ok(HabitatTogglePlan { system })
     }
 
     /// Applies the delayed successful-founding outcome received by origin knowledge.
@@ -496,6 +760,31 @@ impl WorldState {
         Ok(())
     }
 
+    /// Read-only assessment using the same private plan as construction commit.
+    #[must_use]
+    pub fn assess_construction(
+        &self,
+        system_id: &ContentId,
+        body_id: &ContentId,
+        slot_id: &ContentId,
+        role: DevelopmentRole,
+        extractor_resource: Option<&ContentId>,
+    ) -> ConstructionAssessment {
+        let recipe = recipe_for(&self.tuning, role);
+        ConstructionAssessment {
+            system: system_id.clone(),
+            body: body_id.clone(),
+            slot: slot_id.clone(),
+            role,
+            extractor_resource: extractor_resource.cloned(),
+            cost: recipe.cost.clone(),
+            required_work: recipe.required_work,
+            limiting_reason: self
+                .plan_construction(system_id, body_id, slot_id, role, extractor_resource)
+                .err(),
+        }
+    }
+
     pub fn enqueue_construction(
         &mut self,
         system_id: &ContentId,
@@ -504,6 +793,23 @@ impl WorldState {
         role: DevelopmentRole,
         extractor_resource: Option<&ContentId>,
     ) -> Result<ProjectId, CoreError> {
+        let plan = self.plan_construction(system_id, body_id, slot_id, role, extractor_resource)?;
+        let project_id = plan.project_id.clone();
+        *self
+            .systems
+            .get_mut(system_id)
+            .expect("planned system remains present") = plan.system;
+        Ok(project_id)
+    }
+
+    fn plan_construction(
+        &self,
+        system_id: &ContentId,
+        body_id: &ContentId,
+        slot_id: &ContentId,
+        role: DevelopmentRole,
+        extractor_resource: Option<&ContentId>,
+    ) -> Result<ConstructionPlan, CoreError> {
         self.ensure_commandable(system_id)?;
         let current = self
             .systems
@@ -562,8 +868,7 @@ impl WorldState {
             work_applied: 0,
             committed_resources: recipe.cost,
         });
-        *self.systems.get_mut(system_id).expect("system existed") = system;
-        Ok(project_id)
+        Ok(ConstructionPlan { system, project_id })
     }
 
     pub fn cancel_construction(&mut self, project_id: &ProjectId) -> Result<(), CoreError> {
@@ -733,6 +1038,7 @@ pub(crate) fn energy_capacity(
                 slot.development.as_ref().is_some_and(|development| {
                     development.definition.role == DevelopmentRole::Battery
                         && development.definition.condition == DevelopmentCondition::Functional
+                        && development.enabled
                 })
             })
             .count(),
@@ -750,6 +1056,7 @@ fn snapshot_system(
     state: &SystemState,
     tuning: &WorldTuning,
     commandability: Commandability,
+    local_population: LocalPopulationSnapshot,
 ) -> Result<SystemSnapshot, CoreError> {
     let capacity = energy_capacity(state, tuning)?;
     let bodies = combine_body_snapshots(map, state)?;
@@ -769,7 +1076,39 @@ fn snapshot_system(
         command_unlock_received: state.command_unlock_received,
         commandability,
         completed_assets: state.completed_assets.clone(),
+        local_population,
     })
+}
+
+fn local_population_snapshot(
+    system: &SystemState,
+    populations: &PopulationRegistry,
+    communities: &BTreeMap<ContentId, CommunityDefinition>,
+    system_id: &ContentId,
+) -> LocalPopulationSnapshot {
+    let population_count = populations.system_population(communities, system_id);
+    let occupied_habitat_slots = system
+        .bodies
+        .iter()
+        .flat_map(|body| {
+            body.slots.iter().filter_map(|slot| {
+                let development = slot.development.as_ref()?;
+                (development.definition.role == DevelopmentRole::Habitat
+                    && development.definition.condition == DevelopmentCondition::Functional
+                    && populations
+                        .habitat_occupant(&development.definition.id)
+                        .is_some())
+                .then(|| SlotCoordinate {
+                    body: body.id.clone(),
+                    slot: slot.id.clone(),
+                })
+            })
+        })
+        .collect();
+    LocalPopulationSnapshot {
+        population_count,
+        occupied_habitat_slots,
+    }
 }
 
 pub(crate) fn combine_body_snapshots(
@@ -987,6 +1326,8 @@ fn validate_tuning(tuning: &WorldTuning, resources: &BTreeSet<ContentId>) -> Res
             )));
         }
     }
+    // Assessments expose this complete commitment as one exact store.
+    tuning.expedition_enqueue_commitment()?;
     for (resource, thresholds) in &tuning.resource_richness {
         if !resources.contains(resource) {
             return Err(CoreError::InvalidTuning(format!(
@@ -1153,6 +1494,7 @@ fn validate_and_normalize(mut definition: WorldDefinition) -> Result<WorldState,
                         }
                         validate_development(&development, &body_id, &initial_resources)?;
                         Ok(DevelopmentState {
+                            enabled: true,
                             habitat: (development.role == DevelopmentRole::Habitat)
                                 .then(HabitatState::default),
                             shipyard: (development.role == DevelopmentRole::Shipyard)

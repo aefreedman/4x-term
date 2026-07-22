@@ -1,12 +1,12 @@
 # 4x-term
 
-A Rust 4X project with a constructive procedural frontier and bounded headless
-expansion simulation.
+A Rust 4X project with a constructive procedural frontier, bounded headless
+expansion simulation, and a keyboard-first terminal interface.
 
-> **Current status:** Stage 4b is implemented in the headless `game-core` and
-> RON/profile/generation `game-content` crates. The workspace has no playable
-> application, startup session, CLI, TUI, save system, or production world
-> bundle. Stage 5 owns the first truthful startup and terminal boundary.
+> **Current status:** Stage 5 is playable. The terminal startup flow generates
+> and previews an explicit profile/seed world, then supports construction,
+> Habitat bootstrap, scouting, expeditions, founding, and manual atomic ticks.
+> Persistence and agent-facing automation remain future work.
 
 `game-core` owns fixed-point systems and body resources, global phase-major
 ticks, Habitat-backed population tokens, geometric routing, delayed origin
@@ -18,10 +18,10 @@ snapshots are available only through the `test-support` feature.
 `game-content` compiles strict authored-world fixtures and editable RON profiles,
 produces canonical SHA-256 profile fingerprints, and deterministically generates
 `core:frontier_world@1` artifacts from complete version/seed/profile identity.
-[`content/profiles/starter.ron`](content/profiles/starter.ron) is an editable
-baseline, not a canonical universe or playable startup path. Only the origin
-scaffold is a generated-world structural guarantee; frontier count and
-qualitative world outcomes are not acceptance oracles.
+[`content/profiles/starter.ron`](content/profiles/starter.ron) is the editable
+profile offered by the human-play executable. It is not a canonical universe.
+Only the origin scaffold is a generated-world structural guarantee; frontier
+count and qualitative world outcomes are not acceptance oracles.
 
 See [docs/architecture.md](docs/architecture.md) for current ownership and API
 boundaries and the [Game Design Wiki](docs/design/README.md) for durable gameplay
@@ -40,10 +40,24 @@ On macOS, run:
 
 See [setup/README.md](setup/README.md) for prerequisites and details.
 
+## Play
+
+From the repository root, use a terminal of at least `160x45` cells:
+
+```bash
+cargo run -p game-play
+```
+
+The startup screen defaults to `content/profiles/starter.ron` and seed `0`.
+Edit either field before generation if desired, preview the origin scaffold,
+and explicitly confirm Start. Press `?` for contextual help. Arrow keys always
+navigate; Settings switches between QWERTY (`hjkl`) and Colemak-DH (`unei`).
+Sessions are not saved.
+
 ## Validation
 
-The current acceptance surface is buildability plus 56 focused deterministic
-tests: 28 in `game-core` and 28 in `game-content`.
+The acceptance surface is buildability plus focused deterministic core,
+content, application, TUI-state, renderer, and terminal-lifecycle tests.
 
 ```bash
 cargo fmt --all -- --check
@@ -52,5 +66,5 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-Do not add a frontend shell, generated-world quality gate, or compatibility
-adapter merely to make the retired prototype runnable.
+Do not add generated-world quality gates or compatibility adapters for the
+retired prototype.

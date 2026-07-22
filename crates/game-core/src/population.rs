@@ -204,6 +204,7 @@ pub(crate) fn finalize_population_generation(
             };
             if development.definition.role != crate::DevelopmentRole::Habitat
                 || development.definition.condition != crate::DevelopmentCondition::Functional
+                || !development.enabled
                 || !habitat.generation_enabled
                 || !habitat
                     .ready_since_tick
@@ -304,6 +305,7 @@ pub(crate) fn accumulate_population_generation(
             };
             if development.definition.role != crate::DevelopmentRole::Habitat
                 || development.definition.condition != crate::DevelopmentCondition::Functional
+                || !development.enabled
                 || !habitat.generation_enabled
                 || habitat.ready_since_tick.is_some()
                 || context
@@ -395,6 +397,7 @@ pub(crate) fn invalidate_habitat_support(
 pub(crate) struct LifeSupportPhaseContext<'a> {
     pub is_origin: bool,
     pub community_id: Option<&'a ContentId>,
+    pub bodies: &'a [BodyState],
     pub stocks: &'a mut ResourceStore,
     pub populations: &'a PopulationRegistry,
     pub resource_accounting: &'a mut ResourceAccounting,
@@ -408,13 +411,51 @@ pub(crate) fn derive_life_support(
     let population = context.community_id.map_or(0, |community| {
         context.populations.community_population(community)
     });
+    let operational_population = context.community_id.map_or(0, |community| {
+        context
+            .populations
+            .tokens
+            .values()
+            .filter(|token| {
+                let PopulationState::Resident {
+                    community_id,
+                    habitat_id,
+                } = &token.state
+                else {
+                    return false;
+                };
+                community_id == community
+                    && context
+                        .bodies
+                        .iter()
+                        .flat_map(|body| &body.slots)
+                        .any(|slot| {
+                            slot.development.as_ref().is_some_and(|development| {
+                                &development.definition.id == habitat_id
+                                    && development.definition.role
+                                        == crate::DevelopmentRole::Habitat
+                                    && development.definition.condition
+                                        == crate::DevelopmentCondition::Functional
+                                    && development.enabled
+                            })
+                        })
+            })
+            .count()
+    });
+    let operational_population =
+        u64::try_from(operational_population).map_err(|_| CoreError::Overflow)?;
     let energy = &context.tuning.energy_resource;
     let required = context
         .tuning
         .life_support_per_population
         .checked_mul(population)
         .ok_or(CoreError::Overflow)?;
-    let paid = context.stocks.quantity(energy).min(required);
+    let operational_required = context
+        .tuning
+        .life_support_per_population
+        .checked_mul(operational_population)
+        .ok_or(CoreError::Overflow)?;
+    let paid = context.stocks.quantity(energy).min(operational_required);
     context
         .resource_accounting
         .operation_spent
@@ -529,6 +570,7 @@ mod tests {
         DevelopmentSlotState {
             id: id(slot),
             development: Some(DevelopmentState {
+                enabled: true,
                 definition: DevelopmentDefinition {
                     id: id(habitat),
                     role: DevelopmentRole::Habitat,
@@ -873,9 +915,18 @@ mod tests {
         let tuning = tuning(5);
         let mut stocks: ResourceStore = [(id("core:energy"), 3)].into_iter().collect();
         let mut accounting = ResourceAccounting::default();
+        let bodies = vec![BodyState {
+            id: id("core:body"),
+            remaining_resources: ResourceStore::new(),
+            slots: vec![
+                habitat_slot("core:slot_0", "core:habitat_0"),
+                habitat_slot("core:slot_1", "core:habitat_1"),
+            ],
+        }];
         let evidence = derive_life_support(LifeSupportPhaseContext {
             is_origin: false,
             community_id: Some(&community),
+            bodies: &bodies,
             stocks: &mut stocks,
             populations: &registry,
             resource_accounting: &mut accounting,
