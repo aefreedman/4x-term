@@ -1,30 +1,35 @@
 # Architecture
 
-## Current boundary: Stage 4b constructive frontier
+## Current boundary: Stage 5 playable origin and frontier
 
-The workspace is a non-playable, data-driven headless simulation with exactly
-two crates:
+The workspace is a data-driven headless simulation with a synchronous human
+terminal adapter:
 
 ```text
-game-content ──► game-core
+4x-term ──► game-tui ──► game-app ──► game-core
+    └───────────────────────┘            ▲
+                         game-content ────┘
 ```
 
 `game-core` owns the format-independent world model, runtime authorities,
-commands, player-safe projection, and global simulation tick. `game-content`
-owns strict RON schemas, filesystem loading, profile normalization and
-validation, canonical profile encoding, SHA-256 fingerprints, and deterministic
-revisioned generation. RON, provenance, hashing, and filesystem access do not
-enter `game-core`.
+validated commands, read-only assessments, player-safe projection, and global
+simulation tick. `game-content` owns strict RON schemas, filesystem loading,
+profile normalization and validation, canonical profile encoding, fingerprints,
+and deterministic revisioned generation. `game-app` owns startup coordination
+and the sole mutable `WorldState` in a running session. `game-tui` owns only
+input, selection, drafts, pacing, rendering, and terminal lifecycle. The
+`game-play` package produces the `4x-term` binary and contains process
+composition only.
 
-There is no application/session crate, CLI, TUI, save format, production startup
-path, or playable content bundle. `content/profiles/starter.ron` is an editable
-generation/gameplay baseline consumed explicitly by callers and tests; it is not
-a canonical universe or startup contract.
+The dependency direction is enforced by manifests: terminal dependencies exist
+only in `game-tui`; `game-app` has no terminal types; and `game-tui` has no
+direct `game-core` dependency. RON, provenance, hashing, and filesystem access
+do not enter `game-core`. Tokio, channels, asynchronous clocks, persistence,
+and agent-facing command protocols are absent.
 
-The workspace uses Rust 2024 with MSRV Rust 1.97. `game-core` depends only on
-`thiserror`. `game-content` depends on `game-core`, `serde`, `ron`, `sha2`, and
-`thiserror`. No crate depends on a renderer, terminal library, network runtime,
-or ECS framework.
+The workspace uses Rust 2024 with MSRV Rust 1.97. Ratatui/Crossterm are used
+synchronously with minimal Ratatui features. `content/profiles/starter.ron` is
+the executable's editable convenience default, not a canonical universe.
 
 ## Implemented module boundaries
 
@@ -41,6 +46,15 @@ from `lib.rs`:
 | `knowledge.rs` | Knowledge levels and keyed facts, observations, delayed transmissions, deterministic fact merge, and origin-facing mission state. |
 | `ships.rs` | Shipyard projects and assets, probe/expedition launch, world-owned transit, observations, reservations, founding, and typed loss. |
 | `simulation.rs` | The world clock and the single phase-major, whole-world atomic tick. |
+
+Stage 5 adds non-mutating construction, generic development-operation,
+Habitat-generation, probe, and expedition assessments. Each assessment and its
+command share the same private validation plan; commands revalidate against
+current state before atomic commit. Disabling a development preserves its
+cycle, Habitat-generation, and Shipyard-queue state while excluding it from
+production, support, capacity, and project progression. Local
+player projections include only derived resident counts and occupied Habitat
+coordinates, never population-token identity or transit internals.
 
 `game-content` exposes only its loading/compilation/generation hooks while
 keeping source schemas internal:
@@ -105,7 +119,8 @@ player-adapter boundary. `PlayerWorldView` contains:
 - identified systems and their received `SystemKnowledge`;
 - authoritative `SystemSnapshot` local state only for the origin or a founded
   system whose successful report has been received;
-- anonymous indication count;
+- anonymous indication count and position-derived fog texture points carrying
+  only stable opaque visual-assignment keys, not system identities or facts;
 - received/awaiting mission states; and
 - active routes redacted so an unidentified intermediate stop is named only
   after the ship reaches it.
@@ -167,15 +182,35 @@ from its approximate target, and generation makes no connectivity,
 reachability, solvency, favorable-distribution, survival, or qualitative-world
 claim.
 
+## Application and terminal boundary
+
+`StartupCoordinator` loads an explicit `ProfileDescriptor`, generates an
+allowlisted preview, marks it stale after edits, and consumes exactly the
+confirmed artifact. Its generated preview may render anonymous frontier fog at
+gameplay map scale without exposing neutral identities or facts. Machine paths
+and reproduction metadata do not enter play views. `Session` exclusively owns
+mutable simulation state and accepts typed
+`SessionIntent` values. It returns immutable `PlayingView`, typed rejection and
+`DraftDisposition`, launch assessments, and one-step tick deltas.
+
+The application catalogue resolves resource and FSC labels. Session-owned
+aliases never alter generated identity. Runtime projections derive solely from
+`PlayerWorldView`, so neutral local state, hidden route stops, pending report
+contents, and unreceived founding outcomes remain unavailable to the TUI.
+
+`game-tui` routes arrows and the selected keyboard layout through one semantic
+input layer. It renders a `160x45` reference composition and blocks gameplay
+below that size. Explicit multi-tick requests call one application tick at a
+time through an injectable monotonic clock, preserving every committed
+intermediate view and stopping between ticks. Terminal setup uses staged RAII
+cleanup for raw mode, alternate screen, and cursor state.
+
 ## Testing and evidence
 
-The workspace has 56 focused deterministic tests: 28 in `game-core` and 28 in
-`game-content`. They cover fixed-point routing, strict profiles and canonical
-fingerprints, revisioned generation and the origin scaffold, body-resource
-ownership, retained Stage 4 resource mechanisms, global tick atomicity,
-Habitats and token population, knowledge/transmission merge, Shipyards, probes,
-expeditions, founding/loss, player-view redaction, and exact resource/population
-reconciliation.
+Focused deterministic tests cover core rules and redaction, strict content and
+generation, startup staleness and exact artifact consumption, typed assessments
+and atomic rejection, aliases and projections, semantic input, paced batches,
+minimum-size safety, Ratatui rendering, and terminal lifecycle cleanup.
 
 The acceptance surface is formatting, all-target/all-feature compilation,
 Clippy with warnings denied, and the all-feature workspace test suite. Generated
@@ -185,12 +220,10 @@ are not failures.
 
 ## Future adapters
 
-Stage 5 may add an application/session, truthful startup path, CLI, and terminal
-rendering around the headless core and `PlayerWorldView`. Those adapters must
-keep input and presentation outside `game-core` and must not expose unrestricted
-runtime mutation or privileged test-support snapshots.
-
-Persistence, event-log replay, reclamation, automated freight, wider logistics,
-delegation, and cultural influence remain future work. The retired
+Persistence, event-log replay, an agent-facing command protocol, reclamation,
+automated freight, wider logistics, delegation, and cultural influence remain
+future work. Any adapter must continue to use typed application intents and
+player-safe views rather than unrestricted runtime mutation or privileged
+`test-support` snapshots. The retired
 trader/market prototype and the replaced Stage 3/4 schemas are not compatibility
 targets; Git history is the recovery path.

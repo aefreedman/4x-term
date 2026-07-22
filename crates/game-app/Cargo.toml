@@ -1,0 +1,15 @@
+[package]
+name = "game-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+game-core = { path = "../game-core" }
+game-content = { path = "../game-content" }
+thiserror.workspace = true
+unicode-width.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "game-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+game-app = { path = "../game-app" }
+ratatui.workspace = true
+crossterm.workspace = true
+thiserror.workspace = true
+unicode-width.workspace = true
+
+[lints]
+workspace = true

@@ -237,6 +237,21 @@ global shortcuts. `Esc` exits the editor without committing; only then do
 layout navigation letters, `.`, `t`, or `q` regain their global/contextual
 meaning.
 
+### Interaction-coherence gate
+
+A composition must not imply more focus targets than it implements. Exactly one
+visible component owns directional input; every accepted direction changes a
+selection visible in that component; and the direction must agree with the
+rows' spatial arrangement. Tab is reserved for traversal between two or more
+interactive focus targets, never for traversing rows in a single list. A child
+surface must not retain navigation that changes an off-screen parent selection.
+
+Before approval, each surface needs an interaction table and a keyboard-only
+prediction walkthrough by a reviewer who has not been taught the controls.
+Rendering, routing, and state tests must be reviewed together rather than as
+independently correct layers. The active checklist and exact review procedure
+are in [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.md).
+
 ## Surface inventory and navigation
 
 | Surface | Class/template | Entry | Default focus | Exit/actions |
@@ -245,10 +260,10 @@ meaning.
 | Generation failure | Startup message/safety | Generate rejected | First invalid field, otherwise Retry | Edit and retry, inspect diagnostic, quit |
 | Preview | Startup summary composition | Generate accepted | Start action | Regenerate, start confirm, quit |
 | Start confirmation | `Overlay.confirm` | Activate Start | Cancel | Start consumes preview; Esc returns |
-| Main dashboard | `ScreenShell.playing` | Start accepted | Knowledge map | Focus panels, inspect, tick, help, quit |
-| Frontier overview | Map + synchronized list | Main dashboard | Last selected system | Select/inspect system, rename charted selection |
-| System detail | Standard detail panels | Inspect selection | Body list if local | Inspect, back |
-| Body/slot inspection | List/table composition | Inspect local system | Body then slot | Construct from empty slot, inspect Habitat, back |
+| Main dashboard | `ScreenShell.playing` | Start accepted | System list | Select a system, open its received knowledge, tick, help, quit |
+| Frontier overview | Read-only map + focused synchronized list | Main dashboard | Last selected system row | Up/Down select; Enter opens details for any listed system; rename charted selection |
+| System detail | Full read-only knowledge/facts composition | Enter on a listed system | System knowledge panel | Browse received survey facts; manage when commandable; Esc back |
+| Body/slot inspection | Flattened visible slot list + synchronized detail | Manage local system | First visible slot | Up/Down traverse displayed slots; construct or inspect Habitat; back |
 | Stocks inspection | `ResourceTable` + detail | Main dashboard/system detail | First stock row | Inspect exact quantity, back |
 | Construction queue | `Table` + `Progress` | Main dashboard/system detail | First queued item, or panel | Inspect commitment/progress, back |
 | Population/Habitat inspection | `Detail` + `Progress` + actions | System/body detail | First Habitat or population summary | Toggle available Habitat generation, back |

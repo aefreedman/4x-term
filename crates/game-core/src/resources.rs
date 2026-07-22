@@ -213,6 +213,9 @@ pub struct ProductionCycle {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DevelopmentState {
     pub definition: DevelopmentDefinition,
+    /// Runtime operational control. Disabled developments retain all queued and
+    /// in-progress state but contribute no production, capacity, or support.
+    pub enabled: bool,
     pub cycle: ProductionCycle,
     pub habitat: Option<crate::HabitatState>,
     pub shipyard: Option<crate::ShipyardState>,
@@ -260,6 +263,7 @@ pub struct ConstructionItem {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EnergyOverflowCause {
     Retention,
+    DevelopmentOperationalToggle,
     Transfer,
     CancellationRefund,
     ShipProjectCancellationRefund,

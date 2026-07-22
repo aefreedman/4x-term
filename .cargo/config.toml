@@ -1,0 +1,2 @@
+[alias]
+play = "run -p game-play"

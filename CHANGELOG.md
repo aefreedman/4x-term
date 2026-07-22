@@ -4,6 +4,17 @@
 
 ### Added
 
+- A human-play `4x-term` executable with editable or randomly generated seeds,
+  an explicitly focusable origin preview/start action, safe terminal lifecycle,
+  and a `160x45` keyboard-first Ratatui interface.
+- A synchronous `game-app` session boundary with immutable player-safe views,
+  typed intents/outcomes, FSC catalogue labels, session aliases, dedicated
+  Energy evidence, and manual atomic tick deltas.
+- Playable construction and Habitat bootstrap, probe scouting, expedition
+  founding/loss, delayed report, redacted-route, Shipyard, and mission flows.
+- QWERTY and Colemak-DH semantic navigation, contextual help, size safety,
+  and deterministic interruptible 1/5/10-ticks-per-second manual batches.
+
 - Stage 4b's deterministic `core:frontier_world@1` generator, editable strict
   RON profiles, canonical SHA-256 profile fingerprints, logical provenance, and
   complete version/seed/profile generation identity.
@@ -24,6 +35,18 @@
 
 ### Changed
 
+- Probe drafts now accept typed jump-distance values, probe and expedition
+  drafts use player-facing labels instead of debug structures, received probe
+  facts appear in a browsable system-detail surface, and system uncertainty
+  visuals are deterministically assigned from Plain plus twelve variants each
+  of Irregular, Interference, Directional, and Compact forms. Visual centers
+  may be offset, collisions are allowed, anonymous real-position texture
+  renders as frontier fog, and generated startup previews use gameplay scale.
+- Local-system management can enable or disable any development while
+  preserving progress and queues; local details expose system resource stocks,
+  slot rows expose construction progress, body rows expose remaining resources,
+  empty slots are visually subdued, and
+  Shipyard actions appear only when they have a valid local target.
 - Every location now has persistent system runtime. Immutable map facts own
   initial body resources while runtime bodies solely own remaining quantities;
   systems own stocks, infrastructure, queues, assets, and accounting.
@@ -38,8 +61,18 @@
 - The retained Stage 4 Collector, Battery, Extractor, Refinery, construction,
   life-support, overflow, and accounting mechanics now run under the Stage 4b
   map/runtime schema.
-- The workspace remains headless and non-playable; no application, startup
-  session, CLI, TUI, save format, or production world bundle is present.
+- The headless simulation remains independent of terminal presentation;
+  `game-app` exclusively owns mutable session state and `game-tui` depends only
+  on application contracts rather than `game-core`.
+
+### Fixed
+
+- Dashboard and local-system navigation now use one honest visible focus:
+  Up/Down traverses the displayed system or slot rows, read-only panels remain
+  synchronized, unavailable management is not opened, and contextual hints
+  match the active selection.
+- Manual frame pacing no longer removes Help, Settings, editor, construction,
+  mission, or confirmation modals before their next rendered frame.
 
 ### Removed
 

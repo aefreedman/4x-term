@@ -1,0 +1,17 @@
+[package]
+name = "game-play"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "4x-term"
+path = "src/main.rs"
+
+[dependencies]
+game-app = { path = "../game-app" }
+game-tui = { path = "../game-tui" }
+
+[lints]
+workspace = true

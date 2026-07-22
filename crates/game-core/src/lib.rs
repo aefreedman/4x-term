@@ -9,6 +9,9 @@ mod ships;
 mod simulation;
 mod world;
 
+#[cfg(test)]
+mod stage5_boundary_tests;
+
 pub use ids::*;
 pub use knowledge::*;
 pub use population::*;
@@ -122,6 +125,8 @@ pub enum CoreError {
     ShipProjectAlreadyBegun(ProjectId),
     #[error("slot {body}/{slot} is not a functional Shipyard")]
     NotFunctionalShipyard { body: ContentId, slot: ContentId },
+    #[error("system has no operational functional Shipyard: {0}")]
+    NoOperationalShipyard(ContentId),
     #[error("unknown completed ship asset: {0:?}")]
     UnknownCompletedShip(ShipId),
     #[error("completed ship asset has the wrong kind: {0:?}")]

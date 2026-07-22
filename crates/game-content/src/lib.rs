@@ -1084,8 +1084,8 @@ mod tests {
     fn authored_world_with_population(tokens: &str) -> String {
         include_str!("../tests/fixtures/stage4_origin.ron")
             .replacen(
-                "    systems: [(\n",
-                &format!("    population_tokens: [{tokens}],\n    systems: [(\n"),
+                "    systems: [(",
+                &format!("    population_tokens: [{tokens}],\n    systems: [("),
                 1,
             )
             .replacen(
