@@ -11,8 +11,8 @@ Stage 2 will make the repository's executable test boundary match the testing
 stance recorded in Stage 1. It will keep focused, exact evidence for durable
 simulation contracts; remove authored-world activity, metastability, and
 trader-impact quality gates; and delete legacy economy diagnostics after
-extracting only cheap focused evidence for durable contracts. Stage 6 may create
-new observational diagnostics if generated-world tuning needs them.
+extracting only cheap focused evidence for durable contracts. New observational
+diagnostics should be added only for a concrete generated-world tuning need.
 
 The implementation will add an authoritative Markdown invariant registry,
 reuse or extract small deterministic Tier 1 fixtures, and delete obsolete tests
@@ -179,9 +179,10 @@ guidance and supported by evidence:
 - source-aware deterministic content validation for retained schemas;
 - conditional automated-logistics anti-strand/bounded recovery.
 
-G18 constructive guarantees and generated-world replay identity should appear as
-reserved entries owned by Stages 4 and 6. A general liveness or no-deadlock entry
-must not be marked active unless its exact finite bound and applicable setup are
+G18 constructive guarantees should remain reserved for their owning generation
+work. Runtime replay is outside this boundary and has no reserved invariant. A
+general liveness or no-deadlock entry must not be marked active unless its exact
+finite bound and applicable setup are
 derived from an existing mechanism contract; current bounded
 claim/lot/recovery tests may be cited under anti-strand instead of inventing an
 unbounded global oracle.
@@ -414,8 +415,9 @@ Validation:
       play, or legacy TUI flows to work.
 - [x] The retained workspace is buildable around retained contracts; no
       playable interim executable is required.
-- [x] G18 values, generated-world seeds, replay identity, geography/community
-      schema, and startup cutover remain deferred to their owning stages.
+- [x] G18 values, generated-world seeds, geography/community schema, and startup
+      cutover remain deferred to their owning stages; runtime replay is outside
+      the migration boundary.
 
 ### Quality Requirements
 
@@ -498,7 +500,7 @@ Validation:
 | Removing the exact-20 error alone leaves graph construction disabled for small fixtures. | Tests could pass through a different validation path or skip derived checks. | Generalize the graph precondition in the same change and prove 3–6-location valid/error fixtures traverse it. |
 | Legacy role, distance, bootstrap, numeraire, NPC-shape, or archetype route-capacity predicates are mistaken for invariants. | Arbitrary prototype tuning continues to constrain fixtures and later worldgen. | Remove the named predicates explicitly; keep route-cost arithmetic and structural/reference validation in focused tests. |
 | Conditional liveness tests pass with no work. | Registry claims coverage without exercising the invariant. | Require explicit setup assertions and a concrete claim/lot/carrier transition before the oracle. |
-| Stage 2 drifts into worldgen or replacement startup design. | Scope expands and later contracts are guessed prematurely. | Keep G18/replay entries reserved, delete legacy gates without replacing them, and hand replacement behavior to Stages 3–6. |
+| Stage 2 drifts into worldgen or replacement startup design. | Scope expands and later contracts are guessed prematurely. | Keep G18 entries reserved, leave runtime replay out of scope, delete legacy gates without replacing them, and hand replacement behavior to Stages 3–5. |
 | Reviewers interpret a non-playable build as a regression. | Time is spent rebuilding deleted compatibility surfaces. | Put the buildable-but-non-playable policy in AGENTS, architecture, README, direction, and acceptance criteria. |
 | Deleted material is copied into `archive/` “just in case.” | Working-tree bloat and stale guidance survive the migration. | Use Git history exclusively and search for copied legacy trees before completion. |
 
@@ -535,8 +537,6 @@ Validation:
       universally connected graph rule.
 - **Stage 5:** introduce origin-first composition, headless execution, and
       startup acceptance from the new model without a trader compatibility path.
-- **Stage 6:** add generated-world invariant soaks and replay identity only
-      for active, applicable registry entries.
 - **Stage 7:** run final code/content/docs/CI searches and prove that no
       unjustified legacy surface or compatibility copy remains. Discovery of
       one fails the Stage 2–3 prerequisite; it is not scheduled demolition.

@@ -41,9 +41,9 @@ implementation pointers after the Stage 3 replacement.
 
 Future owners are the numbered transition stages. Stage 2 establishes test
 boundaries, Stage 3 separates geography from living actors, Stage 4 owns
-constructive generation, Stage 5 restores startup/player identity, Stage 6
-owns generated-world invariant/replay tooling, and Stage 7 verifies that
-Stages 2–3 completed retirement.
+constructive generation, Stage 5 restores startup/player identity, and Stage 7
+verifies that Stages 2–3 completed retirement. Generated-world diagnostics and
+runtime replay have no scheduled transition stage.
 
 ## Implementation status after Stage 3
 
@@ -89,12 +89,12 @@ non-playable.
 
 | Responsibility and evidence | Coupling today | Decision and rationale | Owner | Test disposition / bounded follow-up |
 | --- | --- | --- | --- | --- |
-| Repository-directory load before mode selection — `main` in `crates/game-cli/src/main.rs:15-35` and `content_path` at `:210-214` | TUI, validation, headless, diagnostics, and probes all begin from the same authored definition. | **Remove, then replace later.** Normal play and generated-world tooling need new composition rather than a hidden canonical universe. | 2–3, then 5 | Delete the legacy load/startup path without a bridge. Stage 5 independently defines new selection and replay contracts. |
+| Repository-directory load before mode selection — `main` in `crates/game-cli/src/main.rs:15-35` and `content_path` at `:210-214` | TUI, validation, headless, diagnostics, and probes all begin from the same authored definition. | **Remove, then replace later.** Normal play and generated-world tooling need new composition rather than a hidden canonical universe. | 2–3, then 5 | Delete the legacy load/startup path without a bridge. Stage 5 independently defines new selection and generation-identity contracts. |
 | TUI default startup — `ExecutionMode::Tui` in `crates/game-cli/src/main.rs:104-111` | Default play creates a player trader in populated markets. | **Remove, then replace later.** G17 starts the player as the origin community/governor. | 2–3, then 5 | Interim playability is not required. Stage 5 adds origin-first startup as a new surface. |
 | `--validate-content` — `ExecutionMode::ValidateContent` in `crates/game-cli/src/main.rs:37` | Validates the authored market bundle and its market/fleet-specific rules. | **Remove, then replace later.** Reusable source-aware validation survives in focused tests, not this command. | 2, then 4–5 | Delete the legacy command/CI step. Add a new generator/configuration validator only when its inputs exist. |
-| `--headless` authored acceptance — `ExecutionMode::Headless` in `crates/game-cli/src/main.rs:73-103`; `.github/workflows/ci.yml:25-26` | A successful headless run proves current repository startup and activity assumptions. | **Remove, then replace later.** Frontend-independent simulation is durable; this authored startup is not. | 2, then 5–6 | Delete the command/CI gate without replacement. Stage 5 introduces a new headless boundary from the new startup contract. |
+| `--headless` authored acceptance — `ExecutionMode::Headless` in `crates/game-cli/src/main.rs:73-103`; `.github/workflows/ci.yml:25-26` | A successful headless run proves current repository startup and activity assumptions. | **Remove, then replace later.** Frontend-independent simulation is durable; this authored startup is not. | 2, then 5 | Delete the command/CI gate without replacement. Stage 5 introduces a new headless boundary from the new startup contract. |
 | Exact reconciliation in headless and diagnostic modes — `reconcile_energy` call sites in `crates/game-cli/src/main.rs:101-102,488-492,1353-1355,1664-1666` | Durable accounting evidence is embedded in modes that also inspect authored-world quality. | **Keep.** G22.5 requires exact physical-resource reconciliation independent of current markets or probes. | 2 onward | Exact oracle: expected equals actual with every physical transfer channel accounted for. Applicability: every run that mutates physical resources. |
-| Descriptive economy/world texture reporting — `ExecutionMode::EconomyDiagnostics` in `crates/game-cli/src/main.rs:55-72` | Current reports summarize authored markets, fleet activity, population, and Energy flow. | **Remove, then replace later if useful.** The current report describes a deleted model. | 2, then 6 | Delete it rather than adapting it. Stage 6 may create new non-gating summaries from generated-world needs. |
+| Descriptive economy/world texture reporting — `ExecutionMode::EconomyDiagnostics` in `crates/game-cli/src/main.rs:55-72` | Current reports summarize authored markets, fleet activity, population, and Energy flow. | **Remove; replace only if a concrete tuning need emerges.** The current report describes a deleted model. | 2 | Delete it rather than adapting it. Any future non-gating summary must start from a specific generated-world design question. |
 | Pricing comparison, player-impact divergence, and metastability/market-activity gates — `crates/game-cli/src/main.rs:38-54,65,1122-1180` | These modes and validators judge obsolete pricing, intervention response, survival, and market ecology. | **Remove.** None is a named engine invariant or constructive G18 guarantee. | 2 | Preserve cheap exact inflow/reconciliation fixtures separately; delete the modes and gates without replacement. |
 
 ### Core data model and simulation responsibilities
@@ -140,7 +140,7 @@ non-playable.
 | Reconciliation formatter and rejection tests — `crates/game-cli/src/main.rs:2411-2521` | Focused tests prove exact flow reporting and rejection of mismatched/overflowing totals. | **Keep.** They exercise G22.5 independently of metastability. | 2 onward | Exact oracle: report difference is zero for valid flow; mismatches and total-calculation overflow are rejected. Applicability: every physical-resource run. |
 | Player-impact divergence plus reconciliation test — `crates/game-cli/src/main.rs:2522-2570` | One test mixes an obsolete required stage/population divergence with durable baseline/intervention reconciliation. | **Remove probe; retain cheap accounting evidence.** | 2 | Delete divergence and probe flow; use an existing or small focused external-inflow reconciliation fixture without preserving CLI reporting. |
 | Metastability, activity, and population gates in `validate_metastability` — `crates/game-cli/src/main.rs:1122-1180` | Validation fails on extinction, decline, missing activity, ratchets, and fleet/contract behavior. | **Remove.** These are obsolete authored-world quality gates. | 2 | Delete validator, summary, and output; future texture diagnostics start from generated-world needs. |
-| `SoakSummary` texture fields — `crates/game-cli/src/main.rs:570-630` | One summary describes the authored market model and mixes observations with acceptance inputs. | **Remove; redesign later if needed.** | 2, then 6 | Delete the summary after retaining focused reconciliation. Stage 6 starts new diagnostics from generated-world questions rather than these fields. |
+| `SoakSummary` texture fields — `crates/game-cli/src/main.rs:570-630` | One summary describes the authored market model and mixes observations with acceptance inputs. | **Remove; redesign only for a concrete future need.** | 2 | Delete the summary after retaining focused reconciliation. Any future diagnostic starts from a specific generated-world question rather than these fields. |
 | Player-impact probe and required divergence | Requires a tuned intervention to produce stage/population divergence. | **Remove.** A specific authored-world response is neither a named invariant nor constructive guarantee. | 2 | Delete without replacement; retain external-inflow accounting only through a focused invariant test. |
 
 ### CI, documentation, and historical evidence
@@ -232,9 +232,6 @@ This audit deliberately performs no destination implementation:
   economic inequalities, quantity floors, or assumed reclaimable-site needs?
 - **Stage 5:** How does complete generation identity select normal play, and
   what is the smallest truthful origin-first app/TUI startup flow?
-- **Stage 6:** Which retained automated logistics exists to make anti-strand or
-  liveness checks applicable and non-vacuous, and which texture summaries are
-  useful without becoming gates?
 - **Stage 7:** Does a final working-tree and CI search prove that Stages 2–3
   deleted every unjustified market/economy/trader surface and compatibility
   copy?

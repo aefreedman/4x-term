@@ -27,8 +27,10 @@ are complete. The workspace now includes the headless `game-core` simulation,
 the `game-content` schema/profile/generation adapter, the application-owned
 session boundary, the terminal UI, and the human-play `4x-term` executable.
 The all-feature workspace suite has 110 focused tests and no ignored tests.
-Persistence, an agent-facing command protocol, invariant soaks, and event-log
-replay remain future work; they are not prerequisites for truthful human play.
+Persistence and an agent-facing command protocol remain possible future product
+work. Broad invariant sweeps, runtime replay, and texture diagnostics have no
+scheduled milestone and should be proposed only for a concrete need; none is a
+prerequisite for truthful human play.
 
 ## The problem being corrected
 
@@ -163,8 +165,8 @@ replacement or copied into a working-tree archive; Git history preserves them.
 **Status:** recorded on 2026-07-20 in the
 [authored market-world migration audit](2026-07-20-authored-market-world-migration-audit.md).
 This records migration decisions only. The implementation bundles through
-playable startup are complete below; replay/tooling and deeper gameplay remain
-future work.
+playable startup are complete below; deeper gameplay remains future work.
+Replay and diagnostic tooling have no scheduled transition owner.
 
 - Add the testing stance and norms to `AGENTS.md` and architecture notes.
 - Mark obsolete product assumptions clearly, including trader-first play,
@@ -277,7 +279,7 @@ the [architecture](../architecture.md), and the
   oracles.
 - Validate generator parameters/output with provenance and record generator
   family/revision, seed, normalized profile fingerprint, and complete generated
-  definition. Full event-log replay remains Stage 6.
+  definition. Generation identity does not promise runtime event-log replay.
 - Replace explicit edges and standalone deposits with fixed-point procedural
   positions, geometric ship routes, and body-owned resource quantities.
 - Implement Habitat population generation, Shipyards, probes, delayed origin
@@ -314,19 +316,6 @@ manual playtesting covers the composed startup, scouting, and founding journeys.
 No compatibility path from the deleted trader game was added. The simulation
 remains headless and frontend-independent; `game-app` exclusively owns mutable
 `WorldState`, and terminal dependencies remain confined to `game-tui`.
-
-### Stage 6 — Add generated-world invariant soaks and replay tooling
-
-- Run only applicable named invariants against generated worlds.
-- Keep validate-before-mutate and other rejection behavior in focused
-  fixtures unless a generated harness deliberately exercises those paths.
-- Require non-vacuous setup for automated-logistics liveness checks; until
-  player-owned delegated logistics exists, such checks may remain focused
-  mechanism coverage rather than generated-world acceptance.
-- Add single-world replay with full event logging and complete generation
-  identity for failure forensics.
-- Keep distribution and frontier-texture summaries descriptive and outside
-  CI pass/fail semantics.
 
 ### Stage 7 — Verify retirement of the obsolete market-network surface
 

@@ -100,7 +100,8 @@ The workspace contains only `game-core` and `game-content`.
 5. Agent-facing CLI interaction is outside Stage 5 and will receive a separate
    plan. Stage 5 does not need to define a stable non-interactive command or
    output protocol.
-6. Persistence and full event-log replay remain Stage 6 work.
+6. Persistence and full event-log replay are outside this plan and have no
+   scheduled follow-up.
 7. There is no compatibility path from the retired trader game.
 8. The Stage 5 TUI targets a `160x45` terminal-cell canvas. This is sized to
    fit a fullscreen 1920x1080 display with cells up to 12x24 pixels. Stage 5

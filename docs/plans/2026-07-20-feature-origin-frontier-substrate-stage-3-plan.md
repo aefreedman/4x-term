@@ -485,8 +485,8 @@ Validation:
   owns generator configuration, generated topology, structural G18 guarantees,
   map-scale rules, and generation identity.
 - Stage 5 owns the new app/session/CLI/TUI composition and startup acceptance.
-- Stage 6 owns generated invariant soaks, replay identity, and descriptive
-  frontier diagnostics.
+- Generated invariant sweeps, runtime replay, and frontier diagnostics are not
+  migration prerequisites and have no scheduled owner.
 
 ### Risks
 
@@ -529,8 +529,6 @@ Validation:
   per-output tests without economic inequalities.
 - **Stage 5:** create the origin-first session/app/CLI/TUI boundary and truthful
   playable/headless startup without trader compatibility.
-- **Stage 6:** add complete generation replay identity, event logging,
-  applicable generated-world invariant soaks, and non-gating diagnostics.
 - **Stage 7:** independently verify that no unjustified market-network surface
   or compatibility copy remains.
 - **Stage 8/content slices:** define resource chains, community dynamics,

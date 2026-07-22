@@ -331,13 +331,6 @@ with the implementation change.
 - **Undefined here:** Accepted-work state, locked lot, carrier/claim identity,
   timeout/recovery transitions, terminal outcomes, and accounting channels.
 
-### INV-REPLAY-001 — Complete runtime replay identity
-
-- **Status:** reserved for Stage 6.
-- **Undefined here:** Complete initial runtime state, event-log requirements,
-  runtime compatibility, and replay verification. Generation identity alone is
-  not complete runtime replay identity.
-
 ## Stage 4b completion evidence
 
 Stage 4b was implemented on branch `feat/stage-4b-constructive-frontier` from
@@ -361,7 +354,7 @@ a frontend API.
 | Constructive origin | Active revision-1 guarantee | G18-ORIGIN-STRUCTURE. |
 | Generator identity | Active revision-1 invariant | INV-GENERATION-IDENTITY-001. |
 | Frontier count/connectivity/quality | Not adopted | No executable test/CI oracle found; local texture is not acceptance. |
-| Automated logistics/runtime replay | Reserved | No current mechanism or executable contract. |
+| Automated logistics | Reserved | No current mechanism or executable contract. |
 | Stage 3/4 topology/deposits/writable population | Removed obsolete surface | Removed fields and test names are not current evidence. |
 
 ## Review checklist
