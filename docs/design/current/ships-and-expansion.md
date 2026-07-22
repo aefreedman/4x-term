@@ -1,8 +1,10 @@
 ---
 title: "Ships and Expansion"
-type: design
+type: design-current
 status: approved
-source: "../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
+authority: normative
+horizon: current
+source: "../../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
 ---
 # Ships and Expansion
 
@@ -65,7 +67,7 @@ owned by the completed expedition asset. Launch moves that payload into transit;
 arrival or loss transfers it exactly once.
 
 The editable initial values are defined only in
-[Tuning Profiles](tuning-profiles.md#construction-and-ship-projects).
+[Tuning Profiles](tuning-profiles.md#shipped-starter-profile).
 
 ## Expedition launch
 

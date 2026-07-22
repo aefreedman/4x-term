@@ -1,8 +1,10 @@
 ---
 title: "Scouting and Knowledge"
-type: design
+type: design-current
 status: approved
-source: "../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
+authority: normative
+horizon: current
+source: "../../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
 ---
 # Scouting and Knowledge
 
@@ -139,9 +141,9 @@ direct commands for the founded target. A received loss outcome exposes the
 typed loss evidence. Physical target simulation begins at arrival regardless of
 report delay.
 
-The editable `starter` profile uses a probe reveal radius of `1_500` coordinate
-quanta and a communication delay of `1` tick per `500` quanta. These are
-independent authored tuning values rather than engine defaults.
+Probe reveal radius and communication rate are independent authored tuning
+values rather than engine defaults. The active `starter` values are owned by
+[`content/profiles/starter.ron`](../../../content/profiles/starter.ron).
 
 Every transmission has a stable ID. Duplicate receipt is idempotent, and a
 transmission is fully validated before all of its fact merges are applied
@@ -182,5 +184,5 @@ systems.
 ## Related pages
 
 - [Ships and Expansion](ships-and-expansion.md)
-- [Architecture](../architecture.md)
-- [Stage 4b implementation plan](../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md)
+- [Architecture](../../architecture.md)
+- [Stage 4b implementation plan](../../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md)

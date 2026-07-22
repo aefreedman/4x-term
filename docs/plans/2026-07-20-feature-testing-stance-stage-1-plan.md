@@ -63,7 +63,7 @@ Add a short transitional notice to `README.md`: the runnable build remains the l
 Repair the stale internal links introduced by the latest document moves in:
 
 - `docs/plans/2026-07-20-testing-stance-correction.md`
-- `docs/2026-07-20-design-direction-governance-sandbox.md`
+- `docs/design/direction/README.md#legacy-g-label-mapping`
 - `archive/README.md`
 - `todos/007-complete-p1-slice-2-world-dynamics-population-and-player-progression.md`
 
@@ -182,7 +182,7 @@ None beyond normal repository hygiene. Do not include machine-local `.pi/`, `.ob
 
 ### Dependencies
 
-- Governance Sandbox G17–G22 and its testing implications. `docs/2026-07-20-design-direction-governance-sandbox.md:180-227`
+- Governance Sandbox G17–G22 and its testing implications. `docs/design/direction/README.md#legacy-g-label-mapping`
 - Testing stance, norms, and Stage 1 contract. `docs/plans/2026-07-20-testing-stance-correction.md:46-56,62-107,110-152`
 - Existing architecture boundaries and testing strategy. `docs/architecture.md:7,185-193,296-325`
 
@@ -206,7 +206,7 @@ None beyond normal repository hygiene. Do not include machine-local `.pi/`, `.ob
 - `docs/architecture.md` — two-tier testing architecture and explicit prototype boundaries.
 - `README.md` — transitional legacy-prototype notice and non-authoritative diagnostic labels.
 - `docs/plans/2026-07-20-testing-stance-correction.md` — repaired links and Stage 1 audit reference/status.
-- `docs/2026-07-20-design-direction-governance-sandbox.md` — repaired testing-direction link.
+- `docs/design/direction/README.md#legacy-g-label-mapping` — repaired testing-direction link.
 - `archive/README.md` — repaired current-direction links.
 - `todos/007-complete-p1-slice-2-world-dynamics-population-and-player-progression.md` — repaired supersession links only; preserve its obsolete historical content.
 

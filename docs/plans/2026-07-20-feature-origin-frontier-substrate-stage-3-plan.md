@@ -531,10 +531,13 @@ Validation:
   playable/headless startup without trader compatibility.
 - **Stage 7:** independently verify that no unjustified market-network surface
   or compatibility copy remains.
-- **Stage 8/future ideas:** completed by recording resource chains, community
-  dynamics, scouting, expeditions, reclamation, daughter communities,
-  specialists, and delayed information in `docs/ideas.md`; automated freight
-  and delegated logistics were deliberately not carried forward.
+- **Stage 8/future ideas:** completed by recording resource chains and
+  specialists in `docs/design/ideas/production-and-capability.md`, community
+  dynamics in `docs/design/ideas/governance-and-politics.md`, scouting and
+  delayed information in `docs/design/ideas/scouting-and-information.md`, and
+  expeditions and reclamation in
+  `docs/design/ideas/expeditions-and-reclamation.md`; automated freight and
+  delegated logistics were deliberately not carried forward.
 
 ## References & Research
 
@@ -564,7 +567,7 @@ References use paths relative to the repository root.
 - **E9 — Stage 3 controlling scope and constraints:**
   `docs/plans/2026-07-20-testing-stance-correction.md:163-177,225-235`
 - **E10 — product direction:**
-  `docs/2026-07-20-design-direction-governance-sandbox.md:163-226`
+  `docs/design/direction/README.md#legacy-g-label-mapping`
 - **E11 — architecture and migration acceptance:**
   `docs/architecture.md:54-84,306-347,393-419`;
   `AGENTS.md:5-27`; `README.md:8-35`

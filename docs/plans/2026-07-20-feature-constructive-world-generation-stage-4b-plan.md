@@ -24,16 +24,16 @@ Implementation agents should load only the pages relevant to their slice:
 | Concern | Design source |
 | --- | --- |
 | Design index | [Game Design Wiki](../design/README.md) |
-| Origin/frontier generation and routing | [World Generation](../design/world-generation.md) |
-| Generator identity and compatibility | [Generator Identity](../design/generator-identity.md) |
-| Exact revision-1 generator algorithm | [Frontier Generator Revision 1](../design/generator-revision-1.md) |
-| Editable RON values and `starter` profile | [Tuning Profiles](../design/tuning-profiles.md) |
-| Map/runtime ownership and body resources | [Systems and Resources](../design/systems-and-resources.md) |
-| Seasonal Energy and spending | [Energy and Seasons](../design/energy-and-seasons.md) |
-| Population tokens and Habitats | [Population and Habitats](../design/population-and-habitats.md) |
-| Global phases, IDs, timing, and atomicity | [Simulation Timing](../design/simulation-timing.md) |
-| Knowledge, observations, and messages | [Scouting and Knowledge](../design/scouting-and-knowledge.md) |
-| Shipyards, ships, founding, and control | [Ships and Expansion](../design/ships-and-expansion.md) |
+| Origin/frontier generation and routing | [World Generation](../design/current/world-generation.md) |
+| Generator identity and compatibility | [Generator Identity](../design/current/generator-identity.md) |
+| Exact revision-1 generator algorithm | [Frontier Generator Revision 1](../design/current/generator-revision-1.md) |
+| Editable RON values and `starter` profile | [Tuning Profiles](../design/current/tuning-profiles.md) |
+| Map/runtime ownership and body resources | [Systems and Resources](../design/current/systems-and-resources.md) |
+| Seasonal Energy and spending | [Energy and Seasons](../design/current/energy-and-seasons.md) |
+| Population tokens and Habitats | [Population and Habitats](../design/current/population-and-habitats.md) |
+| Global phases, IDs, timing, and atomicity | [Simulation Timing](../design/current/simulation-timing.md) |
+| Knowledge, observations, and messages | [Scouting and Knowledge](../design/current/scouting-and-knowledge.md) |
+| Shipyards, ships, founding, and control | [Ships and Expansion](../design/current/ships-and-expansion.md) |
 | Retained Stage 4 gameplay contract | [Completed Stage 4 Plan](2026-07-20-feature-constructive-world-generation-stage-4-plan.md) |
 | Retained Stage 4 tuning fixture | [`stage4_origin.ron`](../../crates/game-content/tests/fixtures/stage4_origin.ron) |
 | Current repository boundary | [Architecture](../architecture.md) |

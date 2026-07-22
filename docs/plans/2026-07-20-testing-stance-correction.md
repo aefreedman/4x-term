@@ -12,7 +12,7 @@ completed: 2026-07-21
 This is the completed high-level transition plan that corrected how the
 simulation is tested and guided the move from the former authored
 market-trading prototype to the strategy and map-expansion game defined by the
-[Governance Sandbox design direction](../2026-07-20-design-direction-governance-sandbox.md),
+[Governance Sandbox design direction](../design/direction/foundations.md),
 especially G2 and G16–G22.
 
 The stages below must be carved into focused plans or todos before
@@ -126,8 +126,8 @@ into CI as gates.
 ## Norms to record in AGENTS.md (verbatim or adapted)
 
 1. **Individual seed outcomes are not bugs unless they violate a named
-   engine invariant or a G18 constructive guarantee.** Do not tune
-   constants to fix one seed's local behavior.
+   engine invariant or the [constructive-origin contract](../design/current/world-generation.md#constructive-origin-contract).**
+   Do not tune constants to fix one seed's local behavior.
 2. **Local collapse is expected.** Regions struggling or dead in a
    generated world are design-intended texture and future reclamation
    content. Only invariant violations and guarantee failures are bugs.
@@ -346,7 +346,7 @@ compatibility target for new work.
 **Status:** completed. The future directions for deeper scouting and
 expeditions, resource ruins, site reclamation, cultural influence and
 delegation, specialists, richer delayed information, and expanded production
-chains are recorded in [Future Feature Ideas](../ideas.md). Automated
+chains are recorded in [Future Feature Ideas](../design/ideas/README.md). Automated
 freight/logistics was deliberately not carried forward in this handoff.
 
 These ideas are not implementation contracts. Each requires an approved design

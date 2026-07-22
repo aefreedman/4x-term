@@ -22,7 +22,7 @@ exist.
 Current architecture and migration authority remain
 [Architecture](architecture.md), the
 [Testing Stance](plans/2026-07-20-testing-stance-correction.md), and the
-[Governance Sandbox](2026-07-20-design-direction-governance-sandbox.md).
+[Governance Sandbox](design/direction/foundations.md).
 
 ## Architectural lessons to retain
 

@@ -15,7 +15,7 @@ This is a progression gap, not only a discoverability problem. Lowering the per-
 
 ## Findings
 
-- `docs/design/scouting-and-knowledge.md` defines four knowledge levels. Only `IdentifiedSummary` and `Complete` systems are targetable; `Anonymous` systems are deliberately not targetable.
+- `docs/design/current/scouting-and-knowledge.md` defines four knowledge levels. Only `IdentifiedSummary` and `Complete` systems are targetable; `Anonymous` systems are deliberately not targetable.
 - Initial knowledge identifies systems within one maximum probe jump and creates anonymous indications at two or three geometric legs. More distant systems remain unknown.
 - `crates/game-core/src/knowledge.rs` implements that initial one-/two-/three-leg knowledge boundary in `initial_origin_knowledge()`.
 - `crates/game-core/src/ships.rs` implements the actual expansion mechanism: each probe stop creates a complete observation of that system and an anonymous reveal scan around the stop.
@@ -51,7 +51,7 @@ Anonymous knowledge already represents a detected physical system and is created
 
 ## Recommended Action
 
-Treat probe-targetable anonymous indications as the proposed design correction. First specify the opaque indication identity, targetability, route assessment, stale-state revalidation, and redaction contract in `docs/design/scouting-and-knowledge.md`. Then implement the core/application intent and projection changes, followed by TUI selection and guidance. Validate with a hand-computable fixture where the new target is reachable but cannot be discovered as a route stop to any initially identified system. Do not alter generator ranges or add connectivity screening.
+Treat probe-targetable anonymous indications as the proposed design correction. First specify the opaque indication identity, targetability, route assessment, stale-state revalidation, and redaction contract in `docs/design/current/scouting-and-knowledge.md`. Then implement the core/application intent and projection changes, followed by TUI selection and guidance. Validate with a hand-computable fixture where the new target is reachable but cannot be discovered as a route stop to any initially identified system. Do not alter generator ranges or add connectivity screening.
 
 ## Technical Details
 
@@ -65,7 +65,7 @@ Treat probe-targetable anonymous indications as the proposed design correction. 
 - `crates/game-tui/src/state.rs` - probe planning and target/override interaction.
 - `crates/game-tui/src/render/mod.rs` - mission planner and contextual Help guidance.
 - `crates/game-tui/src/state_tests.rs` - semantic interaction coverage for selecting a discovery-producing route.
-- `docs/design/scouting-and-knowledge.md` - approve and document probe-only anonymous targeting.
+- `docs/design/current/scouting-and-knowledge.md` - approve and document probe-only anonymous targeting.
 
 **Related systems:**
 
@@ -85,7 +85,7 @@ Treat probe-targetable anonymous indications as the proposed design correction. 
 - **Review/PR/changeset:** PR #16 / release `v0.8.0`
 - **Related issue/card:** None
 - **Log/capture:** Player report: “I'm not sure how to discover systems other than the ones shown at game start.”
-- **Documentation:** `docs/design/scouting-and-knowledge.md`
+- **Documentation:** `docs/design/current/scouting-and-knowledge.md`
 - **Similar pattern:** `crates/game-core/tests/ships_expansion.rs::probe_duration_one_multileg_stops_reveal_and_launch_rejections_are_exact`
 
 ## Acceptance Criteria

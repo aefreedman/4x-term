@@ -1,8 +1,10 @@
 ---
 title: "Population and Habitats"
-type: design
+type: design-current
 status: approved
-source: "../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
+authority: normative
+horizon: current
+source: "../../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
 ---
 # Population and Habitats
 
@@ -59,8 +61,10 @@ have generation enabled or disabled. Disabling preserves accumulated progress;
 consumed Energy is not refunded.
 
 An enabled, empty Habitat automatically accumulates consumed Energy toward the
-approved `500 Energy` generation cost. After life support and Extractor/Refinery
-operation, eligible Habitats consume available Energy in stable body/slot order,
+profile-authored generation cost. The active `starter` value is owned by
+[`content/profiles/starter.ron`](../../../content/profiles/starter.ron). After
+life support and Extractor/Refinery operation, eligible Habitats consume
+available Energy in stable body/slot order,
 each taking as much as possible up to its remaining cost. Earlier Habitats may
 consume all available Energy unless the player disables them.
 

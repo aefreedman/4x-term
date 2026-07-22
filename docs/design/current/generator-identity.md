@@ -1,7 +1,9 @@
 ---
 title: "Generator Identity"
-type: design
+type: design-current
 status: approved
+authority: normative
+horizon: current
 ---
 # Generator Identity
 
@@ -12,7 +14,7 @@ See also:
 - [World generation](world-generation.md)
 - [Tuning profiles](tuning-profiles.md)
 - [Frontier generator revision 1](generator-revision-1.md)
-- [Stage 4b implementation plan](../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md)
+- [Stage 4b implementation plan](../../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md)
 
 ## Identity tuple
 

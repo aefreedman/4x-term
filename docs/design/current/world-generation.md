@@ -1,7 +1,12 @@
 ---
 title: "World Generation"
-type: design
+type: design-current
 status: approved
+authority: normative
+horizon: current
+design_ids:
+  - worldgen.constructive-origin
+  - testing.generated-world-invariants
 ---
 # World Generation
 
@@ -12,9 +17,9 @@ See also:
 - [Generator identity](generator-identity.md)
 - [Frontier generator revision 1](generator-revision-1.md)
 - [Tuning profiles](tuning-profiles.md)
-- [Stage 4b implementation plan](../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md)
+- [Stage 4b implementation plan](../../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md)
 
-## Constructive origin contract (G18)
+## Constructive origin contract
 
 Generation creates the mandatory origin scaffold first, then may add variation using origin-only parameters. Optional variation cannot replace or weaken the scaffold.
 
@@ -28,8 +33,12 @@ The origin guarantees:
 - every naturally deposit-bearing material resource is present in a nonzero quantity on at least one body;
 - exactly one starting functional Collector, in the first generated body's first slot;
 - no starting Battery, Extractor, Refinery, or Habitat;
-- starting stocks of `10 Energy`, `10 Ore`, and `0 Alloy`; and
+- profile-authored starting stocks; and
 - an origin community at population `0`. The origin remains commandable at zero population.
+
+The active `starter` stock values are owned by
+[`content/profiles/starter.ron`](../../../content/profiles/starter.ron). Their
+exact quantities are mutable tuning, not part of the structural guarantee.
 
 Origin resource-bearing-body counts, per-body quantities, and placement use validated origin-specific distributions. Mandatory presence is not a universal quantity floor. A resource may occur on multiple origin bodies.
 
@@ -43,33 +52,16 @@ Every non-origin system uses frontier parameters independently of the origin.
 
 Frontier system strength is represented in hundredths and sampled from a bounded triangular distribution over `0.10..=3.00` with mode `1.00`. It scales the complete-cycle output of every Collector in the system.
 
-Each frontier body has an eccentricity represented in hundredths and sampled from a bounded triangular distribution over `0.00..=1.50` with mode `1.00`:
+Each frontier body has an eccentricity represented in hundredths and sampled
+from a bounded triangular distribution over `0.00..=1.50` with mode `1.00`.
+Strength and eccentricity are immutable generated map properties. Strength
+changes complete-cycle Collector production; eccentricity changes only its
+phase distribution.
 
-- `0.00` removes seasonal variation;
-- `1.00` applies the standard seasonal curve; and
-- `1.50` amplifies the curve while retaining nonnegative phase weights.
-
-All bodies use the ten-phase shape:
-
-```text
-[40, 40, 30, 20, 10, 10, 20, 30, 40, 40]
-```
-
-Its baseline average is `28` and its cycle total is `280`. For a phase whose normalized standard multiplier is `phase_multiplier`:
-
-```text
-seasonal_multiplier = 1 + eccentricity × (phase_multiplier - 1)
-```
-
-The exact Collector cycle budget is based on:
-
-```text
-280 × strength
-```
-
-The fixed-point result rounds up only when its fractional part is at least `0.8`; otherwise it rounds down. No fractional remainder carries between cycles. Eccentricity redistributes this fixed integer budget among phases. Deterministic largest-remainder apportionment converts exact phase shares to integer Energy, with ascending phase order breaking ties.
-
-Strength therefore changes complete-cycle production; eccentricity changes only its phase-to-phase distribution. Strength, eccentricity, and phase are physical map properties, not development state.
+[Energy and Seasons](energy-and-seasons.md#ten-phase-seasonal-curve) owns the
+profile-authored curve, scaling formula, fixed-point rounding, and deterministic
+phase apportionment. World generation supplies the validated properties to that
+mechanic rather than owning a second copy of its production contract.
 
 ### Bodies, slots, and material resources
 

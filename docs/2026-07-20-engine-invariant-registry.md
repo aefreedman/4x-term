@@ -267,7 +267,7 @@ with the implementation change.
 - **Failure evidence:** Tick/phase/system/ship identity and complete structural
   before/after world state.
 
-### G18-ORIGIN-STRUCTURE — Constructed origin prerequisites
+### WORLDGEN-CONSTRUCTIVE-ORIGIN — Constructed origin prerequisites
 
 - **Status:** active for `core:frontier_world@1`.
 - **Exact oracle:** Revision 1 places the origin at `(0, 0, 0)`, with
@@ -312,7 +312,7 @@ with the implementation change.
 
 ## Reserved and explicitly unadopted entries
 
-### G18-NEIGHBORHOOD-STRUCTURE — No Stage 4b neighborhood guarantee
+### WORLDGEN-NO-NEIGHBORHOOD-GUARANTEE — No Stage 4b neighborhood guarantee
 
 - **Status:** not adopted for Stage 4b.
 - **Decision:** The procedural frontier has no mandatory nearby witness,
@@ -351,7 +351,7 @@ a frontend API.
 | Stable IDs and population tokens | Active invariant/Tier 1 | INV-ID-001 and INV-POPULATION-001. |
 | Global phase-major simulation | Active invariant/Tier 1 | INV-TICK-001 and complete-state rollback evidence. |
 | Scouting, reports, and player redaction | Active invariant/Tier 1 | INV-KNOWLEDGE-001 plus delayed mission-outcome fixtures. |
-| Constructive origin | Active revision-1 guarantee | G18-ORIGIN-STRUCTURE. |
+| Constructive origin | Active revision-1 guarantee | WORLDGEN-CONSTRUCTIVE-ORIGIN. |
 | Generator identity | Active revision-1 invariant | INV-GENERATION-IDENTITY-001. |
 | Frontier count/connectivity/quality | Not adopted | No executable test/CI oracle found; local texture is not acceptance. |
 | Automated logistics | Reserved | No current mechanism or executable contract. |

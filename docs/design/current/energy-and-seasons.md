@@ -1,8 +1,10 @@
 ---
 title: "Energy and Seasons"
-type: design
+type: design-current
 status: approved
-source: "../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
+authority: normative
+horizon: current
+source: "../../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
 ---
 # Energy and Seasons
 
@@ -32,33 +34,32 @@ System, body, stock, and resource ownership are defined in
 
 ## Ten-phase seasonal curve
 
-All bodies share the normalized ten-phase shape derived from:
+All bodies share the authored ten-phase shape and baseline from the selected
+profile. The active `starter` values are owned by
+[`content/profiles/starter.ron`](../../../content/profiles/starter.ron), not by
+this page. Validation requires the ten shape values to sum to ten times the
+baseline.
+
+For a phase shape value `p` and authored baseline `b`:
 
 ```text
-[40, 40, 30, 20, 10, 10, 20, 30, 40, 40]
-```
-
-Its baseline average is `28`, and its baseline complete-cycle total is `280`.
-For a phase shape value `p`, `phase_multiplier = p / 28`. Eccentricity then
-scales that phase's deviation from the baseline:
-
-```text
+phase_multiplier    = p / b
 seasonal_multiplier = 1 + eccentricity × (phase_multiplier - 1)
 ```
 
 The consequences are deliberate:
 
 - eccentricity `0.00` removes seasonal variation;
-- eccentricity `1.00` applies the standard curve;
+- eccentricity `1.00` applies the authored curve;
 - eccentricity `1.50` amplifies it while keeping phase weights nonnegative; and
 - changing eccentricity never changes complete-cycle output.
 
 ## Integer production contract
 
-Strength determines each Collector's integer complete-cycle budget from
-`280 × strength`. The exact fixed-point result rounds up only when its
-fractional part is at least `0.8`; otherwise it rounds down. Fractions do not
-carry into later cycles.
+For baseline `b`, strength determines each Collector's integer complete-cycle
+budget from `10 × b × strength`. The exact fixed-point result rounds up only
+when its fractional part is at least `0.8`; otherwise it rounds down. Fractions
+do not carry into later cycles.
 
 Eccentricity redistributes that integer budget across the ten phases.
 Deterministic largest-remainder apportionment turns exact phase shares into
@@ -106,17 +107,10 @@ complete route Energy atomically from the source system and records that spend
 in source accounting. Travel carries no Energy balance and cannot later request
 more.
 
-For a fixed route:
-
-```text
-leg_distance       = ceil_sqrt(squared_coordinate_distance)
-total_route_distance = sum(leg_distance)
-launch_energy      = ceil(total_route_distance × ship_energy_rate)
-```
-
-Probe and expedition Energy rates are separately authored tuning. A command
-fails without mutation if distance, cost, stock, reference, or other validation
-fails.
+[Geometric reachability](world-generation.md#geometric-reachability) owns leg
+distance, route distance, and launch-Energy formulas. Probe and expedition
+Energy rates are separately authored tuning. A command fails without mutation
+if distance, cost, stock, reference, or other validation fails.
 
 Construction and Shipyard enqueue costs are physical material commitments, not
 operational Energy spending. Shipyard per-progress-tick Energy and ship launch

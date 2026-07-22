@@ -11,7 +11,7 @@ source_direction: docs/plans/2026-07-20-testing-stance-correction.md
 
 This is the Stage 1 decision record for moving from the runnable authored
 20-system market-trading prototype to the governance-and-expansion game in the
-[Governance Sandbox](../2026-07-20-design-direction-governance-sandbox.md). It
+[Governance Sandbox](../design/direction/foundations.md). It
 classifies responsibilities, not whole files, as **keep**, **reshape**,
 **replace**, or **remove**. A file appears in more than one row when it contains
 both durable contracts and obsolete product assumptions.

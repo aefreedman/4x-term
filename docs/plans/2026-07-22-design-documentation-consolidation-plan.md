@@ -1,9 +1,9 @@
 ---
 title: "Design Documentation Consolidation and Reconciliation"
 type: documentation-plan
-status: draft
+status: completed
 date: 2026-07-22
-review_state: owner-responses-recorded
+review_state: owner-approved-and-implemented
 tags:
   - design
   - documentation
@@ -313,7 +313,7 @@ unless a current design contract defines them.
 
 ### Ideas
 
-Move `docs/ideas.md` to a proposed stable path:
+Move `docs/design/ideas/README.md` to a proposed stable path:
 
 ```text
 docs/design/ideas/future-feature-ideas.md
@@ -351,9 +351,9 @@ receives its successful outcome. The foundation describes delegation and
 attenuated remote control as G15, while current ship design explicitly excludes
 that behavior. Evidence:
 
-- `docs/design/ships-and-expansion.md:149-157`
-- `docs/design/systems-and-resources.md:140-147`
-- `docs/2026-07-20-design-direction-governance-sandbox.md:140-149`
+- `docs/design/current/ships-and-expansion.md:149-157`
+- `docs/design/current/systems-and-resources.md:140-147`
+- `docs/design/direction/README.md#legacy-g-label-mapping`
 
 Proposed reconciliation: current direct control remains authoritative;
 delegation-by-distance is labeled committed long-term direction, not current
@@ -371,9 +371,9 @@ scouting has delayed probe/ship observations and explicitly excludes population,
 stocks, developments, queues, and similar runtime state. The ideas file again
 presents richer two-channel information as a possible later feature. Evidence:
 
-- `docs/design/scouting-and-knowledge.md:8-11,98-113,175-181`
-- `docs/2026-07-20-design-direction-governance-sandbox.md:94-113`
-- `docs/ideas.md:199-211`
+- `docs/design/current/scouting-and-knowledge.md:8-11,98-113,175-181`
+- `docs/design/direction/README.md#legacy-g-label-mapping`
+- `docs/design/ideas/README.md`
 
 Proposed reconciliation: retain ship/probe observations as current; classify the
 full comms-plus-ships model as directional only if G10 is still committed. Keep
@@ -391,8 +391,8 @@ G11 and G12 call specialists-on-population and tertiary production decisions,
 while the ideas file describes both as possible later features and current
 design contains only Ore → Alloy. Evidence:
 
-- `docs/2026-07-20-design-direction-governance-sandbox.md:114-124`
-- `docs/ideas.md:112-130,186-197`
+- `docs/design/direction/README.md#legacy-g-label-mapping`
+- `docs/design/ideas/README.md`
 
 Proposed reconciliation: if the principles remain settled, keep them in
 `direction/`; leave exact specialist types, training, locks, recipes, and upkeep
@@ -409,9 +409,9 @@ The foundation makes precursor ruins central to the premise, but current
 revision-1 generation has no reclaimable-site requirement. Resource ruins and
 site reclamation appear as future ideas. Evidence:
 
-- `docs/design/world-generation.md:151-155`
-- `docs/2026-07-20-design-direction-governance-sandbox.md:135-139,151-160`
-- `docs/ideas.md:159-184`
+- `docs/design/current/world-generation.md:151-155`
+- `docs/design/direction/README.md#legacy-g-label-mapping`
+- `docs/design/ideas/README.md`
 
 Proposed reconciliation: current frontier generation produces empty geography
 and resources; ruins are lore and/or committed direction but not generated
@@ -430,9 +430,9 @@ future body types, suitability, and precursor infrastructure. Current slots are
 generic, and ideas explicitly reject speculative slot fields in the current
 schema. Evidence:
 
-- `docs/design/systems-and-resources.md:14-21,42-54`
-- `docs/2026-07-20-design-direction-governance-sandbox.md:125-134`
-- `docs/ideas.md:5-27`
+- `docs/design/current/systems-and-resources.md:14-21,42-54`
+- `docs/design/direction/README.md#legacy-g-label-mapping`
+- `docs/design/ideas/README.md`
 
 Proposed reconciliation: keep the hierarchy in current design; classify body
 and slot differentiation as ideas unless it is a committed direction.
@@ -449,8 +449,8 @@ G1 states that failed communities persist as reclaimable ruins across or within
 later play, while current design lacks community ruin transitions and the
 foundation leaves origin succession/run structure open in Q10. Evidence:
 
-- `docs/2026-07-20-design-direction-governance-sandbox.md:54-57,272-275`
-- `docs/design/population-and-habitats.md:50-56`
+- `docs/design/direction/README.md#legacy-g-label-mapping`
+- `docs/design/current/population-and-habitats.md:50-56`
 
 Proposed reconciliation: retain “the simulation absorbs valid gameplay failure”
 as direction. Keep persistence, reclamation, succession, and cross-run behavior
@@ -467,7 +467,7 @@ open until separately approved.
 The ideas file says Collectors incur normal upkeep, but the approved resource
 engine gives functional Collectors zero Energy upkeep. Evidence:
 
-- `docs/ideas.md:29-39`
+- `docs/design/ideas/README.md`
 - `docs/plans/2026-07-20-feature-constructive-world-generation-stage-4-plan.md:98,163`
 
 Proposed reconciliation: correct the idea's current-state premise to zero
@@ -544,30 +544,30 @@ founding transition, remote commandability, and tick order.
 
 ### Phase 1 — Approve taxonomy and reconciliation answers
 
-- [ ] Record owner responses in this plan.
-- [ ] Resolve Questions 1–17 or explicitly mark any as deferred.
-- [ ] Finalize folder authority, metadata values, and promotion workflow.
-- [ ] Classify the propositions currently bundled under G1–G22 as current
+- [x] Record owner responses in this plan.
+- [x] Resolve Questions 1–17 or explicitly mark any as deferred.
+- [x] Finalize folder authority, metadata values, and promotion workflow.
+- [x] Classify the propositions currently bundled under G1–G22 as current
       foundation, committed direction, open direction, idea, or
       superseded/refined.
-- [ ] Confirm which content is canonical lore.
+- [x] Confirm which content is canonical lore.
 
-Deliverable: this plan changes from `draft` to `approved` with decisions
-recorded.
+Deliverable: owner decisions are recorded before implementation; completion
+records the resulting hierarchy and validation evidence.
 
 ### Phase 2 — Establish structure, metadata, and agent guidance
 
-- [ ] Create the four subfolders.
-- [ ] Rewrite `docs/design/README.md` as the authority and navigation index.
-- [ ] Add a metadata-bearing README to every subfolder.
-- [ ] Move current design pages using Git-aware moves.
-- [ ] Add normalized frontmatter to the founding and ideas documents.
-- [ ] Normalize existing current-page frontmatter without changing mechanics.
-- [ ] Update `AGENTS.md` to require reading `docs/design/README.md` for gameplay
+- [x] Create the four subfolders.
+- [x] Rewrite `docs/design/README.md` as the authority and navigation index.
+- [x] Add a metadata-bearing README to every subfolder.
+- [x] Move current design pages using Git-aware moves.
+- [x] Add normalized frontmatter to the founding and ideas documents.
+- [x] Normalize existing current-page frontmatter without changing mechanics.
+- [x] Update `AGENTS.md` to require reading `docs/design/README.md` for gameplay
       or design work, explain the four authority scopes, forbid treating ideas
       as requirements, require case-by-case conflict classification, and require
       implementation plans to update applicable design documents before merge.
-- [ ] Add the mutable-tuning rule: configuration files own active values while
+- [x] Add the mutable-tuning rule: configuration files own active values while
       design docs own meaning, constraints, and rationale.
 
 Deliverable: every indexed design file declares type, status, authority, and
@@ -575,18 +575,18 @@ horizon, and repository-level agent guidance points to the hierarchy.
 
 ### Phase 3 — Place foundation, lore framework, and topic ideas
 
-- [ ] Move the founding document intact to `direction/foundations.md` while
+- [x] Move the founding document intact to `direction/foundations.md` while
       retaining G labels temporarily as legacy references.
-- [ ] Put the minimum decision/horizon summary needed for safe agent use in
+- [x] Put the minimum decision/horizon summary needed for safe agent use in
       `direction/README.md`; defer broad foundation decomposition until the
       final content phase of this plan.
-- [ ] Create `lore/README.md`, define its authority, and point to the rudimentary
+- [x] Create `lore/README.md`, define its authority, and point to the rudimentary
       lore that remains in the foundation until the final content phase.
-- [ ] Move and split the future-ideas document into focused topic files under
+- [x] Move and split the future-ideas document into focused topic files under
       `ideas/`.
-- [ ] Remove or reframe idea content that incorrectly presents a committed
+- [x] Remove or reframe idea content that incorrectly presents a committed
       direction as optional, according to owner responses.
-- [ ] Ensure ideas use current pages and configuration files as links rather than
+- [x] Ensure ideas use current pages and configuration files as links rather than
       independently asserting current mechanics or mutable values.
 
 Deliverable: the framework makes each file's authority discoverable before the
@@ -594,16 +594,16 @@ foundation is decomposed later in this plan.
 
 ### Phase 4 — Reconcile current contracts and links
 
-- [ ] Apply R1–R7 using the approved responses, limiting foundation edits to
+- [x] Apply R1–R7 using the approved responses, limiting foundation edits to
       what is necessary for correctness before the final decomposition phase.
-- [ ] Add the canonical contract-ownership table.
-- [ ] Reduce duplicated contract prose to the approved scope.
-- [ ] Replace duplicated mutable `starter` values with links to
+- [x] Add the canonical contract-ownership table.
+- [x] Reduce duplicated contract prose to the approved scope.
+- [x] Replace duplicated mutable `starter` values with links to
       `content/profiles/starter.ron`; retain reviewed constraints and frozen
       revision constants where they are themselves the contract.
-- [ ] Update all relative links within `docs/design/`.
-- [ ] Update inbound links from other docs, plans, todos, and root documentation.
-- [ ] Do not retain duplicate files or old-path aliases unless explicitly
+- [x] Update all relative links within `docs/design/`.
+- [x] Update inbound links from other docs, plans, todos, and root documentation.
+- [x] Do not retain duplicate files or old-path aliases unless explicitly
       requested.
 
 Deliverable: all links target one canonical physical document before the
@@ -611,29 +611,29 @@ foundation is split.
 
 ### Phase 5 — Decompose the foundation
 
-- [ ] Split `direction/foundations.md` into focused direction pages after the
+- [x] Split `direction/foundations.md` into focused direction pages after the
       folder framework and current contracts are stable.
-- [ ] Keep `foundations.md` as the concise founding index and durable-principles
+- [x] Keep `foundations.md` as the concise founding index and durable-principles
       entry point rather than preserving the original mixed document unchanged.
-- [ ] Break compound G entries into focused propositions where their concepts,
+- [x] Break compound G entries into focused propositions where their concepts,
       authority, or horizon differ.
-- [ ] Assign semantic decision IDs only to durable cross-document decisions;
+- [x] Assign semantic decision IDs only to durable cross-document decisions;
       use canonical page/heading links for everything else.
-- [ ] Add `legacy_ids` metadata where useful and build an explicit mapping from
+- [x] Add `legacy_ids` metadata where useful and build an explicit mapping from
       every historical G label to its semantic decision(s) and canonical page.
-- [ ] Replace active G references, including G18 in `AGENTS.md`, while leaving
+- [x] Replace active G references, including G18 in `AGENTS.md`, while leaving
       completed implementation plans untouched.
-- [ ] Stop introducing sequential G/Q labels.
-- [ ] Move rudimentary setting material into focused lore pages, including
+- [x] Stop introducing sequential G/Q labels.
+- [x] Move rudimentary setting material into focused lore pages, including
       `lore/precursor-aftermath.md` when the extracted content supports it.
-- [ ] Keep unresolved fiction in lore pages and mark it clearly so canonical
+- [x] Keep unresolved fiction in lore pages and mark it clearly so canonical
       setting context is distinguishable from undecided detail.
-- [ ] Move optional mechanisms into the appropriate focused idea pages rather
+- [x] Move optional mechanisms into the appropriate focused idea pages rather
       than retaining them as directional commitments.
-- [ ] Keep committed long-term outcomes in direction pages while linking to the
+- [x] Keep committed long-term outcomes in direction pages while linking to the
       current pragmatic implementation where one exists.
-- [ ] Update direction and lore README indexes after the split.
-- [ ] Review the decomposed result as a content change separately from the
+- [x] Update direction and lore README indexes after the split.
+- [x] Review the decomposed result as a content change separately from the
       earlier path/metadata moves so semantic changes remain visible.
 
 Deliverable: the founding material is expressed through focused direction and
@@ -643,17 +643,18 @@ remaining the active vocabulary.
 
 ### Phase 6 — Validate and record deferred plan extraction
 
-- [ ] Run metadata/index validation.
-- [ ] Run relative Markdown-link validation.
-- [ ] Search for old paths and obsolete titles.
-- [ ] Review the diff for accidental mechanic changes.
-- [ ] Record, but do not execute, a follow-up audit of `docs/plans/` for current
+- [x] Run metadata/index validation.
+- [x] Run relative Markdown-link validation.
+- [x] Search for old paths and obsolete titles.
+- [x] Review the diff for accidental mechanic changes.
+- [x] Record, but do not execute, a follow-up audit of `docs/plans/` for current
       contracts not represented under `docs/design/current/`.
 
-Known deferred extraction candidate:
-`docs/design/tuning-profiles.md:73-77` currently delegates retained
-resource-engine behavior to the completed Stage 4 plan. This violates the target
-self-contained authority model and should seed the later plan-audit discussion.
+The deferred audit is recorded in
+`todos/003-pending-p2-audit-plans-for-design-truth.md`. The originally known
+`tuning-profiles.md` dependency was resolved during consolidation by linking
+focused current owners and same-repository configuration; the broader plan audit
+remains intentionally deferred.
 
 ## Validation strategy
 
@@ -675,10 +676,8 @@ should be deterministic and repository-local.
 ### Link and path tests
 
 - Validate every relative Markdown link beneath `docs/design/` resolves.
-- Search the repository for:
-  - `docs/ideas.md`;
-  - `2026-07-20-design-direction-governance-sandbox.md`;
-  - old `docs/design/<topic>.md` paths.
+- Search the repository for retired root-level ideas paths, the retired dated
+  foundation filename, and old `docs/design/<topic>.md` paths.
 - Update intentional citations; report any intentionally retained historical
   text rather than silently leaving a broken path.
 
@@ -708,37 +707,37 @@ should be deterministic and repository-local.
 
 ## Acceptance criteria
 
-- [ ] `docs/design/` contains `current/`, `direction/`, `lore/`, and `ideas/`,
+- [x] `docs/design/` contains `current/`, `direction/`, `lore/`, and `ideas/`,
       each with an indexed README.
-- [ ] Every design document has explicit type, status, authority, and horizon
+- [x] Every design document has explicit type, status, authority, and horizon
       metadata, using `exploratory` for uncommitted future ideas.
-- [ ] Root and subfolder README files explain agent behavior and authority
+- [x] Root and subfolder README files explain agent behavior and authority
       precedence in plain language.
-- [ ] `AGENTS.md` directs agents to the design hierarchy and requires applicable
+- [x] `AGENTS.md` directs agents to the design hierarchy and requires applicable
       design-document updates as part of reviewed implementation work.
-- [ ] Current mechanical contracts are located under `current/` and remain
+- [x] Current mechanical contracts are located under `current/` and remain
       mechanically unchanged unless an owner response explicitly approves a
       reconciliation change.
-- [ ] The founding material remains identifiable as the project's foundation
+- [x] The founding material remains identifiable as the project's foundation
       and is decomposed in the final content phase after the framework is
       established.
-- [ ] Historical G1–G22 references resolve through an explicit legacy mapping;
+- [x] Historical G1–G22 references resolve through an explicit legacy mapping;
       active guidance uses canonical links and focused semantic IDs only where
       needed.
-- [ ] Compound G entries are split when they contain propositions with different
+- [x] Compound G entries are split when they contain propositions with different
       authority or horizons, and new sequential G/Q labels are prohibited.
-- [ ] Committed direction is distinguishable from current implementation.
-- [ ] Lore is distinguishable from mechanical contracts.
-- [ ] Ideas are explicitly non-authoritative and contain no accidental current
+- [x] Committed direction is distinguishable from current implementation.
+- [x] Lore is distinguishable from mechanical contracts.
+- [x] Ideas are explicitly non-authoritative and contain no accidental current
       requirements.
-- [ ] R1–R7 are resolved or explicitly documented as deferred conflicts.
-- [ ] Relative links resolve and repository references use canonical new paths.
-- [ ] Package-index searches can reliably include current design and exclude
+- [x] R1–R7 are resolved or explicitly documented as deferred conflicts.
+- [x] Relative links resolve and repository references use canonical new paths.
+- [x] Package-index searches can reliably include current design and exclude
       ideas using metadata.
-- [ ] Mutable tuning values use repository config links as their source of truth;
+- [x] Mutable tuning values use repository config links as their source of truth;
       reviewed design constraints and revision-frozen constants remain explicit.
-- [ ] No duplicate compatibility copies of moved documents remain.
-- [ ] A separate follow-up need for extracting current contracts from plans is
+- [x] No duplicate compatibility copies of moved documents remain.
+- [x] A separate follow-up need for extracting current contracts from plans is
       recorded without expanding this migration into a plan audit.
 
 ## Risks and mitigations
@@ -789,8 +788,8 @@ behavior. No external research or API documentation was needed.
 - Existing current design pages consistently use `type: design` and
   `status: approved`, but ideas and the founding document lack equivalent
   frontmatter. Evidence: current file headers throughout `docs/design/`;
-  `docs/ideas.md:1-3`;
-  `docs/2026-07-20-design-direction-governance-sandbox.md:1-9`.
+  `docs/design/ideas/README.md`;
+  `docs/design/direction/README.md#legacy-g-label-mapping`.
 - The current index mixes approved contracts, a completed implementation plan,
   the founding direction, and future ideas in one navigation section. Evidence:
   `docs/design/README.md:43-49`.
@@ -802,8 +801,8 @@ behavior. No external research or API documentation was needed.
 ## Related documents
 
 - `docs/design/README.md`
-- `docs/ideas.md`
-- `docs/2026-07-20-design-direction-governance-sandbox.md`
+- `docs/design/ideas/README.md`
+- `docs/design/direction/README.md#legacy-g-label-mapping`
 - `docs/architecture.md`
 - `content/profiles/starter.ron`
 - `AGENTS.md`

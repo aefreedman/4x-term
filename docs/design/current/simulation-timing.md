@@ -1,8 +1,10 @@
 ---
 title: "Simulation Timing"
-type: design
+type: design-current
 status: approved
-source: "../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
+authority: normative
+horizon: current
+source: "../../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
 ---
 # Simulation Timing
 

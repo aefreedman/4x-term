@@ -502,7 +502,7 @@ Validation:
 
 ### Documentation to Update
 
-- [x] `docs/2026-07-20-design-direction-governance-sandbox.md` — stage bank/develop before expand and redefine G18 structurally.
+- [x] `docs/design/direction/README.md#legacy-g-label-mapping` — stage bank/develop before expand and redefine G18 structurally.
 - [x] `docs/plans/2026-07-20-testing-stance-correction.md` — split Stage 4 engine work from Stage 4b generation/outward work.
 - [x] `docs/2026-07-20-engine-invariant-registry.md` — reserve structural Stage 4b G18 and generation-identity entries.
 - [x] `docs/architecture.md` — document the Stage 4 engine and Stage 4b generator handoff.
@@ -510,7 +510,7 @@ Validation:
 
 ### Intentional Follow-up
 
-- `docs/ideas.md` records future slot restrictions and body/slot bonuses; Stage 4 slots remain generic.
+- `docs/design/ideas/infrastructure-and-slots.md` records future slot restrictions and body/slot bonuses; Stage 4 slots remain generic.
 - `docs/plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md`: constructive origin/frontier placement, generator identity/provenance, optional procedural texture, and one bounded outward action.
 - Playable startup and terminal composition.
 - Deeper scouting, crewed expeditions, reclamation, population arrival/change, and richer resource chains.
@@ -526,7 +526,7 @@ References use paths relative to the repository root.
 - **E2 — current core world/resource types:** `crates/game-core/src/lib.rs:77-208,285-313`
 - **E3 — checked validation and resource mutation:** `crates/game-core/src/lib.rs:536-687,712-757`
 - **E4 — corrected structural generated-world testing stance and Stage 4/4b split:** `docs/plans/2026-07-20-testing-stance-correction.md`
-- **E5 — staged G6 allocation and structural G18 direction:** `docs/2026-07-20-design-direction-governance-sandbox.md`
+- **E5 — staged G6 allocation and structural G18 direction:** `docs/design/direction/README.md#legacy-g-label-mapping`
 - **E6 — reserved structural G18 and generation-identity entries:** `docs/2026-07-20-engine-invariant-registry.md`
 - **E7 — retained CI gates:** `.github/workflows/ci.yml:1-22`; `README.md:39-49`
 

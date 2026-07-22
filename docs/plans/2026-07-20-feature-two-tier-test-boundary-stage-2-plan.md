@@ -571,7 +571,7 @@ Reference roots:
 
 - `AGENTS.md:16-27` — contributor rules for generated failures, Tier 1 behavior,
   constructive generation, and compatibility.
-- `docs/2026-07-20-design-direction-governance-sandbox.md:214-226` — product-level
+- `docs/design/direction/README.md#legacy-g-label-mapping` — product-level
   two-tier testing direction.
 - `.github/workflows/ci.yml:15-26` — commands that Stage 2 must preserve.
 

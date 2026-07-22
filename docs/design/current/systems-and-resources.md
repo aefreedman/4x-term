@@ -1,8 +1,10 @@
 ---
 title: "Systems and Resources"
-type: design
+type: design-current
 status: approved
-source: "../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
+authority: normative
+horizon: current
+source: "../../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
 ---
 # Systems and Resources
 
@@ -80,28 +82,22 @@ which Extractors draw first.
 
 ## Origin and frontier structure
 
-The origin is constructed from its own parameter set and is never selected from
-ordinary frontier output. Its mandatory physical scaffold is:
+[World Generation](world-generation.md#constructive-origin-contract) owns the
+origin scaffold, reviewed generator ranges, and valid frontier outcomes. This
+page owns their runtime and physical-ownership consequences:
 
-- system strength exactly `1.0`;
-- `4..=12` bodies, each with eccentricity exactly `1.0`;
-- `3..=8` generic slots on every body;
-- a nonzero quantity of every deposit-bearing material resource, potentially on
-  multiple origin bodies;
-- exactly one functional Collector in the first body's first slot;
-- no starting Battery, Extractor, or Refinery, and no starting Habitat; and
-- starting stocks of `10 Energy`, `10 Ore`, and `0 Alloy`.
+- generated system and body facts remain map-definition-owned;
+- body resources receive runtime depletion state without becoming stocks;
+- generated developments occupy their generated body slots;
+- profile-authored starting stocks become origin system stocks;
+- the origin begins commandable at population zero; and
+- neutral frontier systems begin without control, stocks, population,
+  developments, queues, projects, or ships.
 
-The origin begins with population zero and remains commandable. It has no
-required resource-quantity floor beyond nonzero presence, no required nearby
-resource witness, and no economic solvency or surplus guarantee.
-
-Every non-origin system uses frontier parameters. Frontier systems have `1..=12`
-bodies and `1..=8` slots per body under the approved discrete triangular
-distributions. Their stellar strength is `0.1..=3.0`, and body eccentricity is
-`0.00..=1.50`. Resource presence is independent per deposit-bearing resource;
-absence is valid. Frontier connectivity, reachability, and favorable resource
-distribution are not system invariants.
+The active `starter` quantities are owned by
+[`content/profiles/starter.ron`](../../../content/profiles/starter.ron). No
+runtime ownership rule creates a neighborhood, solvency, connectivity, or
+resource-distribution guarantee.
 
 ## Stocks and physical accounting
 

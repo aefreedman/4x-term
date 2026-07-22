@@ -59,14 +59,14 @@ No Tokio, `anyhow`, or tracing dependency is present.
 | --- | --- |
 | Stage 5 direction and testing stance | [Testing Stance Correction](2026-07-20-testing-stance-correction.md) |
 | Current crate and player-view boundary | [Architecture](../architecture.md) |
-| Governance-game identity and core loop | [Governance Sandbox](../2026-07-20-design-direction-governance-sandbox.md) |
+| Governance-game identity and core loop | [Governance Sandbox](../design/direction/foundations.md) |
 | Retained frontend lessons | [Frontend Architecture Lessons](../2026-07-20-frontend-architecture-lessons.md) |
-| Generated-world contracts | [World Generation](../design/world-generation.md) |
-| Profile and generator identity | [Generator Identity](../design/generator-identity.md) |
-| Origin infrastructure | [Systems and Resources](../design/systems-and-resources.md) |
-| Population bootstrap | [Population and Habitats](../design/population-and-habitats.md) |
-| Player-safe knowledge | [Scouting and Knowledge](../design/scouting-and-knowledge.md) |
-| Probes, expeditions, and founding | [Ships and Expansion](../design/ships-and-expansion.md) |
+| Generated-world contracts | [World Generation](../design/current/world-generation.md) |
+| Profile and generator identity | [Generator Identity](../design/current/generator-identity.md) |
+| Origin infrastructure | [Systems and Resources](../design/current/systems-and-resources.md) |
+| Population bootstrap | [Population and Habitats](../design/current/population-and-habitats.md) |
+| Player-safe knowledge | [Scouting and Knowledge](../design/current/scouting-and-knowledge.md) |
+| Probes, expeditions, and founding | [Ships and Expansion](../design/current/ships-and-expansion.md) |
 | Active invariant evidence | [Engine Invariant Registry](../2026-07-20-engine-invariant-registry.md) |
 | Implemented dependency | [Stage 4b Plan](2026-07-20-feature-constructive-world-generation-stage-4b-plan.md) |
 
