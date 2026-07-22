@@ -41,9 +41,11 @@
   systems open local management directly, active ships appear at their current
   map position as a simple `+`, and system uncertainty
   visuals are deterministically assigned from Plain plus twelve variants each
-  of Irregular, Interference, Directional, and Compact forms. Visual centers
-  may be offset, collisions are allowed, anonymous real-position texture
-  renders as frontier fog, and generated startup previews use gameplay scale.
+  of Irregular, Interference, Directional, and Compact forms. Visual pivots
+  remain within four map units of their systems, collisions are allowed, and
+  discovery overlays the exact `*` or selected `@` without removing the visual.
+  Anonymous texture renders as frontier fog, and generated startup previews use
+  gameplay scale.
 - Local-system management can enable or disable any development while
   preserving progress and queues; local details expose system resource stocks,
   slot rows expose construction progress, body rows expose remaining resources,

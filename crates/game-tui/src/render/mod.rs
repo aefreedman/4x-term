@@ -335,6 +335,13 @@ fn selected_glyph(glyph: &'static str, selected: bool) -> &'static str {
     }
 }
 
+fn place_chart_marker(grid: &mut [Vec<(&'static str, Color)>], x: usize, y: usize, selected: bool) {
+    grid[y][x] = (
+        if selected { "@" } else { "*" },
+        if selected { Color::Cyan } else { Color::Gray },
+    );
+}
+
 fn place_ship_marker(grid: &mut [Vec<(&'static str, Color)>], x: usize, y: usize) {
     if grid[y][x].0 != "@" {
         grid[y][x] = ("+", Color::Yellow);
@@ -461,8 +468,6 @@ fn place_system_visual(
         SystemVisual::Directional => D,
         SystemVisual::Compact => E,
     };
-    let offset_x = i64::try_from((hash >> 16) % 9).unwrap_or(0) - 4;
-    let offset_y = i64::try_from((hash >> 24) % 7).unwrap_or(0) - 3;
     let color = if selected {
         Color::White
     } else {
@@ -472,8 +477,8 @@ fn place_system_visual(
     let width = i64::try_from(grid.first().map_or(0, Vec::len)).unwrap_or(0);
     for &(dx, dy, glyph) in cells {
         let (dx, dy) = transformed(dx, dy, variant);
-        let x = center_x + offset_x + dx as i64;
-        let y = center_y + offset_y + dy as i64;
+        let x = center_x + dx as i64;
+        let y = center_y + dy as i64;
         if x >= 0 && x < width && y >= 0 && y < height {
             grid[y as usize][x as usize] = (selected_glyph(glyph, selected), color);
         }
@@ -528,27 +533,12 @@ fn render_dashboard(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
             false,
         );
     }
-    for system in view
-        .systems
-        .iter()
-        .filter(|system| system.chart_position.is_none())
-    {
-        let hash = assignment_hash(view.seed, system.visual_key);
-        let x = u64::try_from(inner_width)
-            .ok()
-            .filter(|width| *width != 0)
-            .and_then(|width| i64::try_from(hash % width).ok())
-            .unwrap_or(0);
-        let y = u64::try_from(inner_height)
-            .ok()
-            .filter(|height| *height != 0)
-            .and_then(|height| i64::try_from((hash >> 32) % height).ok())
-            .unwrap_or(0);
+    for system in &view.systems {
         place_system_visual(
             &mut grid,
-            x,
-            y,
-            hash,
+            map_center_x + system.visual_coordinate.x,
+            map_center_y - system.visual_coordinate.y,
+            assignment_hash(view.seed, system.visual_key),
             selected_id == Some(&system.system_id),
         );
     }
@@ -561,10 +551,7 @@ fn render_dashboard(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         let y = (map_center_y - entry.coordinate.y)
             .clamp(0, i64::try_from(inner_height - 1).unwrap_or(0)) as usize;
         let selected = selected_id == Some(&entry.system_id);
-        grid[y][x] = (
-            if selected { "@" } else { "*" },
-            if selected { Color::Cyan } else { Color::Gray },
-        );
+        place_chart_marker(&mut grid, x, y, selected);
     }
     for position in &view.active_ship_positions {
         if inner_width == 0 || inner_height == 0 {
@@ -1590,6 +1577,23 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn chart_marker_replaces_only_the_actual_position_inside_a_persistent_cloud() {
+        let mut grid = vec![vec![(" ", Color::Reset); 21]; 21];
+        place_system_visual(&mut grid, 10, 10, 1, false);
+        let before = grid.clone();
+
+        place_chart_marker(&mut grid, 10, 10, false);
+        assert_eq!(grid[10][10], ("*", Color::Gray));
+        for y in 0..grid.len() {
+            for x in 0..grid[y].len() {
+                if (x, y) != (10, 10) {
+                    assert_eq!(grid[y][x], before[y][x]);
+                }
+            }
+        }
     }
 
     #[test]

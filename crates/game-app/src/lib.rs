@@ -10,7 +10,7 @@ use game_content::{
 };
 use game_core::{
     BodySnapshot, CompletedAsset, CoreError, FactKey, FactValue, MissionState, PlayerWorldView,
-    Position3, RedactedRoute, ResourceStore, SystemSnapshot, WorldState,
+    Position3, RedactedRoute, ResourceStore, SystemSnapshot, WorldDefinition, WorldState,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -281,6 +281,8 @@ impl StartupCoordinator {
         let prepared = self.prepared.take().ok_or_else(|| {
             StartupFailure::InvalidStart("No generated preview is available".into())
         })?;
+        let visual_coordinates =
+            map_visual_coordinates(prepared.artifact.definition(), prepared.view.seed);
         let world = WorldState::new(prepared.artifact.definition().clone()).map_err(|error| {
             StartupFailure::InvalidStart(format!("generated world could not start: {error}"))
         })?;
@@ -290,6 +292,7 @@ impl StartupCoordinator {
             seed: prepared.view.seed,
             profile_name: prepared.view.profile_name,
             catalogue: prepared.catalogue,
+            visual_coordinates,
             aliases: BTreeMap::new(),
             latest_outcome: None,
         })
@@ -407,18 +410,16 @@ fn preview_view(
             .locations
             .iter()
             .enumerate()
-            .filter(|(_, location)| location.id != definition.origin_system)
             .filter_map(|(index, location)| {
-                let divisor = i64::try_from(definition.tuning.coordinate_quanta_per_map_unit)
-                    .unwrap_or(i64::MAX)
-                    .max(1);
+                let visual_key = u64::try_from(index).ok()?;
                 Some(MapTexturePoint {
-                    coordinate: ChartCoordinate {
-                        x: location.position.x.0.div_euclid(divisor),
-                        y: location.position.y.0.div_euclid(divisor),
-                        z: location.position.z.0.div_euclid(divisor),
-                    },
-                    visual_key: u64::try_from(index).ok()?,
+                    coordinate: map_visual_coordinate(
+                        location.position,
+                        definition.tuning.coordinate_quanta_per_map_unit,
+                        artifact.identity().seed,
+                        visual_key,
+                    ),
+                    visual_key,
                 })
             })
             .collect(),
@@ -434,6 +435,67 @@ pub struct ChartCoordinate {
     pub z: i64,
 }
 
+fn map_visual_coordinates(
+    definition: &WorldDefinition,
+    seed: u64,
+) -> BTreeMap<u64, ChartCoordinate> {
+    definition
+        .locations
+        .iter()
+        .enumerate()
+        .filter_map(|(index, location)| {
+            let visual_key = u64::try_from(index).ok()?;
+            Some((
+                visual_key,
+                map_visual_coordinate(
+                    location.position,
+                    definition.tuning.coordinate_quanta_per_map_unit,
+                    seed,
+                    visual_key,
+                ),
+            ))
+        })
+        .collect()
+}
+
+fn map_visual_coordinate(
+    position: Position3,
+    coordinate_quanta_per_map_unit: u64,
+    seed: u64,
+    visual_key: u64,
+) -> ChartCoordinate {
+    let divisor = i64::try_from(coordinate_quanta_per_map_unit)
+        .unwrap_or(i64::MAX)
+        .max(1);
+    let (offset_x, offset_y) = map_visual_pivot_offset(seed, visual_key);
+    ChartCoordinate {
+        x: position.x.0.div_euclid(divisor) + offset_x,
+        y: position.y.0.div_euclid(divisor) + offset_y,
+        z: position.z.0.div_euclid(divisor),
+    }
+}
+
+fn map_visual_pivot_offset(seed: u64, visual_key: u64) -> (i64, i64) {
+    let hash = format!("{seed}:{visual_key}")
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3)
+        });
+    let mut selected = (hash >> 16) % 49;
+    for y in -4_i64..=4 {
+        for x in -4_i64..=4 {
+            if x * x + y * y > 16 {
+                continue;
+            }
+            if selected == 0 {
+                return (x, y);
+            }
+            selected -= 1;
+        }
+    }
+    (0, 0)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MapTexturePoint {
     pub coordinate: ChartCoordinate,
@@ -444,6 +506,7 @@ pub struct MapTexturePoint {
 pub struct SystemListEntry {
     pub system_id: ContentId,
     pub visual_key: u64,
+    pub visual_coordinate: ChartCoordinate,
     pub catalogue_label: String,
     pub alias: Option<String>,
     pub display_label: String,
@@ -925,6 +988,7 @@ pub struct Session {
     seed: u64,
     profile_name: String,
     catalogue: Catalogue,
+    visual_coordinates: BTreeMap<u64, ChartCoordinate>,
     aliases: BTreeMap<ContentId, String>,
     latest_outcome: Option<ApplicationOutcome>,
 }
@@ -1313,6 +1377,10 @@ impl Session {
             systems.push(SystemListEntry {
                 system_id: system.system.clone(),
                 visual_key: system.map_visual_key,
+                visual_coordinate: *self
+                    .visual_coordinates
+                    .get(&system.map_visual_key)
+                    .expect("every projected system retains its generated map visual"),
                 catalogue_label: catalogue_label.clone(),
                 alias: alias.clone(),
                 display_label: display_label.clone(),
@@ -1380,7 +1448,10 @@ impl Session {
                 .frontier_fog
                 .iter()
                 .map(|point| MapTexturePoint {
-                    coordinate: self.chart_coordinate(point.position),
+                    coordinate: *self
+                        .visual_coordinates
+                        .get(&point.map_visual_key)
+                        .expect("every fog point retains its generated map visual"),
                     visual_key: point.map_visual_key,
                 })
                 .collect(),

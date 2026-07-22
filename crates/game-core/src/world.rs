@@ -223,7 +223,6 @@ pub struct PlayerSystemView {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FrontierFogPoint {
-    pub position: Position3,
     pub map_visual_key: u64,
 }
 
@@ -405,9 +404,8 @@ impl WorldState {
                         )
                     })
             })
-            .filter_map(|(index, location)| {
+            .filter_map(|(index, _)| {
                 Some(FrontierFogPoint {
-                    position: location.position,
                     map_visual_key: u64::try_from(index).ok()?,
                 })
             })

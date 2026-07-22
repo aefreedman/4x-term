@@ -75,11 +75,11 @@ fn preview_is_allowlisted_stale_after_edit_and_exactly_consumed() {
 
     let current = startup.generate_preview().expect("regenerated");
     assert_eq!(current.seed, 42);
-    let preview_visual_keys = current
+    let preview_visuals = current
         .frontier_fog
         .iter()
-        .map(|point| point.visual_key)
-        .collect::<std::collections::BTreeSet<_>>();
+        .map(|point| (point.visual_key, point.coordinate))
+        .collect::<std::collections::BTreeMap<_, _>>();
     startup.request_start_current_preview().expect("request");
     let session = startup
         .confirm_start_current_preview()
@@ -95,10 +95,10 @@ fn preview_is_allowlisted_stale_after_edit_and_exactly_consumed() {
         playing
             .frontier_fog
             .iter()
-            .all(|point| preview_visual_keys.contains(&point.visual_key))
+            .all(|point| { preview_visuals.get(&point.visual_key) == Some(&point.coordinate) })
     );
     assert!(playing.systems.iter().all(|system| {
-        system.system_id == id("core:origin") || preview_visual_keys.contains(&system.visual_key)
+        preview_visuals.get(&system.visual_key) == Some(&system.visual_coordinate)
     }));
     assert_eq!(
         playing.local_systems.len(),
@@ -106,6 +106,19 @@ fn preview_is_allowlisted_stale_after_edit_and_exactly_consumed() {
         "neutral runtime remains hidden"
     );
     assert_eq!(playing.local_systems[0].system_id, id("core:origin"));
+}
+
+#[test]
+fn map_visual_pivots_stay_within_four_units_of_actual_positions() {
+    let actual = Position3::from_quanta(17, -9, 4);
+    for seed in [0, 1, u64::MAX] {
+        for visual_key in 0..128 {
+            let visual = map_visual_coordinate(actual, 1, seed, visual_key);
+            let dx = visual.x - actual.x.0;
+            let dy = visual.y - actual.y.0;
+            assert!(dx * dx + dy * dy <= 16, "offset ({dx}, {dy})");
+        }
+    }
 }
 
 #[test]

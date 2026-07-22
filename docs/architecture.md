@@ -187,7 +187,10 @@ claim.
 `StartupCoordinator` loads an explicit `ProfileDescriptor`, generates an
 allowlisted preview, marks it stale after edits, and consumes exactly the
 confirmed artifact. Its generated preview may render anonymous frontier fog at
-gameplay map scale without exposing neutral identities or facts. Machine paths
+gameplay map scale without exposing neutral identities or facts. Session-owned
+map-visual pivots remain within four map units of actual systems and stay stable
+as knowledge changes; discovery overlays the exact chart point rather than
+removing its surrounding visual. Machine paths
 and reproduction metadata do not enter play views. `Session` exclusively owns
 mutable simulation state and accepts typed
 `SessionIntent` values. It returns immutable `PlayingView`, typed rejection and
