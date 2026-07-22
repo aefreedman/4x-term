@@ -3,15 +3,15 @@ title: Frontend Architecture Lessons from the Retired Prototype
 type: reference
 date: 2026-07-20
 status: retained-knowledge
-applies_to: Stage 5 and later user-facing surfaces
+applies_to: user-facing application and terminal surfaces
 ---
 # Frontend Architecture Lessons from the Retired Prototype
 
 ## Purpose
 
-This document preserves implementation and interaction lessons that may help
-Stage 5 rebuild a playable application, CLI, and terminal UI around the
-origin-and-frontier game.
+This document preserves implementation and interaction lessons considered when
+rebuilding the playable application and terminal UI around the
+origin-and-frontier game, and for future user-facing adapters.
 
 It is **not a compatibility contract**. The retired crate APIs, activity model,
 keybindings, view DTOs, and trader/market flows must not constrain the new
@@ -21,7 +21,7 @@ exist.
 
 Current architecture and migration authority remain
 [Architecture](architecture.md), the
-[Testing Stance](2026-07-20-testing-stance-correction.md), and the
+[Testing Stance](plans/2026-07-20-testing-stance-correction.md), and the
 [Governance Sandbox](2026-07-20-design-direction-governance-sandbox.md).
 
 ## Architectural lessons to retain
@@ -79,8 +79,8 @@ explicit:
 5. context-specific activity controls.
 
 This prevented a key intended for a modal from also triggering a global or
-screen action. Stage 5 should retain the separation and precedence tests, while
-choosing new actions and bindings from the new gameplay.
+screen action. User-facing implementations should retain the separation and
+precedence tests while choosing actions and bindings from current gameplay.
 
 Selection cursors, focused sections, scroll positions, open layers, and similar
 presentation state belong in frontend-local state. They should enter the core
@@ -138,9 +138,9 @@ Useful rules were:
 - cancellation and shutdown are messages/signals, not dropped-task side
   effects.
 
-Stage 5 should re-evaluate whether an async owner is needed for its minimum
-playable slice. If it is not yet needed, do not add Tokio merely to recreate the
-old shape.
+The current playable adapter is synchronous and does not need an async owner.
+Do not add Tokio merely to recreate the old shape; re-evaluate it only for a
+concrete future responsibility.
 
 ## Terminal interaction and rendering lessons
 
@@ -151,7 +151,7 @@ layouts plus unsupported-size handling. The exact dimensions are historical,
 but explicit layout classes were easier to reason about than allowing every
 widget to improvise responsive behavior.
 
-For a future TUI:
+For terminal UI work:
 
 - define the minimum supported terminal size deliberately;
 - test at the minimum, immediately below it, and at a representative larger
@@ -228,7 +228,7 @@ Do not carry forward:
 - exact old view field names, channel capacities, event-history limits, or tick
   rates;
 - `game-app`, `game-tui`, or `game-cli` public signatures; or
-- old compact/regular dimensions without a fresh Stage 5 usability decision.
+- old compact/regular dimensions without a fresh usability decision.
 
 Patterns should be justified by the new frontend slice. Historical code is an
 example to consult, not an API to restore.
@@ -236,20 +236,19 @@ example to consult, not an API to restore.
 ## Removed dependency ledger
 
 The following dependencies were direct dependencies of the retired user-facing
-crates and are **not direct dependencies in any Stage 3 manifest**. All are
-absent from the current `Cargo.lock` except `futures-util`, which remains only as
-a transitive dependency of the retained stack. Versions and features record the
-last prototype configuration; they are not pins or automatic Stage 5 choices.
+crates. Versions and features record the last prototype configuration, not
+current pins. The rebuilt synchronous terminal uses Ratatui and Crossterm again;
+Tokio, `anyhow`, and tracing remain absent.
 
-| Dependency | Historical version/features | Former responsibility | Reintroduction guidance |
+| Dependency | Historical version/features | Former responsibility | Current disposition |
 | --- | --- | --- | --- |
-| `anyhow` | `1.0.103` | Startup and terminal-adapter error context in `game-cli` and `game-tui`. | Consider only at executable/adapter boundaries. Libraries should continue exposing typed errors. |
-| `crossterm` | `0.29.0`, feature `event-stream` | Terminal backend, keyboard/resize events, raw mode, alternate screen, cursor and terminal control. | Re-evaluate current release, MSRV, event API, and restoration behavior when a terminal adapter is concrete. |
-| `futures-util` | `0.3.31` | Stream helpers for asynchronous Crossterm event consumption. It remains transitively locked but is no longer declared or used directly by this project. | Add directly only if the selected terminal/event API still needs its traits. |
-| `ratatui` | `0.30.2` | Terminal layout, widgets, styling, frame rendering, and `TestBackend`. | Re-evaluate current release and MSRV; keep it confined to a future TUI crate. |
-| `tokio` | `1.52.3`; features `macros`, `rt-multi-thread`, `sync`, `time`, `signal`, `test-util` | Application owner task, bounded requests, acknowledgements, latest-view publication, timers, signal/shutdown handling, and paused-time tests. | Add only the features required by an accepted async composition. Do not introduce it into `game-core`. |
-| `tracing` | `0.1.44` | Structured startup/runtime diagnostics at the executable boundary. | Reintroduce when a concrete diagnostic consumer exists; keep diagnostics out of renderer state. |
-| `tracing-subscriber` | `0.3.23`; features `env-filter`, `fmt` | CLI installation of filtered formatted trace output. | Keep subscriber selection at the executable boundary and reassess output destinations. |
+| `anyhow` | `1.0.103` | Startup and terminal-adapter error context in `game-cli` and `game-tui`. | Absent; libraries and adapters use typed errors. |
+| `crossterm` | `0.29.0`, feature `event-stream` | Terminal backend, keyboard/resize events, raw mode, alternate screen, cursor and terminal control. | Reintroduced synchronously without `event-stream`, confined to `game-tui`. |
+| `futures-util` | `0.3.31` | Stream helpers for asynchronous Crossterm event consumption. | Not used directly; add only for a concrete asynchronous responsibility. |
+| `ratatui` | `0.30.2` | Terminal layout, widgets, styling, frame rendering, and `TestBackend`. | Reintroduced with minimal features, confined to `game-tui`. |
+| `tokio` | `1.52.3`; features `macros`, `rt-multi-thread`, `sync`, `time`, `signal`, `test-util` | Application owner task, bounded requests, acknowledgements, latest-view publication, timers, signal/shutdown handling, and paused-time tests. | Absent; add only for an accepted async composition and never to `game-core`. |
+| `tracing` | `0.1.44` | Structured startup/runtime diagnostics at the executable boundary. | Absent; reconsider only with a concrete diagnostic consumer. |
+| `tracing-subscriber` | `0.3.23`; features `env-filter`, `fmt` | CLI installation of filtered formatted trace output. | Absent; any future subscriber selection belongs at the executable boundary. |
 
 The removed internal dependency chain was:
 
@@ -259,9 +258,9 @@ game-cli ───────────────────────�
 ```
 
 This records separation of responsibilities, not required crate boundaries.
-Stage 5 may recreate all, some, or none of those crates based on concrete need.
-No new crate or external dependency should be added solely because it appeared
-in the prototype.
+The current product recreated focused `game-app`, `game-tui`, and `game-play`
+crates from concrete needs. No new crate or external dependency should be added
+solely because it appeared in the prototype.
 
 ## Historical implementation pointers
 
@@ -282,5 +281,5 @@ git show c1e8c80^:crates/game-cli/Cargo.toml
 
 Consult those files for behavior archaeology only. Do not copy them into the
 working tree or create an archive. Any retained lesson promoted into a future
-contract must receive a new Stage 5 specification and focused tests against the
+contract must receive a focused specification and tests against the
 origin-and-frontier model.

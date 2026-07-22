@@ -3,7 +3,7 @@ title: Authored Market-World Migration Audit
 type: audit
 date: 2026-07-20
 status: recorded
-source_direction: docs/2026-07-20-testing-stance-correction.md
+source_direction: docs/plans/2026-07-20-testing-stance-correction.md
 ---
 # Authored Market-World Migration Audit
 
@@ -11,7 +11,7 @@ source_direction: docs/2026-07-20-testing-stance-correction.md
 
 This is the Stage 1 decision record for moving from the runnable authored
 20-system market-trading prototype to the governance-and-expansion game in the
-[Governance Sandbox](2026-07-20-design-direction-governance-sandbox.md). It
+[Governance Sandbox](../2026-07-20-design-direction-governance-sandbox.md). It
 classifies responsibilities, not whole files, as **keep**, **reshape**,
 **replace**, or **remove**. A file appears in more than one row when it contains
 both durable contracts and obsolete product assumptions.
@@ -101,7 +101,7 @@ non-playable.
 
 | Responsibility and evidence | Coupling today | Decision and rationale | Owner | Test disposition / bounded follow-up |
 | --- | --- | --- | --- | --- |
-| Stable IDs, deterministic schedule/order, checked integer Energy and validate-before-mutate — `crates/game-core/src/lib.rs`; [atomicity guidance](solutions/rust-ecs-validate-before-mutate.md) | These contracts currently operate through market, recipe, trader, and logistics systems. | **Keep.** They are explicit cross-stage architecture contracts and implement G22.5 independent of current gameplay nouns. | 2–7 | Preserve exact overflow, rejection atomicity, conservation, deterministic-order, and reconciliation fixtures; rewrite fixtures only when obsolete types are removed. |
+| Stable IDs, deterministic schedule/order, checked integer Energy and validate-before-mutate — `crates/game-core/src/lib.rs`; [atomicity guidance](../solutions/rust-ecs-validate-before-mutate.md) | These contracts currently operate through market, recipe, trader, and logistics systems. | **Keep.** They are explicit cross-stage architecture contracts and implement G22.5 independent of current gameplay nouns. | 2–7 | Preserve exact overflow, rejection atomicity, conservation, deterministic-order, and reconciliation fixtures; rewrite fixtures only when obsolete types are removed. |
 | `SystemDefinition`, `Market`, and `CoreSnapshot.markets` — `crates/game-core/src/lib.rs:663-724,1624-1682,2498-2514` | A “system” embeds live economy inputs and the snapshot presents markets as the world. | **Replace.** G17 needs locations without living economic actors and separately composed communities. | 3 | Stage 3 must define only the minimum truthful substrate: dead locations, one living origin, extractable resources, and minimally typed reclaimable sites. Bodies, slots, ruin internals, surveys, and full information design remain out of scope. |
 | Player-trader identity and special player flag — `TraderDefinition` and `Trader` in `crates/game-core/src/lib.rs:725-759,1838-1860` | Player startup is represented as one trader among autonomous market actors. | **Remove, then replace later.** G17 requires origin-community/governor identity. | 2–3, then 5 | Delete the old identity once retained movement/accounting is isolated. Stage 5 adds origin identity without sequencing deletion on replacement coverage. |
 | Independent NPC trader entities and ecology — the same trader types plus `FleetMode` at `crates/game-core/src/lib.rs:525-582` | Autonomous merchants own wallet, cargo, travel, and profitability state. | **Remove.** G19 and G21 reject independent NPC market ecology. | 2–3 | Keep no entity-lifecycle or profitability contract solely for compatibility. |
@@ -245,11 +245,11 @@ This audit deliberately performs no destination implementation:
 - Architecture testing boundary: `docs/architecture.md`
 - Executable/target distinction: `README.md`
 - Transition source of truth:
-  `docs/2026-07-20-testing-stance-correction.md`
+  `docs/plans/2026-07-20-testing-stance-correction.md`
 
 At Stage 1 completion, implementation and CI behavior were intentionally
 unchanged. Stage 2 subsequently moved current durable contracts into the
-[Engine Invariant Registry](2026-07-20-engine-invariant-registry.md) and deleted
+[Engine Invariant Registry](../2026-07-20-engine-invariant-registry.md) and deleted
 superseded working-tree history. Later stages must re-read the cited code before
 acting because line numbers and coupling can change after this audit date.
 
@@ -259,7 +259,7 @@ This section is historical Stage 2 evidence. Paths and test names that Stage 3
 later deleted are not current registry evidence.
 
 - Active and reserved contracts:
-  [Engine Invariant Registry](2026-07-20-engine-invariant-registry.md)
+  [Engine Invariant Registry](../2026-07-20-engine-invariant-registry.md)
 - Direct Tier 1 content fixtures and retained provenance checks:
   `crates/game-content/src/lib.rs`
 - Focused reconciliation, ordering, atomicity, and identifier evidence:

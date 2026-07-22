@@ -44,6 +44,6 @@ than duplicate their rules.
 - [Architecture](../architecture.md)
 - [Completed Stage 4 Resource-Engine Plan](../plans/2026-07-20-feature-constructive-world-generation-stage-4-plan.md)
 - [Governance Sandbox](../2026-07-20-design-direction-governance-sandbox.md)
-- [Testing Stance](../2026-07-20-testing-stance-correction.md)
+- [Testing Stance](../plans/2026-07-20-testing-stance-correction.md)
 - [Engine Invariant Registry](../2026-07-20-engine-invariant-registry.md)
 - [Future Feature Ideas](../ideas.md)

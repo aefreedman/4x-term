@@ -62,14 +62,14 @@ Add a short transitional notice to `README.md`: the runnable build remains the l
 
 Repair the stale internal links introduced by the latest document moves in:
 
-- `docs/2026-07-20-testing-stance-correction.md`
+- `docs/plans/2026-07-20-testing-stance-correction.md`
 - `docs/2026-07-20-design-direction-governance-sandbox.md`
 - `archive/README.md`
 - `todos/007-complete-p1-slice-2-world-dynamics-population-and-player-progression.md`
 
 ### 3. Create the migration-surface audit
 
-Create `docs/2026-07-20-authored-market-world-migration-audit.md` as the Stage 1 decision record. Give every row:
+Create `docs/plans/2026-07-20-authored-market-world-migration-audit.md` as the Stage 1 decision record. Give every row:
 
 - responsibility/mechanism;
 - current files or symbols;
@@ -155,7 +155,7 @@ None beyond normal repository hygiene. Do not include machine-local `.pi/`, `.ob
 
 ### Provisional Assumptions
 
-- `docs/2026-07-20-testing-stance-correction.md` remains the transition source of truth.
+- `docs/plans/2026-07-20-testing-stance-correction.md` remains the transition source of truth.
 - The audit is a dated top-level design document, while this implementation plan lives under `docs/plans/`.
 - No issue tracker integration is configured in `AGENTS.md`, so this plan creates no external issue.
 
@@ -164,7 +164,7 @@ None beyond normal repository hygiene. Do not include machine-local `.pi/`, `.ob
 - [x] `AGENTS.md` records all seven testing/worldgen norms in concise contributor-facing language and states the no-compatibility stance for obsolete gameplay.
 - [x] `docs/architecture.md` documents Tier 1, Tier 2, and descriptive diagnostics, while retaining the named durable architecture contracts.
 - [x] `README.md` clearly distinguishes the runnable legacy prototype from current product direction and no longer presents metastability/player-impact behavior as current acceptance policy.
-- [x] `docs/2026-07-20-authored-market-world-migration-audit.md` inventories every required surface and gives each responsibility evidence, one classification, rationale, future-stage owner, and test disposition.
+- [x] `docs/plans/2026-07-20-authored-market-world-migration-audit.md` inventories every required surface and gives each responsibility evidence, one classification, rationale, future-stage owner, and test disposition.
 - [x] Mixed diagnostic and test responsibilities are split so invariant coverage is not accidentally classified with authored-world quality gates.
 - [x] All links to the renamed governance-sandbox and testing-stance documents resolve.
 - [x] The direction document links to the completed Stage 1 audit without implying later-stage completion.
@@ -183,7 +183,7 @@ None beyond normal repository hygiene. Do not include machine-local `.pi/`, `.ob
 ### Dependencies
 
 - Governance Sandbox G17–G22 and its testing implications. `docs/2026-07-20-design-direction-governance-sandbox.md:180-227`
-- Testing stance, norms, and Stage 1 contract. `docs/2026-07-20-testing-stance-correction.md:46-56,62-107,110-152`
+- Testing stance, norms, and Stage 1 contract. `docs/plans/2026-07-20-testing-stance-correction.md:46-56,62-107,110-152`
 - Existing architecture boundaries and testing strategy. `docs/architecture.md:7,185-193,296-325`
 
 ### Risks
@@ -198,14 +198,14 @@ None beyond normal repository hygiene. Do not include machine-local `.pi/`, `.ob
 
 ### Files to Create
 
-- `docs/2026-07-20-authored-market-world-migration-audit.md` — authoritative Stage 1 inventory and classification record.
+- `docs/plans/2026-07-20-authored-market-world-migration-audit.md` — authoritative Stage 1 inventory and classification record.
 
 ### Files to Modify
 
 - `AGENTS.md` — contributor testing/worldgen norms and compatibility stance.
 - `docs/architecture.md` — two-tier testing architecture and explicit prototype boundaries.
 - `README.md` — transitional legacy-prototype notice and non-authoritative diagnostic labels.
-- `docs/2026-07-20-testing-stance-correction.md` — repaired links and Stage 1 audit reference/status.
+- `docs/plans/2026-07-20-testing-stance-correction.md` — repaired links and Stage 1 audit reference/status.
 - `docs/2026-07-20-design-direction-governance-sandbox.md` — repaired testing-direction link.
 - `archive/README.md` — repaired current-direction links.
 - `todos/007-complete-p1-slice-2-world-dynamics-population-and-player-progression.md` — repaired supersession links only; preserve its obsolete historical content.
@@ -259,7 +259,7 @@ References are project-root relative.
 
 ### Evidence Index
 
-- **E1 — Direction and scope:** `docs/2026-07-20-testing-stance-correction.md:46-56,62-107,110-152`
+- **E1 — Direction and scope:** `docs/plans/2026-07-20-testing-stance-correction.md:46-56,62-107,110-152`
 - **E2 — Architecture contracts:** `docs/architecture.md:7,185-193,296-325`
 - **E3 — Content/startup coupling:** `crates/game-cli/src/main.rs:15-35,52-72`; `crates/game-content/src/lib.rs:412-428,499-514,881-930`
 - **E4 — Core model coupling:** `crates/game-core/src/lib.rs:525-582,663-790,1624-1682,1838-1860,2498-2514`

@@ -25,7 +25,7 @@ count and qualitative world outcomes are not acceptance oracles.
 
 See [docs/architecture.md](docs/architecture.md) for current ownership and API
 boundaries and the [Game Design Wiki](docs/design/README.md) for durable gameplay
-contracts. The [Testing Stance](docs/2026-07-20-testing-stance-correction.md) and
+contracts. The [Testing Stance](docs/plans/2026-07-20-testing-stance-correction.md) and
 [Engine Invariant Registry](docs/2026-07-20-engine-invariant-registry.md) define
 the evidence policy.
 

@@ -8,7 +8,7 @@ date: 2026-07-21
 
 ## Purpose
 
-This document turns the Stage 5 design foundation's focus and navigation goals
+This document turns the terminal design foundation's focus and navigation goals
 into reviewable interaction rules. It applies to every keyboard-driven surface,
 including temporary drafts and overlays.
 
@@ -62,7 +62,7 @@ Before implementing or approving a surface, record:
 
 A blank or “implicit” answer is a design gap.
 
-## Stage 5 dashboard interaction table
+## Dashboard interaction table
 
 | Item | Dashboard | Local management |
 | --- | --- | --- |
@@ -73,13 +73,13 @@ A blank or “implicit” answer is a design gap.
 | Directions | Up/Down traverses system rows; map/detail synchronize read-only | Up/Down traverses visible slot rows across read-only body headings |
 | Tab order | None; only one interactive focus target | None; only one interactive focus target |
 | Enter | `[Enter Manage]` opens controllable systems directly; `[Enter Details]` opens received knowledge for read-only systems | Contextual commands use their named keys; Enter is not advertised |
+| Unavailable case | Read-only details remain browsable; management is offered only for commandable local systems | Unavailable Build/Habitat actions are omitted or explained in detail |
+| Refresh | Selected system remains visible and valid | Selected system and slot remain visible and valid |
 
 Probe planning treats target and calculated route as the primary decision. It
 uses the probe's maximum capability automatically; typed numbers create an
 optional maximum-jump-per-leg override. Edited overrides must be explicitly
 applied so route, Energy, and availability are refreshed before launch review.
-| Unavailable case | Read-only details remain browsable; management is offered only for commandable local systems | Unavailable Build/Habitat actions are omitted or explained in detail |
-| Refresh | Selected system remains visible and valid | Selected system and slot remain visible and valid |
 
 ## Review process
 

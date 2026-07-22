@@ -57,7 +57,7 @@ No Tokio, `anyhow`, or tracing dependency is present.
 
 | Concern | Source |
 | --- | --- |
-| Stage 5 direction and testing stance | [Testing Stance Correction](../2026-07-20-testing-stance-correction.md) |
+| Stage 5 direction and testing stance | [Testing Stance Correction](2026-07-20-testing-stance-correction.md) |
 | Current crate and player-view boundary | [Architecture](../architecture.md) |
 | Governance-game identity and core loop | [Governance Sandbox](../2026-07-20-design-direction-governance-sandbox.md) |
 | Retained frontend lessons | [Frontend Architecture Lessons](../2026-07-20-frontend-architecture-lessons.md) |

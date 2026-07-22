@@ -506,9 +506,9 @@ Validation:
 
 ### Documentation to Update
 
-- [x] `docs/2026-07-20-testing-stance-correction.md` — mark Stage 3 complete with
+- [x] `docs/plans/2026-07-20-testing-stance-correction.md` — mark Stage 3 complete with
       concise implementation and validation evidence only after acceptance.
-- [x] `docs/2026-07-20-authored-market-world-migration-audit.md` — record final
+- [x] `docs/plans/2026-07-20-authored-market-world-migration-audit.md` — record final
       Stage 3 disposition and current evidence without rewriting historical
       decisions.
 - [x] `docs/2026-07-20-engine-invariant-registry.md` — update statuses, oracles,
@@ -563,14 +563,14 @@ References use paths relative to the repository root.
 - **E8 — active/reserved contract authority:**
   `docs/2026-07-20-engine-invariant-registry.md:28-188`
 - **E9 — Stage 3 controlling scope and constraints:**
-  `docs/2026-07-20-testing-stance-correction.md:163-177,225-235`
+  `docs/plans/2026-07-20-testing-stance-correction.md:163-177,225-235`
 - **E10 — product direction:**
   `docs/2026-07-20-design-direction-governance-sandbox.md:163-226`
 - **E11 — architecture and migration acceptance:**
   `docs/architecture.md:54-84,306-347,393-419`;
   `AGENTS.md:5-27`; `README.md:8-35`
 - **E12 — prior migration inventory:**
-  `docs/2026-07-20-authored-market-world-migration-audit.md:28-166,285-330`
+  `docs/plans/2026-07-20-authored-market-world-migration-audit.md:28-166,285-330`
 
 ### Internal References
 

@@ -3,7 +3,7 @@ title: Engine Invariant Registry
 type: reference
 date: 2026-07-20
 status: active
-source_direction: docs/2026-07-20-testing-stance-correction.md
+source_direction: docs/plans/2026-07-20-testing-stance-correction.md
 ---
 # Engine Invariant Registry
 

@@ -37,7 +37,7 @@ Implementation agents should load only the pages relevant to their slice:
 | Retained Stage 4 gameplay contract | [Completed Stage 4 Plan](2026-07-20-feature-constructive-world-generation-stage-4-plan.md) |
 | Retained Stage 4 tuning fixture | [`stage4_origin.ron`](../../crates/game-content/tests/fixtures/stage4_origin.ron) |
 | Current repository boundary | [Architecture](../architecture.md) |
-| Testing policy | [Testing Stance](../2026-07-20-testing-stance-correction.md) |
+| Testing policy | [Testing Stance](2026-07-20-testing-stance-correction.md) |
 | Active/reserved invariants | [Invariant Registry](../2026-07-20-engine-invariant-registry.md) |
 
 The wiki pages are the durable gameplay contract. This plan owns implementation

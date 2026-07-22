@@ -4,7 +4,7 @@ This document records promising directions that are not current implementation r
 
 ## Slot restrictions and bonuses
 
-Stage 4 development slots are deliberately generic: any approved development may occupy any empty slot, and slots provide no inherent modifiers.
+Development slots are deliberately generic: any approved development may occupy any empty slot, and slots provide no inherent modifiers.
 
 A later feature could make bodies and slots strategically distinct through:
 
@@ -24,11 +24,11 @@ This should be introduced only when body and slot differences support a concrete
 - how damaged, ruined, and reclaimed developments retain or recalculate modifiers; and
 - short Tier 1 scenarios demonstrating that the added constraint creates a meaningful choice.
 
-Do not add speculative slot-type, compatibility, or bonus fields to the Stage 4 schema.
+Do not add speculative slot-type, compatibility, or bonus fields to the current schema.
 
 ## Automatic Energy curtailment
 
-Stage 4 Energy Collectors continue operating and incur normal upkeep when storage is full; Energy left after same-tick spending overflows explicitly.
+Energy Collectors continue operating and incur normal upkeep when storage is full; Energy left after same-tick spending overflows explicitly.
 
 A later feature could automatically curtail Collector output when Energy cannot be consumed or retained, potentially avoiding some operating upkeep. Before implementation, define:
 
@@ -40,7 +40,7 @@ A later feature could automatically curtail Collector output when Energy cannot 
 
 ## Partial infrastructure operation
 
-Stage 4 development operation is all-or-nothing per tick: a functional development receives its complete upkeep and recipe inputs and produces its complete consequence, or consumes and produces nothing.
+Development operation is all-or-nothing per tick: a functional development receives its complete upkeep and recipe inputs and produces its complete consequence, or consumes and produces nothing.
 
 A later feature could allow partial upkeep, partial recipe consumption, or proportionally reduced output. Before implementation, define:
 
@@ -52,9 +52,8 @@ A later feature could allow partial upkeep, partial recipe consumption, or propo
 
 ## Extractor upgrades and specialization
 
-Stage 4b plans to replace standalone deposits with body-owned resource totals and
-allow multiple same-body Extractors to draw from one total in stable slot order.
-That stacking behavior is therefore no longer deferred here.
+Resource quantities are body-owned, and multiple same-body Extractors draw from
+one total in stable slot order. That stacking behavior is not deferred here.
 
 A later feature could further expand extraction through:
 
@@ -70,8 +69,8 @@ scenario where upgrades create a meaningful investment choice.
 
 ## Three-dimensional frontier positions
 
-Stage 4b generates the frontier in two dimensions with `z = 0` while retaining
-the existing three-coordinate position type.
+Generator revision 1 places the frontier in two dimensions with `z = 0` while
+retaining the existing three-coordinate position type.
 
 A later feature could generate systems throughout a true three-dimensional
 volume if vertical separation creates enough strategic value to justify its
@@ -87,8 +86,8 @@ presentation and navigation costs. Before implementation, define:
 
 ## Cultural influence and coherent management
 
-Stage 4b keeps the origin as the sole information recipient and treats remote
-inhabited systems as parts of one player-directed community for now.
+The current information model keeps the origin as the sole report recipient and
+treats remote inhabited systems as parts of one player-directed community.
 
 A later cultural-influence mechanic could determine the distance over which the
 origin community can manage itself as one coherent community. Beyond that
@@ -112,7 +111,7 @@ Before implementation, define:
 
 ## Multiple production chains
 
-Stage 4 implements exactly one raw-to-refined production chain: `core:ore` → `core:alloy`.
+The current product implements exactly one raw-to-refined production chain: `core:ore` → `core:alloy`.
 
 A later feature could add multiple raw resources, intermediate products, refined materials, or branching recipes. Before implementation, define:
 
@@ -125,6 +124,6 @@ A later feature could add multiple raw resources, intermediate products, refined
 
 ## Differentiated development recipes
 
-Stage 4 uses minimal recipe differentiation to avoid a bootstrap cycle: the first Refinery is constructed from Energy and Ore, while Collectors, Batteries, and Extractors use Energy and Alloy. All recipes remain within the single Ore → Alloy chain.
+Current recipes use minimal differentiation to avoid a bootstrap cycle: the first Refinery is constructed from Energy and Ore, while Collectors, Batteries, and Extractors use Energy and Alloy. All recipes remain within the single Ore → Alloy chain.
 
 As the resource catalog expands, later development kinds could require broader combinations of raw, refined, intermediate, or tertiary goods. Recipe differentiation should be designed together with multiple production chains so each material requirement traces to a concrete strategic responsibility. Before implementation, define supply paths, substitution rules if any, construction commitment accounting, frontier availability responsibilities, and Tier 1 scenarios demonstrating meaningful specialization rather than arbitrary recipe complexity.

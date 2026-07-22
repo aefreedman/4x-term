@@ -1,12 +1,18 @@
+---
+title: "Direction Shift: Testing Stance and Constructive Worldgen"
+type: plan
+status: completed
+date: 2026-07-20
+completed: 2026-07-21
+---
 # Direction Shift: Testing Stance and Constructive Worldgen
 
 ## Status and use
 
-This is a high-level transition direction, not a single implementation
-plan. It corrects how the simulation is tested and describes the staged
-move from the former authored market-trading prototype toward the strategy
-and map-expansion game defined by the
-[Governance Sandbox design direction](2026-07-20-design-direction-governance-sandbox.md),
+This is the completed high-level transition plan that corrected how the
+simulation is tested and guided the move from the former authored
+market-trading prototype to the strategy and map-expansion game defined by the
+[Governance Sandbox design direction](../2026-07-20-design-direction-governance-sandbox.md),
 especially G2 and G16–G22.
 
 The stages below must be carved into focused plans or todos before
@@ -15,13 +21,14 @@ at that time and supply their own exact contracts, migration inventories,
 and acceptance commands rather than treating this document as an
 executable specification.
 
-**Current migration boundary (2026-07-21):** Stages 1–4b are complete. The
-workspace retains only the headless `game-core` simulation and the
-schema/profile/generation `game-content` adapter. It has 56 focused tests and no
-ignored tests; constructive frontier generation and bounded probe/expedition
-expansion are present, while the app, TUI, CLI, playable startup, saves, and
-production world bundle remain absent. Stages 5–8 remain future work;
-playability is intentionally not restored yet.
+**Current migration boundary (2026-07-21):** The testing-boundary, destructive
+cutover, origin simulation, constructive frontier, and playable-startup bundles
+are complete. The workspace now includes the headless `game-core` simulation,
+the `game-content` schema/profile/generation adapter, the application-owned
+session boundary, the terminal UI, and the human-play `4x-term` executable.
+The all-feature workspace suite has 110 focused tests and no ignored tests.
+Persistence, an agent-facing command protocol, invariant soaks, and event-log
+replay remain future work; they are not prerequisites for truthful human play.
 
 ## The problem being corrected
 
@@ -94,8 +101,8 @@ N-of-M seed thresholds, no viability screening or reject/reroll**:
    other active entries in the invariant registry. An applicable invariant
    violation on any seed is always a bug. Do not invent soak criteria for
    reserved systems such as automated logistics or replay.
-2. **The approved structural guarantee of G18**, implemented in Stage 4b as
-   exact per-seed assertions on revision-1 generator output. It asserts the
+2. **The approved structural guarantee of G18**, implemented as exact per-seed
+   assertions on revision-1 generator output. It asserts the
    mandatory origin records, references, placement, resources, starting stocks,
    and development scaffold. It does not assert economic solvency, seasonal
    surplus, affordability or quantity floors, tick-zero action availability,
@@ -130,9 +137,9 @@ into CI as gates.
    scenario fixtures (small world, tens of ticks, deterministic expected
    outcome).
 5. **The approved scaffold is constructed, not screened.** The generator builds
-   the approved origin scaffold directly. Stage 4b has no neighborhood
-   viability guarantee. Do not add post-hoc gameplay filters or statistical
-   world-quality gates.
+   the approved origin scaffold directly. The current generator revision has no
+   neighborhood viability guarantee. Do not add post-hoc gameplay filters or
+   statistical world-quality gates.
 6. **Generator parameter ranges are design decisions, not fixes.** Do not
    adjust generation ranges to make a failing check pass without flagging
    the change for design review. Generator changes invalidate seed
@@ -155,8 +162,9 @@ replacement or copied into a working-tree archive; Git history preserves them.
 
 **Status:** recorded on 2026-07-20 in the
 [authored market-world migration audit](2026-07-20-authored-market-world-migration-audit.md).
-This records migration decisions only. Stages 2 through 4b are complete below;
-Stages 5–8 remain future work.
+This records migration decisions only. The implementation bundles through
+playable startup are complete below; replay/tooling and deeper gameplay remain
+future work.
 
 - Add the testing stance and norms to `AGENTS.md` and architecture notes.
 - Mark obsolete product assumptions clearly, including trader-first play,
@@ -182,7 +190,7 @@ boundary, the workspace passed formatting, check, Clippy with warnings denied,
 and all 201 then-retained tests with no ignored tests; playability was
 intentionally not acceptance.
 
-The reviewed [Engine Invariant Registry](2026-07-20-engine-invariant-registry.md)
+The reviewed [Engine Invariant Registry](../2026-07-20-engine-invariant-registry.md)
 records each active contract's exact oracle, applicability rule, non-vacuity
 witness, failure evidence, and focused tests.
 
@@ -212,7 +220,7 @@ The retained `game-core` and `game-content` workspace has nine core tests and
 six content tests (15 total), with no ignored tests. Production authored
 content and the app, TUI, and CLI crates were removed rather than preserved as
 compatibility shells. Current contract evidence is recorded in the
-[Engine Invariant Registry](2026-07-20-engine-invariant-registry.md).
+[Engine Invariant Registry](../2026-07-20-engine-invariant-registry.md).
 
 - Delete trader-first identity, independent NPC fleet ecology, pricing,
   wallets, commercial market behavior, authored market startup/content, and
@@ -259,9 +267,9 @@ resources, a global ten-phase atomic tick, Habitat-backed population, delayed
 origin knowledge, Shipyards, probes, expeditions, founding, explicit loss, and
 a knowledge-filtered `PlayerWorldView`. The all-feature workspace suite has 56
 focused deterministic tests with no ignored tests. Exact current contracts and
-evidence are recorded in the [Stage 4b plan](plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md),
-the [architecture](architecture.md), and the
-[Engine Invariant Registry](2026-07-20-engine-invariant-registry.md).
+evidence are recorded in the [constructive-frontier plan](2026-07-20-feature-constructive-world-generation-stage-4b-plan.md),
+the [architecture](../architecture.md), and the
+[Engine Invariant Registry](../2026-07-20-engine-invariant-registry.md).
 
 - Construct the approved origin-only G18 scaffold, then generate unconstrained
   frontier systems from explicit profiles. Target count, connectivity,
@@ -284,21 +292,28 @@ than an unsupported promise that all additions preserve old seed output.
 
 ### Stage 5 — Restore playable startup with the origin-and-frontier paradigm
 
-Stage 5 depends on the completed Stage 4b generated-world and bounded-expansion
-boundary.
+**Status:** completed on 2026-07-21 and released in v0.8.0 by
+[PR #16](https://github.com/aefreedman/4x-term/pull/16). The workspace now
+composes generated content through `game-app`, presents only typed player-safe
+views to `game-tui`, and ships the synchronous human-play `4x-term` executable.
+Startup supports editable or random seeds, an allowlisted generated preview,
+explicit confirmation, and exact preview consumption. Play begins at the sole
+living origin; neutral systems remain hidden behind knowledge projections and
+do not instantiate markets or NPC communities.
 
-- Decide how a generated world is selected and composed for normal play,
-  tests, diagnostics, and replay.
-- Start the player as the origin community/governor, not as an independent
-  trader in a populated market network.
-- Ensure non-origin locations do not silently instantiate living markets or
-  independent NPC communities.
-- Update application and CLI startup boundaries while keeping the
-  simulation headless and frontend-independent.
+The playable surface covers origin resource management, construction, Habitat
+population bootstrap, Shipyards, probe scouting, delayed reports, expeditions,
+founding and loss, aliases, semantic keyboard layouts, terminal-size safety,
+and paced one-tick advancement. Application tests cover preview identity and
+staleness, player-safe projection, typed rejection and draft recovery, complete
+Habitat bootstrap, and a committed tick followed by an atomic rejected tick.
+TUI tests cover semantic input, stable selection by system identity, typed ship
+actions, pacing, rendering, size safety, and staged terminal cleanup. Extensive
+manual playtesting covers the composed startup, scouting, and founding journeys.
 
-This is the first stage required to restore a truthful playable executable.
-It should not be hidden inside a test or generator implementation task and
-needs no compatibility path from the deleted trader game.
+No compatibility path from the deleted trader game was added. The simulation
+remains headless and frontend-independent; `game-app` exclusively owns mutable
+`WorldState`, and terminal dependencies remain confined to `game-tui`.
 
 ### Stage 6 — Add generated-world invariant soaks and replay tooling
 
@@ -314,6 +329,10 @@ needs no compatibility path from the deleted trader game.
   CI pass/fail semantics.
 
 ### Stage 7 — Verify retirement of the obsolete market-network surface
+
+**Status:** completed as part of the playable-startup audit. Repository,
+dependency, documentation, and acceptance review found no retained trader-first
+runtime, market-network compatibility path, or legacy world-quality gate.
 
 Deletion belongs primarily to Stages 2–3. This stage is a final search and
 proof that no obsolete product assumptions or accidental compatibility paths
@@ -364,7 +383,7 @@ are not bundled into the origin-engine or constructive-generator slices.
 
 ## Direction-level completion
 
-This transition is complete when:
+This transition completed with v0.8.0 when:
 
 - normal startup represents one persistent origin seat/community in a generated dead frontier and uses the approved Habitat-backed population/founding model;
 - approved G18 structural guarantees are constructive and exactly validated;

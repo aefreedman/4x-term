@@ -287,7 +287,7 @@ screens are deleted in Stage 3.
 - [x] Record that registry updates require a reviewed oracle, applicability rule,
       and non-vacuity witness; a test name containing “invariant” is not enough.
 - [x] Link the registry from `docs/architecture.md` and the Stage 2 section of
-      `docs/2026-07-20-testing-stance-correction.md`.
+      `docs/plans/2026-07-20-testing-stance-correction.md`.
 - [x] Reserve, but do not specify, G18 and generated-world entries for Stages 4
       and 6.
 
@@ -378,7 +378,7 @@ Validation:
 - [x] Update `CHANGELOG.md` under `Unreleased` for the removed legacy diagnostic
       mode and corrected test boundary.
 - [x] Mark Stage 2 complete in
-      `docs/2026-07-20-testing-stance-correction.md` and add completion evidence
+      `docs/plans/2026-07-20-testing-stance-correction.md` and add completion evidence
       without implying that Stages 3–8 are complete.
 - [x] Update the Stage 1 audit's Stage 2 backlog/evidence links if needed; retain
       its original migration decisions.
@@ -508,10 +508,10 @@ Validation:
 
 - [x] Add `docs/2026-07-20-engine-invariant-registry.md`.
 - [x] Update `docs/architecture.md` with the registry link and contribution rule.
-- [x] Update `docs/2026-07-20-testing-stance-correction.md` with Stage 2 status and
+- [x] Update `docs/plans/2026-07-20-testing-stance-correction.md` with Stage 2 status and
       evidence.
-- [x] Update `docs/2026-07-20-authored-market-world-migration-audit.md` and the
-      Stage 2/3 wording in `docs/2026-07-20-testing-stance-correction.md` to record
+- [x] Update `docs/plans/2026-07-20-authored-market-world-migration-audit.md` and the
+      Stage 2/3 wording in `docs/plans/2026-07-20-testing-stance-correction.md` to record
       the planning correction: arbitrary authored-world validation predicates
       are removed in Stage 2 when they obstruct truthful micro-fixtures; Stage 3
       still owns the geography/community schema split.
@@ -551,9 +551,9 @@ Reference roots:
 ### Evidence Index
 
 - **E1 — controlling direction:**
-  `2026-07-20-testing-stance-correction.md:62-105,163-177,225-235`
+  `plans/2026-07-20-testing-stance-correction.md:62-105,163-177,225-235`
 - **E2 — migration decisions/backlog:**
-  `2026-07-20-authored-market-world-migration-audit.md:112-166`
+  `plans/2026-07-20-authored-market-world-migration-audit.md:112-166`
 - **E3 — architecture test boundary:** `architecture.md:306-347`
 - **E4 — focused core fixtures and invariants:**
   `game-core/src/tests.rs:5-182,1704-1970,3633,4555,5411`;

@@ -1,6 +1,6 @@
 # Architecture
 
-## Current boundary: Stage 5 playable origin and frontier
+## Current playable origin-and-frontier boundary
 
 The workspace is a data-driven headless simulation with a synchronous human
 terminal adapter:
@@ -47,7 +47,7 @@ from `lib.rs`:
 | `ships.rs` | Shipyard projects and assets, probe/expedition launch, world-owned transit, observations, reservations, founding, and typed loss. |
 | `simulation.rs` | The world clock and the single phase-major, whole-world atomic tick. |
 
-Stage 5 adds non-mutating construction, generic development-operation,
+The core exposes non-mutating construction, generic development-operation,
 Habitat-generation, probe, and expedition assessments. Each assessment and its
 command share the same private validation plan; commands revalidate against
 current state before atomic commit. Disabling a development preserves its
@@ -162,8 +162,8 @@ RON world source
 Authored Tier 1 definitions may seed coherent resident population tokens backed
 by functional Habitats and communities. Initialization establishes an explicit
 population-accounting baseline and advances birth-system counters beyond every
-seeded ID. Initial in-transit tokens remain outside this fresh-world input because
-Stage 4b has no complete runtime-restoration format.
+seeded ID. Initial in-transit tokens remain outside this fresh-world input
+because the current product has no complete runtime-restoration format.
 
 Procedural generation uses a separate explicit pipeline:
 
@@ -233,6 +233,6 @@ Persistence, event-log replay, an agent-facing command protocol, reclamation,
 automated freight, wider logistics, delegation, and cultural influence remain
 future work. Any adapter must continue to use typed application intents and
 player-safe views rather than unrestricted runtime mutation or privileged
-`test-support` snapshots. The retired
-trader/market prototype and the replaced Stage 3/4 schemas are not compatibility
-targets; Git history is the recovery path.
+`test-support` snapshots. The retired trader/market prototype and intermediate
+migration schemas are not compatibility targets; Git history is the recovery
+path.
