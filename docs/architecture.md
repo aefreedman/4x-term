@@ -196,7 +196,9 @@ mutable simulation state and accepts typed
 The application catalogue resolves resource and FSC labels. Session-owned
 aliases never alter generated identity. Runtime projections derive solely from
 `PlayerWorldView`, so neutral local state, hidden route stops, pending report
-contents, and unreceived founding outcomes remain unavailable to the TUI.
+contents, and unreceived founding outcomes remain unavailable to the TUI. The
+core projects only the current physical coordinates of active player ships for
+map rendering; ship movement geometry is not reconstructed by the terminal.
 
 `game-tui` routes arrows and the selected keyboard layout through one semantic
 input layer. It renders a `160x45` reference composition and blocks gameplay

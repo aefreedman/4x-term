@@ -682,6 +682,7 @@ pub struct PlayingView {
     pub missions: Vec<MissionView>,
     pub probe_reports: Vec<ProbeReportView>,
     pub active_routes: Vec<RouteView>,
+    pub active_ship_positions: Vec<ChartCoordinate>,
     pub latest_outcome: Option<ApplicationOutcome>,
 }
 
@@ -1388,6 +1389,11 @@ impl Session {
             missions,
             probe_reports,
             active_routes,
+            active_ship_positions: core
+                .active_ship_positions
+                .iter()
+                .map(|position| self.chart_coordinate(*position))
+                .collect(),
             latest_outcome: self.latest_outcome.clone(),
         }
     }

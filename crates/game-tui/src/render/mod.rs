@@ -335,6 +335,12 @@ fn selected_glyph(glyph: &'static str, selected: bool) -> &'static str {
     }
 }
 
+fn place_ship_marker(grid: &mut [Vec<(&'static str, Color)>], x: usize, y: usize) {
+    if grid[y][x].0 != "@" {
+        grid[y][x] = ("+", Color::Yellow);
+    }
+}
+
 fn place_system_visual(
     grid: &mut [Vec<(&'static str, Color)>],
     center_x: i64,
@@ -550,17 +556,25 @@ fn render_dashboard(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         if inner_width == 0 || inner_height == 0 {
             break;
         }
-        let center_x = i64::try_from(inner_width / 2).unwrap_or(0);
-        let center_y = i64::try_from(inner_height / 2).unwrap_or(0);
-        let x = (center_x + entry.coordinate.x)
+        let x = (map_center_x + entry.coordinate.x)
             .clamp(0, i64::try_from(inner_width - 1).unwrap_or(0)) as usize;
-        let y = (center_y - entry.coordinate.y)
+        let y = (map_center_y - entry.coordinate.y)
             .clamp(0, i64::try_from(inner_height - 1).unwrap_or(0)) as usize;
         let selected = selected_id == Some(&entry.system_id);
         grid[y][x] = (
             if selected { "@" } else { "*" },
             if selected { Color::Cyan } else { Color::Gray },
         );
+    }
+    for position in &view.active_ship_positions {
+        if inner_width == 0 || inner_height == 0 {
+            break;
+        }
+        let x = (map_center_x + position.x).clamp(0, i64::try_from(inner_width - 1).unwrap_or(0))
+            as usize;
+        let y = (map_center_y - position.y).clamp(0, i64::try_from(inner_height - 1).unwrap_or(0))
+            as usize;
+        place_ship_marker(&mut grid, x, y);
     }
     let map = grid
         .into_iter()
@@ -1576,6 +1590,17 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn ship_marker_shows_position_without_overwriting_selected_system() {
+        let mut grid = vec![vec![(" ", Color::Reset); 2]; 1];
+        place_ship_marker(&mut grid, 0, 0);
+        assert_eq!(grid[0][0], ("+", Color::Yellow));
+
+        grid[0][1] = ("@", Color::Cyan);
+        place_ship_marker(&mut grid, 1, 0);
+        assert_eq!(grid[0][1], ("@", Color::Cyan));
     }
 
     #[test]

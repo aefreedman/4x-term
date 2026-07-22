@@ -253,9 +253,10 @@ target. See [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.m
 ## Review notes
 
 The map is a full panel, not a graph or explanatory diagram. It renders only
-application-provided player-known chart points. Identified systems without an
-observed position stay in the synchronized system list with `--`; uncharted
-systems remain only an aggregate count.
+application-provided player-known chart points and current active-ship positions.
+A ship is a yellow `+`; it carries no route, direction, type, or progress detail.
+Identified systems without an observed position stay in the synchronized system
+list with `--`; uncharted systems remain only an aggregate count.
 
 The startup preview contains only seed, profile, and origin-facing gameplay
 information. Keyboard mode belongs to global user settings. Generator revision,

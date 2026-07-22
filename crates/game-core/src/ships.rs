@@ -214,6 +214,57 @@ pub struct TransitRecord {
     pub kind: TransitKind,
 }
 
+impl TransitRecord {
+    pub(crate) fn current_position(
+        &self,
+        locations: &[LocationDefinition],
+        tuning: &WorldTuning,
+    ) -> Result<Position3, CoreError> {
+        let leg = self
+            .route
+            .legs
+            .get(self.next_leg_index)
+            .ok_or(CoreError::Overflow)?;
+        let from = location_position(locations, &leg.from)?;
+        let to = location_position(locations, &leg.to)?;
+        let speed = match self.kind {
+            TransitKind::Probe { .. } => tuning.probe_travel.speed_quanta_per_tick,
+            TransitKind::Expedition { .. } => tuning.expedition_travel.speed_quanta_per_tick,
+        };
+        let duration = leg_duration(&self.route, self.next_leg_index, speed)?;
+        let elapsed = duration
+            .checked_sub(self.remaining_leg_ticks)
+            .ok_or(CoreError::Overflow)?;
+        Ok(Position3::from_quanta(
+            interpolate_coordinate(from.x.0, to.x.0, elapsed, duration)?,
+            interpolate_coordinate(from.y.0, to.y.0, elapsed, duration)?,
+            interpolate_coordinate(from.z.0, to.z.0, elapsed, duration)?,
+        ))
+    }
+}
+
+fn interpolate_coordinate(
+    from: i64,
+    to: i64,
+    elapsed: u64,
+    duration: u64,
+) -> Result<i64, CoreError> {
+    let delta = i128::from(to)
+        .checked_sub(i128::from(from))
+        .ok_or(CoreError::Overflow)?;
+    let travelled = delta
+        .checked_mul(i128::from(elapsed))
+        .ok_or(CoreError::Overflow)?
+        .checked_div(i128::from(duration))
+        .ok_or(CoreError::Overflow)?;
+    i64::try_from(
+        i128::from(from)
+            .checked_add(travelled)
+            .ok_or(CoreError::Overflow)?,
+    )
+    .map_err(|_| CoreError::Overflow)
+}
+
 /// Aggregate mutable state needed by phase 6 for one system.
 pub(crate) struct ShipyardPhaseContext<'a> {
     pub time: SimulationTime,

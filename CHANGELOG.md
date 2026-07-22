@@ -38,7 +38,8 @@
 - Probe drafts now accept typed jump-distance values, probe and expedition
   drafts use player-facing labels instead of debug structures, received probe
   facts appear in a browsable read-only system-detail surface while controllable
-  systems open local management directly, and system uncertainty
+  systems open local management directly, active ships appear at their current
+  map position as a simple `+`, and system uncertainty
   visuals are deterministically assigned from Plain plus twelve variants each
   of Irregular, Interference, Directional, and Compact forms. Visual centers
   may be offset, collisions are allowed, anonymous real-position texture

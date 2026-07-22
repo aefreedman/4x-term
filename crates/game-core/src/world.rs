@@ -244,6 +244,8 @@ pub struct PlayerWorldView {
     pub probe_reports: BTreeMap<ShipId, ProbeReportStatus>,
     /// Active physical routes, recomputed so each hidden stop is named only once reached.
     pub active_routes: BTreeMap<ShipId, RedactedRoute>,
+    /// Current physical positions of player-owned ships, without route or ship metadata.
+    pub active_ship_positions: Vec<Position3>,
 }
 
 #[cfg_attr(
@@ -423,6 +425,11 @@ impl WorldState {
                 )
             })
             .collect();
+        let active_ship_positions = self
+            .transit
+            .iter()
+            .map(|transit| transit.current_position(&self.locations, &self.tuning))
+            .collect::<Result<Vec<_>, _>>()?;
         let mut probe_reports = self
             .transit
             .iter()
@@ -447,6 +454,7 @@ impl WorldState {
             missions: self.knowledge.mission_states.clone(),
             probe_reports,
             active_routes,
+            active_ship_positions,
         })
     }
 

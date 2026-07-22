@@ -560,9 +560,19 @@ fn probe_assessment_is_non_mutating_redacted_and_agrees_with_atomic_launch() {
         .launch_probe(&id("core:origin"), &ship_id, &id("core:target"), 3)
         .unwrap();
     assert_eq!(assessment.route, Some(committed));
+    let launched_view = world.player_view().unwrap();
     assert_eq!(
-        world.player_view().unwrap().probe_reports.get(&ship_id),
+        launched_view.probe_reports.get(&ship_id),
         Some(&ProbeReportStatus::AwaitingReport)
+    );
+    assert_eq!(
+        launched_view.active_ship_positions,
+        vec![Position3::from_quanta(0, 0, 0)]
+    );
+    let moved_view = world.advance_tick().unwrap();
+    assert_eq!(
+        moved_view.active_ship_positions,
+        vec![Position3::from_quanta(3, 0, 0)]
     );
     assert!(matches!(
         world.launch_probe(&id("core:origin"), &ship_id, &id("core:target"), 3),
