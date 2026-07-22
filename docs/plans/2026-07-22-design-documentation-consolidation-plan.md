@@ -3,7 +3,7 @@ title: "Design Documentation Consolidation and Reconciliation"
 type: documentation-plan
 status: draft
 date: 2026-07-22
-review_state: awaiting-owner-responses
+review_state: owner-responses-recorded
 tags:
   - design
   - documentation
@@ -83,22 +83,26 @@ Proposed agent precedence:
 3. Use `lore/` for fiction and terminology, never to infer an unstated mechanic.
 4. Use `ideas/` only for exploration; never implement an idea without explicit
    promotion into an approved current design and an implementation plan.
-5. If `current/` and `direction/` differ, treat that as an intentional
-   current-to-future gap unless the documents explicitly identify a conflict.
-   Do not silently implement the directional state.
+5. If `current/` and `direction/` differ, inspect the cause rather than applying
+   automatic precedence. The current state may be an intentional pragmatic step,
+   the direction may describe a future migration, or the mismatch may be an
+   implementation/documentation defect. Agents must surface the classification
+   and use task context and human review instead of silently choosing.
 6. Plans and todos describe execution. They do not override design documents.
+   Implementation plans must include applicable updates to `current/` and
+   `direction/`, completed after implementation is reviewed and before merge.
 
 > **OWNER QUESTION 1 — Direction authority:** Should `direction/` contain
 > committed design constraints that future work must honor, or should it be
 > advisory until promoted into `current/`?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** We can use a workflow where the implementation plans that agents use in docs/plans/ include updating design/ and direction/ after implementation is reviewed and approved for merging
 
 > **OWNER QUESTION 2 — Conflict behavior:** When a current contract conflicts
 > with a committed direction, should agents always preserve current behavior
 > unless a task explicitly authorizes migration, as proposed above?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** Agents and humans need to use their judgement in these cases. A conflict could be because the current version is pragmatic, but the direction is still the future intention. Or it could be an implementation defect. It's case-by-case.
 
 ## Proposed metadata contract
 
@@ -146,7 +150,7 @@ Recommended controlled values:
 - `current`
 - `long-term`
 - `setting`
-- `future-possible`
+- `exploratory`
 
 Optional provenance fields such as `source`, `supersedes`, or `refines` may be
 retained where useful, but they do not change authority. Relative links should
@@ -156,13 +160,14 @@ be updated after moves.
 > controlled values suitable for your indexing workflow, or do you prefer
 > shorter/different values?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** `exploratory` is approved as the replacement for
+> `future-possible`.
 
 > **OWNER QUESTION 4 — Draft indexing:** Should draft documents remain inside
 > these four folders with `status: draft`, or should the authoritative design
 > tree contain only approved/active files?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** draft documents shouldn't be in current/ to avoid any accidental confusion. The other folders are tolerant of drafts.
 
 ## Proposed file layout and moves
 
@@ -218,38 +223,50 @@ Preserve G-number identifiers so existing plans and discussions can continue to
 cite G1–G22. Git history is the path-level historical record; do not retain a
 second copy at the old location.
 
+The early framework phase moves the founding document as
+`docs/design/direction/foundations.md` without broadly decomposing it. The final
+content phase of this same plan then splits the foundation into focused
+direction and lore pages after the metadata, README, authority conventions, and
+current-document reconciliation are established. The direction README may
+summarize decision classifications needed to prevent agent confusion before
+that final decomposition.
+
 > **OWNER QUESTION 5 — Founding filename:** Is
 > `governance-sandbox-foundations.md` the desired durable name, or would
 > `foundations.md` / `game-direction.md` be preferable?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** `foundations.md` is good to start.
 
 ### Lore
 
-Create `docs/design/lore/README.md`. Extract the loose fiction premise from the
-founding document into a proposed canonical lore page:
+Create `docs/design/lore/README.md` in this framework sweep. It will define lore
+as canonical context that cannot imply unstated mechanics and will link to the
+rudimentary lore still present in `direction/foundations.md`.
+
+The final foundation-decomposition phase of this plan will extract the loose
+fiction premise into focused lore pages, beginning with a likely page such as:
 
 ```text
 docs/design/lore/precursor-aftermath.md
 ```
 
-The page would capture the post-apocalyptic 4X premise, precursor collapse,
+That page can capture the post-apocalyptic 4X premise, precursor collapse,
 ruined-grid framing, origin-community identity, and intentionally unresolved
-fiction. It must explicitly say that lore does not cause ruins, factions, or
-other entities to exist mechanically unless a current design contract defines
-them.
+fiction. Unresolved fiction may remain in lore pages. Lore must explicitly say
+that it does not cause ruins, factions, or other entities to exist mechanically
+unless a current design contract defines them.
 
 > **OWNER QUESTION 6 — Lore status:** Is the current “loose, generative” premise
 > canonical lore, or should it remain directional inspiration with the lore
 > folder initially containing only its README?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** the foundation document contains rudimentary lore. those can be added to lore/ to get us started
 
 > **OWNER QUESTION 7 — Lore granularity:** Should unresolved fiction questions
 > remain at the end of the lore page, move to `ideas/`, or remain in the
 > direction foundation as design constraints awaiting fiction?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** Unresolved fiction can stay in lore pages.
 
 ### Ideas
 
@@ -271,13 +288,13 @@ changing the authority model.
 > move first into `direction/`, then later into `current/`, while purely
 > optional possibilities remain in `ideas/`?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** Yes, let's try that.
 
 > **OWNER QUESTION 9 — Idea file shape:** Keep one indexed future-ideas file for
 > now, or split it into topic files such as `information.md`, `ruins.md`, and
 > `population.md` during this consolidation?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** Splitting the files up makes more sense to me.
 
 ## Reconciliation decisions required
 
@@ -302,7 +319,7 @@ behavior.
 > **OWNER QUESTION 10 — G15 commitment:** Is delegation-by-distance a committed
 > destination, or only a promising idea?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** It is a long-term direction.
 
 ### R2. Information channels
 
@@ -323,7 +340,7 @@ specific payloads, cadence, and authority consequences as ideas/open questions.
 > settled, with only its payload and cadence open, or is the entire model still
 > optional?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** Two-channel model is directional. The idea is that ships are faster-than-light and thus are able to carry information faster than light-based distant comms.
 
 ### R3. Specialists and tertiary production
 
@@ -341,7 +358,7 @@ in `ideas/`. If not settled, move the concepts wholly to ideas.
 > **OWNER QUESTION 12 — G11/G12 commitment:** Are specialists as pop state and a
 > tertiary specialist substrate committed constraints?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** The directional aspect is the overall game loop. specialists, training, etc. are ideas for ways to accomplish the directional goal.
 
 ### R4. Ruins and current world generation
 
@@ -361,7 +378,7 @@ already generates ruins.
 > **OWNER QUESTION 13 — Ruin commitment:** Are the two ruin categories in G14 a
 > committed long-term taxonomy or still ideas?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** The directional aspect is the world generation and the world having pre-existing "stuff" akin to Dwarf Fortress. We have some rudimentary half-baked implementation. Some is "current" and some are just ideas to improve the implementation to align better with the directional goal.
 
 ### R5. Bodies and slots
 
@@ -381,7 +398,7 @@ and slot differentiation as ideas unless it is a committed direction.
 > or slots eventually becoming mechanically differentiated, or is that entirely
 > optional?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** Just an idea.
 
 ### R6. Failure persistence and run structure
 
@@ -400,7 +417,7 @@ open until separately approved.
 > principle while cross-run persistence remains an idea, or is persistent ruin
 > state itself committed?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** It's a _very_ long-term direction. Low priority. It's so far from being implementable that I don't know how to handle it as design direction.
 
 ### R7. Collector upkeep premise
 
@@ -418,7 +435,33 @@ operating-cost model, but should not imply that cost exists now.
 > overflow only, or should it explicitly explore adding Collector operating
 > costs that curtailment could avoid?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** Collectors have zero energy upkeep. Curtailment is on shaky ground as a mechanic.
+
+## Tuning values and configuration authority
+
+Mutable shipped tuning values should not be copied into design prose. Because
+configuration and documentation live in the same repository,
+`content/profiles/starter.ron` is the operational source of truth for the
+current `starter` values. Design pages should link directly to that file and
+explain meaning, relationships, invariants, and design rationale rather than
+reprinting mutable tables.
+
+The consolidation must distinguish three categories:
+
+1. **Mutable balance/profile values** — owned by the applicable file under
+   `content/profiles/`; docs link to the configuration instead of duplicating
+   values.
+2. **Reviewed design constraints and generator ranges** — documented as intent
+   and changed only with design review, even when their active representation
+   also lives in configuration.
+3. **Version-frozen algorithm constants and test vectors** — remain exact in
+   `generator-revision-1.md` because they define reproducibility rather than
+   mutable balance.
+
+A configuration value being operationally authoritative does not make every
+value a timeless design guarantee. Conversely, removing duplicated numeric
+prose must not erase named invariants, fixed relationships, or revision-frozen
+engineering contracts.
 
 ## Canonical ownership and duplication reduction
 
@@ -452,7 +495,7 @@ founding transition, remote commandability, and tick order.
 > duplicated mechanical prose, or only identify canonical owners and defer prose
 > reduction to a second pass?
 >
-> **OWNER RESPONSE:**
+> **OWNER RESPONSE:** We can reduce duplication. We also want to be _especially_ careful about encoding "magic numbers" into design documentation. Exact numbers are flaky, since designers may need or want to change those as we prototype.
 
 ## Implementation phases
 
@@ -468,7 +511,7 @@ founding transition, remote commandability, and tick order.
 Deliverable: this plan changes from `draft` to `approved` with decisions
 recorded.
 
-### Phase 2 — Establish structure and metadata
+### Phase 2 — Establish structure, metadata, and agent guidance
 
 - [ ] Create the four subfolders.
 - [ ] Rewrite `docs/design/README.md` as the authority and navigation index.
@@ -476,37 +519,77 @@ recorded.
 - [ ] Move current design pages using Git-aware moves.
 - [ ] Add normalized frontmatter to the founding and ideas documents.
 - [ ] Normalize existing current-page frontmatter without changing mechanics.
+- [ ] Update `AGENTS.md` to require reading `docs/design/README.md` for gameplay
+      or design work, explain the four authority scopes, forbid treating ideas
+      as requirements, require case-by-case conflict classification, and require
+      implementation plans to update applicable design documents before merge.
+- [ ] Add the mutable-tuning rule: configuration files own active values while
+      design docs own meaning, constraints, and rationale.
 
 Deliverable: every indexed design file declares type, status, authority, and
-horizon.
+horizon, and repository-level agent guidance points to the hierarchy.
 
-### Phase 3 — Separate foundation, lore, and ideas
+### Phase 3 — Place foundation, lore framework, and topic ideas
 
-- [ ] Move the founding document into `direction/` while retaining G identifiers.
-- [ ] Add a decision-status matrix for G1–G22.
-- [ ] Extract approved lore if Questions 6–7 authorize it.
-- [ ] Move the future-ideas document into `ideas/`.
-- [ ] Remove or reframe content that describes a committed direction as merely
-      optional, according to owner responses.
-- [ ] Ensure ideas use current pages as links rather than independently asserting
-      current mechanics.
+- [ ] Move the founding document intact to `direction/foundations.md` while
+      retaining G identifiers.
+- [ ] Put the minimum decision/horizon summary needed for safe agent use in
+      `direction/README.md`; defer broad foundation decomposition until the
+      final content phase of this plan.
+- [ ] Create `lore/README.md`, define its authority, and point to the rudimentary
+      lore that remains in the foundation until the final content phase.
+- [ ] Move and split the future-ideas document into focused topic files under
+      `ideas/`.
+- [ ] Remove or reframe idea content that incorrectly presents a committed
+      direction as optional, according to owner responses.
+- [ ] Ensure ideas use current pages and configuration files as links rather than
+      independently asserting current mechanics or mutable values.
 
-Deliverable: no file requires readers to infer whether a paragraph is current,
-directional, lore, or speculative.
+Deliverable: the framework makes each file's authority discoverable before the
+foundation is decomposed later in this plan.
 
 ### Phase 4 — Reconcile current contracts and links
 
-- [ ] Apply R1–R7 using the approved responses.
+- [ ] Apply R1–R7 using the approved responses, limiting foundation edits to
+      what is necessary for correctness before the final decomposition phase.
 - [ ] Add the canonical contract-ownership table.
 - [ ] Reduce duplicated contract prose to the approved scope.
+- [ ] Replace duplicated mutable `starter` values with links to
+      `content/profiles/starter.ron`; retain reviewed constraints and frozen
+      revision constants where they are themselves the contract.
 - [ ] Update all relative links within `docs/design/`.
 - [ ] Update inbound links from other docs, plans, todos, and root documentation.
 - [ ] Do not retain duplicate files or old-path aliases unless explicitly
       requested.
 
-Deliverable: all links target one canonical physical document.
+Deliverable: all links target one canonical physical document before the
+foundation is split.
 
-### Phase 5 — Validate and record deferred plan extraction
+### Phase 5 — Decompose the foundation
+
+- [ ] Split `direction/foundations.md` into focused direction pages after the
+      folder framework and current contracts are stable.
+- [ ] Keep `foundations.md` as the concise founding index and durable-principles
+      entry point rather than preserving the original mixed document unchanged.
+- [ ] Preserve G1–G22 identifiers or provide an explicit mapping from each G
+      identifier to its new canonical page.
+- [ ] Move rudimentary setting material into focused lore pages, including
+      `lore/precursor-aftermath.md` when the extracted content supports it.
+- [ ] Keep unresolved fiction in lore pages and mark it clearly so canonical
+      setting context is distinguishable from undecided detail.
+- [ ] Move optional mechanisms into the appropriate focused idea pages rather
+      than retaining them as directional commitments.
+- [ ] Keep committed long-term outcomes in direction pages while linking to the
+      current pragmatic implementation where one exists.
+- [ ] Update direction and lore README indexes after the split.
+- [ ] Review the decomposed result as a content change separately from the
+      earlier path/metadata moves so semantic changes remain visible.
+
+Deliverable: the founding material is expressed through focused direction and
+lore pages without losing its provenance, G-number references, or role as the
+project foundation.
+
+### Phase 6 — Validate and record deferred plan extraction
 
 - [ ] Run metadata/index validation.
 - [ ] Run relative Markdown-link validation.
@@ -534,6 +617,8 @@ should be deterministic and repository-local.
 - Confirm ideas can be excluded from current-design queries.
 - Confirm every Markdown file beneath `docs/design/` has valid frontmatter,
   except where the indexing tool intentionally exempts a file.
+- Confirm `horizon: exploratory` and `authority: non-authoritative` reliably
+  select idea documents without selecting committed direction.
 
 ### Link and path tests
 
@@ -549,11 +634,14 @@ should be deterministic and repository-local.
 
 - Compare moved current pages before and after normalization to ensure mechanics
   did not change unintentionally.
-- Review every use of “current,” “approved,” “future,” “decision,” “idea,” and
-  “outside this design” in the migrated corpus.
+- Review every use of “current,” “approved,” “future,” “direction,” “decision,”
+  “idea,” and “outside this design” in the migrated corpus.
 - Verify each G-number remains unique and searchable.
 - Verify no idea is presented as an implementation requirement.
 - Verify lore does not imply an unstated current mechanic.
+- Verify mutable profile values are linked to `content/profiles/starter.ron`
+  rather than duplicated, while reviewed ranges, named invariants, formulas,
+  and generator-revision constants remain documented where appropriate.
 
 ### Repository checks
 
@@ -568,14 +656,17 @@ should be deterministic and repository-local.
 - [ ] `docs/design/` contains `current/`, `direction/`, `lore/`, and `ideas/`,
       each with an indexed README.
 - [ ] Every design document has explicit type, status, authority, and horizon
-      metadata.
+      metadata, using `exploratory` for uncommitted future ideas.
 - [ ] Root and subfolder README files explain agent behavior and authority
       precedence in plain language.
+- [ ] `AGENTS.md` directs agents to the design hierarchy and requires applicable
+      design-document updates as part of reviewed implementation work.
 - [ ] Current mechanical contracts are located under `current/` and remain
       mechanically unchanged unless an owner response explicitly approves a
       reconciliation change.
-- [ ] The founding document remains identifiable as the project's foundation
-      and retains stable G1–G22 references.
+- [ ] The founding material remains identifiable as the project's foundation,
+      retains stable G1–G22 references or an explicit mapping, and is decomposed
+      in the final content phase after the framework is established.
 - [ ] Committed direction is distinguishable from current implementation.
 - [ ] Lore is distinguishable from mechanical contracts.
 - [ ] Ideas are explicitly non-authoritative and contain no accidental current
@@ -584,6 +675,8 @@ should be deterministic and repository-local.
 - [ ] Relative links resolve and repository references use canonical new paths.
 - [ ] Package-index searches can reliably include current design and exclude
       ideas using metadata.
+- [ ] Mutable tuning values use repository config links as their source of truth;
+      reviewed design constraints and revision-frozen constants remain explicit.
 - [ ] No duplicate compatibility copies of moved documents remain.
 - [ ] A separate follow-up need for extracting current contracts from plans is
       recorded without expanding this migration into a plan audit.
@@ -652,4 +745,5 @@ behavior. No external research or API documentation was needed.
 - `docs/ideas.md`
 - `docs/2026-07-20-design-direction-governance-sandbox.md`
 - `docs/architecture.md`
+- `content/profiles/starter.ron`
 - `AGENTS.md`
