@@ -86,6 +86,7 @@ fn preview_is_allowlisted_stale_after_edit_and_exactly_consumed() {
         .expect("exact start");
     let playing = session.playing_view().expect("playing view");
     assert_eq!(playing.seed, 42);
+    assert!(playing.probe_maximum_jump_limit > 0);
     assert!(
         playing.systems.len() > 1,
         "identified summaries are player knowledge"

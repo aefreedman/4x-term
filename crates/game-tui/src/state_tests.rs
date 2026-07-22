@@ -1,8 +1,10 @@
 use crate::input::{Action, Direction};
-use crate::state::{BatchStatus, Confirmation, ConstructionDraft, Modal, Screen, TuiState};
+use crate::state::{
+    BatchStatus, Confirmation, ConstructionDraft, MissionDraft, Modal, Screen, TuiState,
+};
 use game_app::{
-    ActionAvailability, ApplicationOutcome, ContentId, DraftDisposition, IntentKind, PreviewStatus,
-    ProfileDescriptor,
+    ActionAvailability, ApplicationOutcome, ContentId, DraftDisposition, IntentKind,
+    LimitingReason, PreviewStatus, ProbeAssessmentView, ProfileDescriptor, ShipId,
 };
 use std::{path::PathBuf, time::Duration};
 
@@ -25,6 +27,53 @@ fn playing_state() -> TuiState {
         .unwrap();
     assert!(state.is_playing());
     state
+}
+
+#[test]
+fn probe_jump_override_applies_before_launch_review_and_unavailable_routes_stay_editable() {
+    let mut state = playing_state();
+    let view = state.playing_view().unwrap();
+    let source = ContentId::new("core:origin").unwrap();
+    let target = view
+        .systems
+        .iter()
+        .find(|system| system.system_id != source)
+        .unwrap()
+        .system_id
+        .clone();
+    let maximum = view.probe_maximum_jump_limit;
+    state.modal = Some(Modal::Mission(Box::new(MissionDraft::Probe(
+        ProbeAssessmentView {
+            source_id: source.clone(),
+            ship_id: ShipId::new(source, 999),
+            target_id: target,
+            target_label: "Target".into(),
+            requested_jump_limit: maximum,
+            minimum_jump_limit: 1,
+            maximum_jump_limit: maximum,
+            target_knowledge: game_app::KnowledgeLevel::IdentifiedSummary,
+            asset_ready: false,
+            travel_energy: None,
+            route: None,
+            availability: ActionAvailability::Unavailable {
+                reason: LimitingReason::UnknownShip,
+                message: "No probe asset".into(),
+            },
+        },
+    ))));
+    state.mission_jump_input = Some("1".into());
+
+    state
+        .handle_action(Action::Confirm, Duration::ZERO)
+        .unwrap();
+    assert_eq!(state.mission_jump_override, Some(1));
+    assert!(state.mission_jump_input.is_none());
+    assert!(matches!(state.modal, Some(Modal::Mission(_))));
+
+    state
+        .handle_action(Action::Confirm, Duration::ZERO)
+        .unwrap();
+    assert!(matches!(state.modal, Some(Modal::Mission(_))));
 }
 
 #[test]

@@ -143,6 +143,7 @@ pub struct TuiState {
     pub selected_slot: usize,
     pub construction: Option<ConstructionDraft>,
     pub mission_draft: Option<MissionDraft>,
+    pub mission_jump_override: Option<u64>,
     pub mission_jump_input: Option<String>,
     pub mission_jump_error: Option<String>,
     pub notice: Option<ApplicationOutcome>,
@@ -171,6 +172,7 @@ impl TuiState {
             selected_slot: 0,
             construction: None,
             mission_draft: None,
+            mission_jump_override: None,
             mission_jump_input: None,
             mission_jump_error: None,
             notice: None,
@@ -551,6 +553,7 @@ impl TuiState {
             Modal::Mission(mut mission) => {
                 match action {
                     Action::Cancel => {
+                        self.mission_jump_override = None;
                         self.mission_jump_input = None;
                         self.mission_jump_error = None;
                         return Ok(());
@@ -567,12 +570,17 @@ impl TuiState {
                     }
                     Action::Backspace if matches!(&*mission, MissionDraft::Probe(_)) => {
                         if self.mission_jump_input.is_none()
-                            && let MissionDraft::Probe(probe) = &*mission
+                            && let Some(value) = self.mission_jump_override
                         {
-                            self.mission_jump_input = Some(probe.requested_jump_limit.to_string());
+                            self.mission_jump_input = Some(value.to_string());
                         }
-                        self.mission_jump_input.get_or_insert_default().pop();
+                        if let Some(input) = &mut self.mission_jump_input {
+                            input.pop();
+                        }
                         self.mission_jump_error = None;
+                    }
+                    Action::Delete if matches!(&*mission, MissionDraft::Probe(_)) => {
+                        self.clear_probe_jump_override(&mut mission)?;
                     }
                     Action::Navigate(Direction::Left) => {
                         self.adjust_mission(&mut mission, false)?
@@ -582,19 +590,14 @@ impl TuiState {
                     }
                     Action::Navigate(Direction::Up) => {
                         self.cycle_mission_target(&mut mission, -1)?;
-                        self.mission_jump_input = None;
-                        self.mission_jump_error = None;
                     }
                     Action::Navigate(Direction::Down) => {
                         self.cycle_mission_target(&mut mission, 1)?;
-                        self.mission_jump_input = None;
-                        self.mission_jump_error = None;
                     }
                     Action::Confirm => {
                         if let MissionDraft::Probe(probe) = &mut *mission {
-                            let jump_limit = match self.mission_jump_input.as_deref() {
-                                None => probe.requested_jump_limit,
-                                Some(entered) => match entered.parse::<u64>() {
+                            if let Some(entered) = self.mission_jump_input.as_deref() {
+                                let jump_limit = match entered.parse::<u64>() {
                                     Ok(value) => value,
                                     Err(_) => {
                                         self.mission_jump_error =
@@ -602,29 +605,39 @@ impl TuiState {
                                         self.modal = Some(Modal::Mission(mission));
                                         return Ok(());
                                     }
-                                },
-                            };
-                            if !(probe.minimum_jump_limit..=probe.maximum_jump_limit)
-                                .contains(&jump_limit)
-                            {
-                                self.mission_jump_error = Some(format!(
-                                    "Jump distance must be {}..={}",
-                                    probe.minimum_jump_limit, probe.maximum_jump_limit
-                                ));
+                                };
+                                if !(probe.minimum_jump_limit..=probe.maximum_jump_limit)
+                                    .contains(&jump_limit)
+                                {
+                                    self.mission_jump_error = Some(format!(
+                                        "Jump distance must be {}..={}",
+                                        probe.minimum_jump_limit, probe.maximum_jump_limit
+                                    ));
+                                    self.modal = Some(Modal::Mission(mission));
+                                    return Ok(());
+                                }
+                                let outcome =
+                                    self.session.as_mut().expect("playing session").dispatch(
+                                        SessionIntent::AssessProbeLaunch {
+                                            source_id: probe.source_id.clone(),
+                                            ship_id: probe.ship_id.clone(),
+                                            target_id: probe.target_id.clone(),
+                                            jump_limit,
+                                        },
+                                    )?;
+                                if let SessionOutcome::ProbeAssessment(value) = outcome {
+                                    *probe = value;
+                                }
+                                self.mission_jump_override = Some(jump_limit);
+                                self.mission_jump_input = None;
+                                self.mission_jump_error = None;
                                 self.modal = Some(Modal::Mission(mission));
                                 return Ok(());
                             }
-                            let outcome =
-                                self.session.as_mut().expect("playing session").dispatch(
-                                    SessionIntent::AssessProbeLaunch {
-                                        source_id: probe.source_id.clone(),
-                                        ship_id: probe.ship_id.clone(),
-                                        target_id: probe.target_id.clone(),
-                                        jump_limit,
-                                    },
-                                )?;
-                            if let SessionOutcome::ProbeAssessment(value) = outcome {
-                                *probe = value;
+                            if matches!(probe.availability, ActionAvailability::Unavailable { .. })
+                            {
+                                self.modal = Some(Modal::Mission(mission));
+                                return Ok(());
                             }
                         }
                         let confirmation = match &*mission {
@@ -1044,7 +1057,10 @@ impl TuiState {
                 source_id: source,
                 ship_id: asset.ship_id.clone(),
                 target_id: target,
-                jump_limit: 1,
+                jump_limit: self
+                    .playing_view
+                    .as_ref()
+                    .map_or(1, |view| view.probe_maximum_jump_limit),
             }
         } else {
             SessionIntent::AssessExpeditionLaunch {
@@ -1061,6 +1077,7 @@ impl TuiState {
             .dispatch(intent)?;
         self.modal = match outcome {
             SessionOutcome::ProbeAssessment(value) => {
+                self.mission_jump_override = None;
                 self.mission_jump_input = None;
                 self.mission_jump_error = None;
                 Some(Modal::Mission(Box::new(MissionDraft::Probe(value))))
@@ -1073,6 +1090,30 @@ impl TuiState {
             _ => None,
         };
         Ok(self.modal.is_some())
+    }
+
+    fn clear_probe_jump_override(
+        &mut self,
+        mission: &mut MissionDraft,
+    ) -> Result<(), ApplicationError> {
+        let MissionDraft::Probe(probe) = mission else {
+            return Ok(());
+        };
+        let outcome = self.session.as_mut().expect("playing session").dispatch(
+            SessionIntent::AssessProbeLaunch {
+                source_id: probe.source_id.clone(),
+                ship_id: probe.ship_id.clone(),
+                target_id: probe.target_id.clone(),
+                jump_limit: probe.maximum_jump_limit,
+            },
+        )?;
+        if let SessionOutcome::ProbeAssessment(value) = outcome {
+            *probe = value;
+        }
+        self.mission_jump_override = None;
+        self.mission_jump_input = None;
+        self.mission_jump_error = None;
+        Ok(())
     }
 
     fn adjust_mission(
@@ -1148,7 +1189,9 @@ impl TuiState {
                 source_id: value.source_id.clone(),
                 ship_id: value.ship_id.clone(),
                 target_id,
-                jump_limit: value.requested_jump_limit,
+                jump_limit: self
+                    .mission_jump_override
+                    .unwrap_or(value.maximum_jump_limit),
             },
             MissionDraft::Expedition(value) => SessionIntent::AssessExpeditionLaunch {
                 source_id: value.source_id.clone(),

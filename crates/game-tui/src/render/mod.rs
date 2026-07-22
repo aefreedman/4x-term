@@ -1438,26 +1438,38 @@ fn render_modal(frame: &mut Frame<'_>, area: Rect, state: &TuiState, modal: &Mod
                                 .join("\n")
                         },
                     );
-                    let jump_input = state
-                        .mission_jump_input
-                        .as_deref()
-                        .map_or_else(|| value.requested_jump_limit.to_string(), str::to_owned);
                     let jump_error = state
                         .mission_jump_error
                         .as_ref()
                         .map_or_else(String::new, |error| format!("\n! {error}"));
+                    let jump_setting = if let Some(input) = &state.mission_jump_input {
+                        format!(
+                            "> {}\n  Edited — route above is unchanged; Enter applies{jump_error}",
+                            if input.is_empty() { "[empty]" } else { input }
+                        )
+                    } else if let Some(limit) = state.mission_jump_override {
+                        format!("  Override — {limit} [Delete: Automatic]")
+                    } else {
+                        format!("  Automatic — up to {}", value.maximum_jump_limit)
+                    };
                     let travel_energy = value
                         .travel_energy
                         .map_or_else(|| "--".into(), |energy| energy.to_string());
+                    let actions = if state.mission_jump_input.is_some() {
+                        "[Enter Apply Override] [Delete Automatic] [Up/Down Target] [Esc Back]"
+                    } else if matches!(value.availability, ActionAvailability::Available) {
+                        "[Up/Down Target] [Type Number to Override] [Delete Automatic] [Enter Review Launch] [Esc Back]"
+                    } else {
+                        "[Up/Down Target] [Type Number to Override] [Delete Automatic] [Esc Back]"
+                    };
                     format!(
-                        "Probe destination\n  {}\n\nJump distance ({}..={})\n> {}{}\n\nTravel energy\n  {}\n\nStatus\n  {}\n\n{route}\n\n[Type Distance] [Backspace Edit] [Up/Down Target] [Enter Review Launch] [Esc Back]",
+                        "Probe destination\n> {}\n\nRoute\n{route}\n\nTravel energy\n  {}\n\nStatus\n  {}\n\nMaximum jump per leg ({}..={})\n{}\n\n{actions}",
                         value.target_label,
-                        value.minimum_jump_limit,
-                        value.maximum_jump_limit,
-                        jump_input,
-                        jump_error,
                         travel_energy,
                         availability_text(&value.availability),
+                        value.minimum_jump_limit,
+                        value.maximum_jump_limit,
+                        jump_setting,
                     )
                 }
                 MissionDraft::Expedition(value) => {

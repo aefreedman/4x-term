@@ -307,6 +307,7 @@ struct Catalogue {
     energy_resource: ContentId,
     coordinate_quanta_per_map_unit: u64,
     habitat_population_energy: u64,
+    probe_maximum_jump_limit: u64,
 }
 
 impl Catalogue {
@@ -329,6 +330,7 @@ impl Catalogue {
             energy_resource: definition.tuning.energy_resource.clone(),
             coordinate_quanta_per_map_unit: definition.tuning.coordinate_quanta_per_map_unit,
             habitat_population_energy: definition.tuning.habitat_population_energy,
+            probe_maximum_jump_limit: definition.tuning.probe_travel.maximum_jump_quanta,
         }
     }
 
@@ -735,6 +737,7 @@ pub struct PlayingView {
     pub profile_name: String,
     pub time: SimulationTime,
     pub seasonal_position: u8,
+    pub probe_maximum_jump_limit: u64,
     pub systems: Vec<SystemListEntry>,
     pub chart: Vec<ChartEntry>,
     pub unpositioned_systems: Vec<ContentId>,
@@ -1440,6 +1443,7 @@ impl Session {
             profile_name: self.profile_name.clone(),
             time: core.time,
             seasonal_position: core.seasonal_phase + 1,
+            probe_maximum_jump_limit: self.catalogue.probe_maximum_jump_limit,
             systems,
             chart,
             unpositioned_systems,

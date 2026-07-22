@@ -35,8 +35,10 @@
 
 ### Changed
 
-- Probe drafts now accept typed jump-distance values, probe and expedition
-  drafts use player-facing labels instead of debug structures, received probe
+- Probe planning now prioritizes target and route selection, defaults to the
+  probe's maximum jump capability, and treats typed per-leg jump limits as an
+  explicit apply-and-review override. Probe and expedition drafts use
+  player-facing labels instead of debug structures, received probe
   facts appear in a browsable read-only system-detail surface while controllable
   systems open local management directly, active ships appear at their current
   map position as a simple `+`, and system uncertainty
