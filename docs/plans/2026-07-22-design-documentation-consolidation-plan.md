@@ -169,6 +169,46 @@ be updated after moves.
 >
 > **OWNER RESPONSE:** draft documents shouldn't be in current/ to avoid any accidental confusion. The other folders are tolerant of drafts.
 
+## Semantic decision references
+
+Numbered G/Q labels are an arbitrary founding-document convention and will not
+remain the primary reference system.
+
+Use canonical relative page/heading links for ordinary citations. Add semantic
+IDs only for durable decisions that are cited across current design, direction,
+agent guidance, tests, or active implementation plans. Example metadata:
+
+```yaml
+design_ids:
+  - worldgen.constructive-origin
+  - testing.generated-world-invariants
+legacy_ids:
+  - G18
+```
+
+Rules:
+
+- IDs describe one focused proposition rather than a bundle of unrelated rules.
+- IDs use stable domain-and-concept names such as
+  `information.two-channel`, `governance.delegation-by-distance`, and
+  `economy.physical-resources`.
+- Authority, horizon, priority, and implementation status do not appear in the
+  ID; those properties may change while the concept remains identifiable.
+- Most pages and headings need no explicit ID. Do not create a replacement ID
+  bureaucracy when a canonical link is sufficient.
+- Ideas receive no durable decision ID until promoted into direction.
+- New sequential G/Q labels stop being introduced.
+- `direction/README.md` maintains the legacy G-to-semantic/page mapping needed
+  by completed plans and historical discussion.
+- Active documents such as `AGENTS.md`, current design, and active plans migrate
+  to semantic links. Completed plans may retain G references because the legacy
+  mapping keeps them resolvable.
+
+Compound entries may split into more than one semantic decision. For example,
+G18 can map separately to `worldgen.constructive-origin` and
+`testing.generated-world-invariants` rather than preserving its accidental
+bundling.
+
 ## Proposed file layout and moves
 
 ### Root index
@@ -219,9 +259,12 @@ Create `docs/design/direction/README.md` describing the document as the founding
 basis for the current project and explaining that a directional decision is not
 proof that its mechanics exist today.
 
-Preserve G-number identifiers so existing plans and discussions can continue to
-cite G1–G22. Git history is the path-level historical record; do not retain a
-second copy at the old location.
+Retire G-number identifiers as the primary vocabulary. Existing plans and
+historical discussions may continue to cite G1–G22 through an explicit legacy
+mapping, while active guidance uses canonical page/heading links and semantic
+decision IDs where stable cross-document references are useful. Git history is
+the path-level historical record; do not retain a second copy at the old
+location.
 
 The early framework phase moves the founding document as
 `docs/design/direction/foundations.md` without broadly decomposing it. The final
@@ -504,8 +547,9 @@ founding transition, remote commandability, and tick order.
 - [ ] Record owner responses in this plan.
 - [ ] Resolve Questions 1–17 or explicitly mark any as deferred.
 - [ ] Finalize folder authority, metadata values, and promotion workflow.
-- [ ] Finalize the status of G1–G22 as current foundation, committed direction,
-      open direction, or superseded/refined.
+- [ ] Classify the propositions currently bundled under G1–G22 as current
+      foundation, committed direction, open direction, idea, or
+      superseded/refined.
 - [ ] Confirm which content is canonical lore.
 
 Deliverable: this plan changes from `draft` to `approved` with decisions
@@ -532,7 +576,7 @@ horizon, and repository-level agent guidance points to the hierarchy.
 ### Phase 3 — Place foundation, lore framework, and topic ideas
 
 - [ ] Move the founding document intact to `direction/foundations.md` while
-      retaining G identifiers.
+      retaining G labels temporarily as legacy references.
 - [ ] Put the minimum decision/horizon summary needed for safe agent use in
       `direction/README.md`; defer broad foundation decomposition until the
       final content phase of this plan.
@@ -571,8 +615,15 @@ foundation is split.
       folder framework and current contracts are stable.
 - [ ] Keep `foundations.md` as the concise founding index and durable-principles
       entry point rather than preserving the original mixed document unchanged.
-- [ ] Preserve G1–G22 identifiers or provide an explicit mapping from each G
-      identifier to its new canonical page.
+- [ ] Break compound G entries into focused propositions where their concepts,
+      authority, or horizon differ.
+- [ ] Assign semantic decision IDs only to durable cross-document decisions;
+      use canonical page/heading links for everything else.
+- [ ] Add `legacy_ids` metadata where useful and build an explicit mapping from
+      every historical G label to its semantic decision(s) and canonical page.
+- [ ] Replace active G references, including G18 in `AGENTS.md`, while leaving
+      completed implementation plans untouched.
+- [ ] Stop introducing sequential G/Q labels.
 - [ ] Move rudimentary setting material into focused lore pages, including
       `lore/precursor-aftermath.md` when the extracted content supports it.
 - [ ] Keep unresolved fiction in lore pages and mark it clearly so canonical
@@ -586,8 +637,9 @@ foundation is split.
       earlier path/metadata moves so semantic changes remain visible.
 
 Deliverable: the founding material is expressed through focused direction and
-lore pages without losing its provenance, G-number references, or role as the
-project foundation.
+lore pages without losing its provenance or role as the project foundation;
+historical G references remain resolvable through a legacy mapping rather than
+remaining the active vocabulary.
 
 ### Phase 6 — Validate and record deferred plan extraction
 
@@ -636,7 +688,10 @@ should be deterministic and repository-local.
   did not change unintentionally.
 - Review every use of “current,” “approved,” “future,” “direction,” “decision,”
   “idea,” and “outside this design” in the migrated corpus.
-- Verify each G-number remains unique and searchable.
+- Verify every historical G label resolves through the legacy mapping.
+- Verify semantic decision IDs are unique, focused, and searchable.
+- Verify active guidance no longer relies on G/Q labels and no new sequential
+  labels were introduced.
 - Verify no idea is presented as an implementation requirement.
 - Verify lore does not imply an unstated current mechanic.
 - Verify mutable profile values are linked to `content/profiles/starter.ron`
@@ -664,9 +719,14 @@ should be deterministic and repository-local.
 - [ ] Current mechanical contracts are located under `current/` and remain
       mechanically unchanged unless an owner response explicitly approves a
       reconciliation change.
-- [ ] The founding material remains identifiable as the project's foundation,
-      retains stable G1–G22 references or an explicit mapping, and is decomposed
-      in the final content phase after the framework is established.
+- [ ] The founding material remains identifiable as the project's foundation
+      and is decomposed in the final content phase after the framework is
+      established.
+- [ ] Historical G1–G22 references resolve through an explicit legacy mapping;
+      active guidance uses canonical links and focused semantic IDs only where
+      needed.
+- [ ] Compound G entries are split when they contain propositions with different
+      authority or horizons, and new sequential G/Q labels are prohibited.
 - [ ] Committed direction is distinguishable from current implementation.
 - [ ] Lore is distinguishable from mechanical contracts.
 - [ ] Ideas are explicitly non-authoritative and contain no accidental current
