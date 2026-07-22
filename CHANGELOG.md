@@ -6,96 +6,35 @@
 
 ### Added
 
-- A human-play `4x-term` executable with editable or randomly generated seeds,
-  an explicitly focusable origin preview/start action, safe terminal lifecycle,
-  and a `160x45` keyboard-first Ratatui interface.
-- A synchronous `game-app` session boundary with immutable player-safe views,
-  typed intents/outcomes, FSC catalogue labels, session aliases, dedicated
-  Energy evidence, and manual atomic tick deltas.
-- Playable construction and Habitat bootstrap, probe scouting, expedition
-  founding/loss, delayed report, redacted-route, Shipyard, and mission flows.
-- QWERTY and Colemak-DH semantic navigation, contextual help, size safety,
-  and deterministic interruptible 1/5/10-ticks-per-second manual batches.
-
-- Stage 4b's deterministic `core:frontier_world@1` generator, editable strict
-  RON profiles, canonical SHA-256 profile fingerprints, logical provenance, and
-  complete version/seed/profile generation identity.
-- Fixed-point geometric routing, initial origin knowledge, keyed observations,
-  delayed fact transmissions, monotonic deterministic merge, and redacted
-  player route/system views.
-- Habitat-backed population tokens, automatic generation, stable population
-  identity, derived occupancy/support/work, and explicit transition accounting.
-- Shipyards with independent FIFO project queues, completed probes and
-  expeditions, world-owned transit, typed slot reservations, settlement,
-  insufficient-slot loss, delayed outcome reports, and remote command unlock.
-- Whole-world ten-phase atomic ticking with exact cross-system resource and
-  population reconciliation evidence.
-- Strict authored-world support for coherent initial resident population tokens,
-  including initialized-population accounting and never-reused sequence setup.
-- An editable `content/profiles/starter.ron` baseline and 56 focused
-  deterministic tests across `game-core` and `game-content`.
+- A new human-play `4x-term` terminal experience with editable or random seeds,
+  generated-world previews, explicit start, safe terminal restoration, and a
+  keyboard-first `160x45` reference layout.
+- Origin development through resource production, construction queues,
+  Batteries, Extractors, Refineries, Habitats, population growth, and Shipyards.
+- Frontier expansion through probe scouting, delayed knowledge reports,
+  Shipyard projects, expedition travel, settlement, and expedition loss.
+- A synchronized frontier map and system list with deterministic uncertainty
+  visuals, aliases, active ship positions, and read-only knowledge details.
+- QWERTY and Colemak-DH navigation, contextual help, terminal-size recovery,
+  and interruptible manual batches at 1, 5, or 10 ticks per second.
+- Deterministic world identity derived from generator revision, seed, and strict
+  RON profile content, with `content/profiles/starter.ron` as the default profile.
+- Player knowledge and communication delay: hidden systems and routes stay
+  redacted, scouting and founding outcomes arrive later, and remote systems
+  become controllable only after settlement reports arrive.
+- Whole-world atomic simulation of Energy, resources, population, construction,
+  ships, and time.
 
 ### Changed
 
-- Probe planning now prioritizes target and route selection, defaults to the
-  probe's maximum jump capability, and treats typed per-leg jump limits as an
-  explicit apply-and-review override. Probe and expedition drafts use
-  player-facing labels instead of debug structures, received probe
-  facts appear in a browsable read-only system-detail surface while controllable
-  systems open local management directly, active ships appear at their current
-  map position as a simple `+`, and system uncertainty
-  visuals are deterministically assigned from Plain plus twelve variants each
-  of Irregular, Interference, Directional, and Compact forms. Origin receives
-  the same seeded assignment as every other system, Plain is never offset, visual
-  pivots remain within four map units of their systems, collisions are allowed, and
-  discovery overlays the exact `*` or selected `@` without removing the visual.
-  Anonymous texture renders as frontier fog, and generated startup previews use
-  gameplay scale.
-- Local-system management can enable or disable any development while
-  preserving progress and queues; local details expose system resource stocks,
-  slot rows expose construction progress, body rows expose remaining resources,
-  empty slots are visually subdued, and
-  Shipyard actions appear only when they have a valid local target.
-- Every location now has persistent system runtime. Immutable map facts own
-  initial body resources while runtime bodies solely own remaining quantities;
-  systems own stocks, infrastructure, queues, assets, and accounting.
-- Population tokens are the sole mutable population authority; community
-  population and Habitat occupancy are derived views.
-- Simulation time, transit, and origin knowledge are world-owned, and each tick
-  executes phase-major across all systems in stable order before committing.
-- The public runtime boundary is a knowledge-filtered `PlayerWorldView`;
-  privileged complete snapshots are gated behind the `test-support` feature.
-- Generated-world artifacts now expose identity, provenance, and validated world
-  definitions through read-only accessors rather than public fields.
-- The retained Stage 4 Collector, Battery, Extractor, Refinery, construction,
-  life-support, overflow, and accounting mechanics now run under the Stage 4b
-  map/runtime schema.
-- The headless simulation remains independent of terminal presentation;
-  `game-app` exclusively owns mutable session state and `game-tui` depends only
-  on application contracts rather than `game-core`.
-
-### Fixed
-
-- Dashboard and local-system navigation now use one honest visible focus:
-  Up/Down traverses the displayed system or slot rows, read-only panels remain
-  synchronized, unavailable management is not opened, and contextual hints
-  match the active selection.
-- Manual frame pacing no longer removes Help, Settings, editor, construction,
-  mission, or confirmation modals before their next rendered frame.
-- Knowledge refresh now retains the selected system by stable identity when new
-  discoveries reorder the system list.
-- Probe and expedition shortcuts and hints now consume typed application-owned
-  launch/enqueue choices instead of reconstructing Shipyard legality in the TUI.
+- **Breaking:** replaced the trader-first authored market game with an
+  origin-first generated-world expansion game. Existing sessions and content
+  from earlier releases are not compatible.
 
 ### Removed
 
-- Floating-point map positions, explicit route topology, standalone deposits and
-  deposit reservations, origin-only ticking, and writable population totals.
-- Compatibility fields, fixtures, tests, and current-state documentation for
-  the replaced Stage 3/4 world schemas.
-- Generated-world target-count, connectivity, reachability, solvency, survival,
-  and qualitative-quality acceptance oracles; only the constructive origin
-  scaffold is guaranteed.
+- The previous trader fleets, markets, Energy logistics contracts, governance,
+  intelligence, encyclopedia, and activity-based terminal interface.
 
 ## 0.7.1 - 2026-07-20
 
