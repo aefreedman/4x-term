@@ -1,5 +1,5 @@
 ---
-title: "Survival and Failure"
+title: Survival and Failure
 type: design-direction
 status: approved
 authority: directional

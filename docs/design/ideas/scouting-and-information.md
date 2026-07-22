@@ -1,5 +1,5 @@
 ---
-title: "Scouting and Information Ideas"
+title: Scouting and Information Ideas
 type: design-idea
 status: draft
 authority: non-authoritative

@@ -1,5 +1,5 @@
 ---
-title: "Design Direction"
+title: Design Direction
 type: design-index
 status: active
 authority: directional

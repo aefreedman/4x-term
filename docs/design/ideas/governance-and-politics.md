@@ -1,5 +1,5 @@
 ---
-title: "Governance and Politics Ideas"
+title: Governance and Politics Ideas
 type: design-idea
 status: draft
 authority: non-authoritative

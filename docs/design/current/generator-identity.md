@@ -1,5 +1,5 @@
 ---
-title: "Generator Identity"
+title: Generator Identity
 type: design-current
 status: approved
 authority: normative

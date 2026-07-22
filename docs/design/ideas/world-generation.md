@@ -1,5 +1,5 @@
 ---
-title: "World Generation Ideas"
+title: World Generation Ideas
 type: design-idea
 status: draft
 authority: non-authoritative

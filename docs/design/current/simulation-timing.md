@@ -1,5 +1,5 @@
 ---
-title: "Simulation Timing"
+title: Simulation Timing
 type: design-current
 status: approved
 authority: normative

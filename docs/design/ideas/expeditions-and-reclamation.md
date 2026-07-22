@@ -1,5 +1,5 @@
 ---
-title: "Expedition and Reclamation Ideas"
+title: Expedition and Reclamation Ideas
 type: design-idea
 status: draft
 authority: non-authoritative

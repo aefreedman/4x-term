@@ -1,5 +1,5 @@
 ---
-title: "Population and Habitats"
+title: Population and Habitats
 type: design-current
 status: approved
 authority: normative

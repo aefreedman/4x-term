@@ -1,5 +1,5 @@
 ---
-title: "Community Governance"
+title: Community Governance
 type: design-direction
 status: approved
 authority: directional

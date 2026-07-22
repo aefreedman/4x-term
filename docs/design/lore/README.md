@@ -1,5 +1,5 @@
 ---
-title: "Lore"
+title: Lore
 type: design-index
 status: active
 authority: canonical-context

@@ -1,5 +1,5 @@
 ---
-title: "Information and Distance"
+title: Information and Distance
 type: design-direction
 status: approved
 authority: directional

@@ -1,5 +1,5 @@
 ---
-title: "Infrastructure and Slot Ideas"
+title: Infrastructure and Slot Ideas
 type: design-idea
 status: draft
 authority: non-authoritative

@@ -1,5 +1,5 @@
 ---
-title: "Tuning Profiles"
+title: Tuning Profiles
 type: design-current
 status: approved
 authority: normative

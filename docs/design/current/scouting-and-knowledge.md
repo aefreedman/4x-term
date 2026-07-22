@@ -1,5 +1,5 @@
 ---
-title: "Scouting and Knowledge"
+title: Scouting and Knowledge
 type: design-current
 status: approved
 authority: normative

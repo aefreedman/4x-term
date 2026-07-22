@@ -1,5 +1,5 @@
 ---
-title: "World Generation"
+title: World Generation
 type: design-current
 status: approved
 authority: normative

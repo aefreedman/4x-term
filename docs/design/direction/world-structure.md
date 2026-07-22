@@ -1,5 +1,5 @@
 ---
-title: "World Structure and Generation Direction"
+title: World Structure and Generation Direction
 type: design-direction
 status: approved
 authority: directional

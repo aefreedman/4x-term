@@ -1,5 +1,5 @@
 ---
-title: "Production and Capability Ideas"
+title: Production and Capability Ideas
 type: design-idea
 status: draft
 authority: non-authoritative

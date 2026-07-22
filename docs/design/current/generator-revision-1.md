@@ -1,5 +1,5 @@
 ---
-title: "Frontier Generator Revision 1"
+title: Frontier Generator Revision 1
 type: design-current
 status: approved
 authority: normative

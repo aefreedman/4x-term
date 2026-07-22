@@ -1,5 +1,5 @@
 ---
-title: "Prototype Migration Boundaries"
+title: Prototype Migration Boundaries
 type: design-direction
 status: approved
 authority: directional

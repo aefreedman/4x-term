@@ -1,5 +1,5 @@
 ---
-title: "Systems and Resources"
+title: Systems and Resources
 type: design-current
 status: approved
 authority: normative

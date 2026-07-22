@@ -1,5 +1,5 @@
 ---
-title: "Game Design"
+title: Game Design
 type: design-index
 status: active
 authority: normative

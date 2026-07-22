@@ -1,5 +1,5 @@
 ---
-title: "Current Design Contracts"
+title: Current Design Contracts
 type: design-index
 status: active
 authority: normative

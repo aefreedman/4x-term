@@ -1,5 +1,5 @@
 ---
-title: "Design Ideas"
+title: Design Ideas
 type: design-index
 status: active
 authority: non-authoritative

@@ -1,5 +1,5 @@
 ---
-title: "Expansion and Physical Logistics"
+title: Expansion and Physical Logistics
 type: design-direction
 status: approved
 authority: directional

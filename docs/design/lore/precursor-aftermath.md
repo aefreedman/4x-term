@@ -1,5 +1,5 @@
 ---
-title: "Precursor Aftermath"
+title: Precursor Aftermath
 type: design-lore
 status: approved
 authority: canonical-context

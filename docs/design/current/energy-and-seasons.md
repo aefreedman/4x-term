@@ -1,5 +1,5 @@
 ---
-title: "Energy and Seasons"
+title: Energy and Seasons
 type: design-current
 status: approved
 authority: normative

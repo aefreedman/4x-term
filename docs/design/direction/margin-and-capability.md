@@ -1,5 +1,5 @@
 ---
-title: "Margin and Capability"
+title: Margin and Capability
 type: design-direction
 status: approved
 authority: directional

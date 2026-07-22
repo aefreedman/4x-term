@@ -1,5 +1,5 @@
 ---
-title: "Gameplay Foundations"
+title: Gameplay Foundations
 type: design-direction
 status: active
 authority: directional

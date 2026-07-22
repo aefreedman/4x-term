@@ -1,5 +1,5 @@
 ---
-title: "Ships and Expansion"
+title: Ships and Expansion
 type: design-current
 status: approved
 authority: normative
