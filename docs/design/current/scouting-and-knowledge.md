@@ -4,7 +4,6 @@ type: design-current
 status: approved
 authority: normative
 horizon: current
-source: "../../plans/2026-07-20-feature-constructive-world-generation-stage-4b-plan.md"
 ---
 # Scouting and Knowledge
 
