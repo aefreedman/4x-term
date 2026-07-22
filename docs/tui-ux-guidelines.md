@@ -72,7 +72,7 @@ A blank or “implicit” answer is a design gap.
 | Selection | Last selected visible system row | First visible slot on entry; retained visible slot after refresh |
 | Directions | Up/Down traverses system rows; map/detail synchronize read-only | Up/Down traverses visible slot rows across read-only body headings |
 | Tab order | None; only one interactive focus target | None; only one interactive focus target |
-| Enter | `[Enter Details]` opens received knowledge for any listed system | Contextual commands use their named keys; Enter is not advertised |
+| Enter | `[Enter Manage]` opens controllable systems directly; `[Enter Details]` opens received knowledge for read-only systems | Contextual commands use their named keys; Enter is not advertised |
 | Unavailable case | Read-only details remain browsable; management is offered only for commandable local systems | Unavailable Build/Habitat actions are omitted or explained in detail |
 | Refresh | Selected system remains visible and valid | Selected system and slot remain visible and valid |
 

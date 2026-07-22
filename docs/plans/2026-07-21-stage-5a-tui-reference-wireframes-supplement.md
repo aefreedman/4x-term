@@ -26,8 +26,8 @@ The dashboard and local compositions retain the reference geometry, but their
 original duplicated action hints are superseded by the active interaction
 rules. On the dashboard, only the System list is focused: Up/Down selects its
 visible rows, the map and summary panels synchronize read-only, and Enter opens
-a browsable detail surface for every listed system. That surface offers local
-management only when commandable. In local management, only slot
+controllable systems directly in local management while opening a browsable
+detail surface for read-only systems. In local management, only slot
 rows receive selection markers and Up/Down traverses those rows across body
 headings. Tab is not advertised where there is only one interactive focus
 target. See [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.md).

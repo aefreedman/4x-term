@@ -632,14 +632,20 @@ fn render_dashboard(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         view.systems.len()
     ))));
     systems.push(ListItem::new(Line::raw("")));
+    let local_selected = selected_id.is_some_and(|id| {
+        view.local_systems
+            .iter()
+            .any(|local| &local.system_id == id)
+    });
     let rename_available = view
         .systems
         .get(state.selected_system)
         .is_some_and(|system| system.chart_position.is_some());
-    let actions = if rename_available {
-        "[Up/Down Select] [Enter Details] [r Rename]"
-    } else {
-        "[Up/Down Select] [Enter Details]"
+    let actions = match (local_selected, rename_available) {
+        (true, true) => "[Up/Down Select] [Enter Manage] [r Rename]",
+        (true, false) => "[Up/Down Select] [Enter Manage]",
+        (false, true) => "[Up/Down Select] [Enter Details] [r Rename]",
+        (false, false) => "[Up/Down Select] [Enter Details]",
     };
     systems.push(ListItem::new(Line::raw(actions)));
     frame.render_widget(List::new(systems).block(panel("SYSTEMS", true)), rects[1]);
@@ -1268,7 +1274,7 @@ fn render_modal(frame: &mut Frame<'_>, area: Rect, state: &TuiState, modal: &Mod
             } else {
                 match state.screen {
                     Screen::Dashboard => (
-                        "Dashboard: Up/Down selects a system; Enter manages it when local.",
+                        "Dashboard: Up/Down selects a system; Enter manages local systems or opens remote details.",
                         "r alias   o operations",
                     ),
                     Screen::SystemDetails => (
@@ -1667,8 +1673,6 @@ mod tests {
             .expect("starter world has an uncertain identified system");
         terminal.draw(|frame| render(frame, &state)).unwrap();
         assert!(has_color(terminal.backend(), Color::White));
-        state.selected_system = 0;
-
         state
             .handle_action(Action::Confirm, Duration::ZERO)
             .unwrap();
@@ -1676,7 +1680,9 @@ mod tests {
         let output = text(terminal.backend());
         assert!(output.contains("> SYSTEM KNOWLEDGE"));
         assert!(output.contains("PROBE / SURVEY INFORMATION"));
+        state.handle_action(Action::Cancel, Duration::ZERO).unwrap();
 
+        state.selected_system = 0;
         state
             .handle_action(Action::Confirm, Duration::ZERO)
             .unwrap();

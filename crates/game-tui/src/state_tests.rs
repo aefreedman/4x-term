@@ -241,10 +241,6 @@ fn navigation_only_changes_the_selection_visible_on_the_current_screen() {
     state
         .handle_action(Action::Confirm, Duration::ZERO)
         .unwrap();
-    assert_eq!(state.screen, Screen::SystemDetails);
-    state
-        .handle_action(Action::Confirm, Duration::ZERO)
-        .unwrap();
     assert_eq!(state.screen, Screen::Local);
 
     let positions = {

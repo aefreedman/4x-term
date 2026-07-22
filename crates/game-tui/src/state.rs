@@ -741,7 +741,12 @@ impl TuiState {
                 self.select_system(1)
             }
             Action::Confirm if self.screen == Screen::Dashboard => {
-                self.screen = Screen::SystemDetails;
+                if self.selected_local().is_some() {
+                    self.screen = Screen::Local;
+                    self.select_first_local_slot();
+                } else {
+                    self.screen = Screen::SystemDetails;
+                }
             }
             Action::Confirm
                 if self.screen == Screen::SystemDetails && self.selected_local().is_some() =>

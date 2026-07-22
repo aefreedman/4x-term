@@ -260,8 +260,8 @@ are in [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.md).
 | Generation failure | Startup message/safety | Generate rejected | First invalid field, otherwise Retry | Edit and retry, inspect diagnostic, quit |
 | Preview | Startup summary composition | Generate accepted | Start action | Regenerate, start confirm, quit |
 | Start confirmation | `Overlay.confirm` | Activate Start | Cancel | Start consumes preview; Esc returns |
-| Main dashboard | `ScreenShell.playing` | Start accepted | System list | Select a system, open its received knowledge, tick, help, quit |
-| Frontier overview | Read-only map + focused synchronized list | Main dashboard | Last selected system row | Up/Down select; Enter opens details for any listed system; rename charted selection |
+| Main dashboard | `ScreenShell.playing` | Start accepted | System list | Select a system, manage it when controllable or inspect received knowledge when read-only, tick, help, quit |
+| Frontier overview | Read-only map + focused synchronized list | Main dashboard | Last selected system row | Up/Down select; Enter directly manages controllable systems or opens read-only details; rename charted selection |
 | System detail | Full read-only knowledge/facts composition | Enter on a listed system | System knowledge panel | Browse received survey facts; manage when commandable; Esc back |
 | Body/slot inspection | Flattened visible slot list + synchronized detail | Manage local system | First visible slot | Up/Down traverse displayed slots; construct or inspect Habitat; back |
 | Stocks inspection | `ResourceTable` + detail | Main dashboard/system detail | First stock row | Inspect exact quantity, back |
