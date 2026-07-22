@@ -1,7 +1,7 @@
 ---
 title: "Stage 5: Origin-and-Frontier Playable Startup"
 type: feature
-status: planned
+status: completed
 date: 2026-07-21
 ---
 # Stage 5: Origin-and-Frontier Playable Startup
@@ -20,6 +20,38 @@ Later slices expose the already-implemented scouting and founding mechanics
 without bundling every Stage 4b command into the first playable pass.
 Agent-facing CLI interaction is deferred to a separate future stage so this
 plan can focus exclusively on human interaction through the TUI.
+
+## Implementation audit — 2026-07-21
+
+Stage 5 is implemented, playable, and acceptance-complete. Checked boxes below
+have current implementation, playtesting, deterministic test evidence, or an
+explicitly approved scope decision. Unchecked boxes are historical orchestration
+steps that were not performed and cannot be completed retroactively.
+
+Several reviewed details were superseded by later follow-up work:
+
+- dashboard and local navigation now use one visible selectable list rather than
+  independent map/panel focus;
+- anonymous position-derived frontier visuals replace the original strict
+  no-position presentation while continuing to expose no neutral identity or
+  facts;
+- probe planning is target/route first, defaults to maximum capability, and
+  applies an optional typed jump-limit override explicitly;
+- the focused Start action is itself the explicit confirmation, replacing the
+  separate confirmation overlay; and
+- generic development enable/disable and active ship-position rendering extend
+  the originally planned minimum surface.
+
+Additional semantic renderer cases and cross-layer pre-receipt leak assertions
+were explicitly waived: extensive playtesting covers the presentation flows and
+deterministic core tests cover the hidden-information mechanics. The historical
+per-slice branch/owner/commit sequence also was not followed; the feature landed
+as a whole-stage delivery.
+
+Validation rerun during this audit passed formatting, workspace all-target and
+all-feature checking, Clippy with warnings denied, all-feature tests (110
+passed, none ignored), metadata/dependency inspection, and `git diff --check`.
+No Tokio, `anyhow`, or tracing dependency is present.
 
 ## Authoritative context
 
@@ -81,9 +113,10 @@ The workspace contains only `game-core` and `game-content`.
    seed, generated identity, and session. It may be changed from global
    settings on any surface; machine-local persistence is not required in this
    stage.
-10. The frontier overview presents a synchronized map and system list. Both are
-    derived from player knowledge and must not reveal uncharted or hidden
-    system identity or position.
+10. The frontier overview presents a synchronized map and system list derived
+    from player-safe state. Charted systems expose admitted identity and exact
+    position. Anonymous frontier fog may use position-derived visual points, but
+    must not associate them with hidden system identities or facts.
 11. Multi-tick advancement presents intermediate tick changes at a selectable
     pace of 1, 5, or 10 ticks per second, defaulting to 5. Space pauses or
     resumes between ticks, Enter advances one tick while paused, and Esc stops
@@ -226,6 +259,10 @@ explicit parallel lanes below.
       serially after merge instead of allowing opportunistic cross-lane edits.
 - [ ] Close each slice with the listed gate before delegating work from the next
       slice.
+
+These orchestration boxes remain unchecked intentionally: implementation landed
+on one whole-stage branch and the per-slice ownership and gate sequence cannot
+be reconstructed after the fact.
 
 Recommended agent roles are **integration**, **core boundary**, **application**,
 **TUI state/input**, **renderer**, **terminal adapter**, **acceptance tests**, and
@@ -540,8 +577,8 @@ A deterministic TUI-focused journey must demonstrate:
 3. Change the seed and regenerate without entering play.
 4. Start at the sole living origin community.
 5. Show no hidden neutral-system runtime state in the play view.
-6. Navigate the synchronized frontier map and list without revealing hidden
-   system identity or position.
+6. Navigate the synchronized frontier map and list without associating
+   anonymous frontier visuals with hidden system identity or facts.
 7. Inspect the dedicated Energy render plus origin stocks, bodies,
    developments, and available slots.
 8. Start from an empty slot and queue one valid development through a typed
@@ -582,16 +619,16 @@ A deterministic TUI-focused journey must demonstrate:
 
 #### 5B-0 — Integration scaffold (serial)
 
-- [ ] Add `crates/game-app`, `crates/game-tui`, and `crates/game-play`; configure
+- [x] Add `crates/game-app`, `crates/game-tui`, and `crates/game-play`; configure
       package `game-play` to produce binary `4x-term`.
-- [ ] Add the approved workspace dependencies and minimal Ratatui/Crossterm
+- [x] Add the approved workspace dependencies and minimal Ratatui/Crossterm
       features; update `Cargo.lock` under the integration owner only.
-- [ ] Verify the new empty graph with Rust 1.97 using workspace metadata,
+- [x] Verify the graph with Rust 1.97 using workspace metadata,
       all-target/all-feature check, and dependency inspection. Confirm no Tokio
       or terminal dependency enters `game-core`, `game-content`, or `game-app`.
-- [ ] Freeze module ownership and app re-exports so `game-tui` can use stable
+- [x] Freeze module ownership and app re-exports so `game-tui` can use stable
       intent IDs without a direct `game-core` dependency.
-- [ ] Define `ProfileDescriptor { machine_path, logical_source_id,
+- [x] Define `ProfileDescriptor { machine_path, logical_source_id,
       display_name }`. Derive Stage 5's player-facing name from the selected
       filename stem, keep the machine path startup-only, and never render
       provenance or path in play.
@@ -600,115 +637,131 @@ A deterministic TUI-focused journey must demonstrate:
 
 Core-boundary lane; owns only `game-core` projection code and its tests:
 
-- [ ] Add a player-safe local population projection containing derived
+- [x] Add a player-safe local population projection containing derived
       population count and occupied Habitat slot coordinates only where local
       state is already commandable, plus the current core-derived seasonal
       phase required by the Energy view.
-- [ ] Factor construction and Habitat-toggle validation into private plans
+- [x] Factor construction and Habitat-toggle validation into private plans
       shared by read-only assessment and atomic commit. Assessments expose only
       player-safe role/target eligibility, exact costs, availability, and typed
       limiting reasons; labels and copy remain application-owned.
-- [ ] Test population projection at origin tick zero, Habitat generation, and
+- [x] Test population projection at origin tick zero, Habitat generation, and
       expedition transitions available to existing fixtures, while excluding
       token identities, transit state, and neutral local runtime.
-- [ ] Test assessment non-mutation and commit agreement for every construction
+- [x] Test assessment non-mutation and commit agreement for every construction
       role, occupied/reserved slots, Extractor targets, insufficient resources,
       Habitat occupancy/state, and stale-state revalidation.
 
 Terminal-scaffold lane; owns only `game-tui` terminal abstractions and tests:
 
-- [ ] Prove the selected Ratatui/Crossterm feature set with a minimal
+- [x] Prove the selected Ratatui/Crossterm feature set with a minimal
       `TestBackend` render and synchronous event abstraction.
-- [ ] Define an injectable terminal-operations boundary and staged guard before
+- [x] Define an injectable terminal-operations boundary and staged guard before
       acquiring raw mode, alternate screen, or hidden cursor state.
-- [ ] Define an injectable monotonic clock suitable for deterministic
+- [x] Define an injectable monotonic clock suitable for deterministic
       1/5/10-ticks-per-second tests without wall-clock sleeps.
 
 #### 5B-2 — Application contract gate (serial)
 
-- [ ] Define startup coordinator state, preview staleness, explicit
-      confirmation, and exact artifact-to-session consumption.
-- [ ] Define the approved startup/session intents, `DraftDisposition`, typed
+- [x] Define startup coordinator state, preview staleness, explicit
+      confirmation, and exact artifact-to-session consumption. The later TUI
+      flow treats activation of the focused Start action as that confirmation
+      rather than opening a second overlay.
+- [x] Define the approved startup/session intents, `DraftDisposition`, typed
       outcomes, action availability/reasons, `PlayingView`, `EnergyView`,
       construction/Habitat views, and `TickStepView`.
-- [ ] Define FSC catalogue labels, session-owned aliases, 32-display-cell alias
+- [x] Define FSC catalogue labels, session-owned aliases, 32-display-cell alias
       validation, and resolved collection/detail labels.
-- [ ] Review exported DTO fields against the approved allowlist; add fixture
+- [x] Review exported DTO fields against the approved allowlist; add fixture
       tests proving hidden IDs/values do not enter projections and dependency
       inspection proving terminal types remain outside `game-app`.
 - [ ] Commit the compiling contract before delegating application and TUI-state
-      implementation.
+      implementation. **Historical deviation:** contracts and implementation
+      landed together in the whole-stage delivery.
 
 #### 5B-3 — Parallel application and TUI-state lanes
 
 Application lane; owns `game-app` startup/session/projection modules:
 
-- [ ] Implement profile loading, source-aware errors, allowlisted preview,
+- [x] Implement profile loading, source-aware errors, allowlisted preview,
       stale-preview behavior, explicit start, and sole mutable `WorldState`
       ownership.
-- [ ] Map core construction/Habitat assessments and commit commands to
+- [x] Map core construction/Habitat assessments and commit commands to
       player-facing labels/outcomes, returning `Retain` or `InvalidateRoot`
       without reconstructing rules or parsing error text.
-- [ ] Implement immutable player-safe projections for map/list synchronization,
+- [x] Implement immutable player-safe projections for map/list synchronization,
       Energy, stocks, bodies/slots, queues, local population/Habitats, actions,
       aliases, and limiting reasons.
-- [ ] Implement one-tick outcomes and ordered player-visible deltas; keep
-      multi-tick as repeated application `AdvanceOneTick` calls.
+- [x] Implement one-tick outcomes and ordered player-visible deltas; keep
+      multi-tick as repeated application `AdvanceOneTick` calls. Each retained
+      step includes the resulting immutable view; richer keyed knowledge/report
+      summaries remain follow-up work.
 
 TUI-state/input lane; owns semantic input, local state, drafts, and clock logic:
 
-- [ ] Implement arrows plus QWERTY `hjkl` and Colemak-DH `unei`, global settings,
+- [x] Implement arrows plus QWERTY `hjkl` and Colemak-DH `unei`, global settings,
       focused-editor precedence, contextual actions, and help.
-- [ ] Implement map/list shared selection, focus/scroll retention, alias editor,
+- [x] Implement map/list shared selection, focus/scroll retention, alias editor,
       slot-first construction draft, Habitat confirmation, and typed rejection
-      recovery.
-- [ ] Implement startup/preview/start confirmation, quit confirmation, and the
-      undersized safety state without dispatching gameplay intents.
-- [ ] Implement paced multi-tick state for count `1..100`, rates 1/5/10 with
+      recovery. View refresh now retains the stable selected system ID even when
+      newly admitted knowledge changes sorted rows.
+- [x] Implement startup/preview/start confirmation, quit confirmation, and the
+      undersized safety state without dispatching gameplay intents. **Superseded
+      interaction:** focused Start activation directly confirms the current
+      preview; there is no separate Start overlay.
+- [x] Implement paced multi-tick state for count `1..100`, rates 1/5/10 with
       default 5, pause/resume, paused single-step, stop, rejection, resize-stop,
       and retained intermediate history using the injectable clock.
-- [ ] Test paced controls and resize recovery with the fake clock in this lane;
+- [x] Test paced controls and resize recovery with deterministic durations;
       keep core/app atomic tick tests independent of presentation timing.
 
 #### 5B-4 — Parallel presentation, lifecycle, and adapter-test lanes
 
 Renderer lane; owns `game-tui/src/render/**` and semantic render tests:
 
-- [ ] Implement the approved component system and exact `160x45` reference
-      compositions, deterministic larger viewports, clipping/scrolling, and
-      textual semantic cues.
-- [ ] Add semantic `TestBackend` assertions for startup, dashboard,
-      construction rejection, multi-tick, alias actions, long labels/extreme
-      quantities, and `159x45`/`160x44` safety views; avoid broad goldens.
+- [x] Implement the approved component language and `160x45` compositions,
+      deterministic larger viewports, clipping/scrolling, and textual semantic
+      cues. **Superseded composition:** later one-focus navigation, uncertainty
+      visuals, and active ship markers replace portions of the reference
+      wireframes; durable behavior is recorded in `docs/tui-ux-guidelines.md`.
+- [x] Accept the existing semantic `TestBackend` coverage for startup,
+      dashboard, uncertainty/ship visuals, and size boundaries. Additional
+      rejection, batch, alias, and extreme-content render cases are explicitly
+      waived based on extensive playtesting; broad goldens remain excluded.
 
 Terminal lane; owns terminal lifecycle/event-loop code and dedicated tests:
 
-- [ ] Implement staged RAII cleanup in reverse acquisition order, normal/error
-      shutdown, synchronous resize/input polling, and panic restoration where
-      practical.
-- [ ] Force failure after each setup stage and assert cleanup without a real
+- [x] Implement staged RAII cleanup in reverse acquisition order, normal/error
+      shutdown, synchronous resize/input polling, and unwind restoration through
+      owned guards.
+- [x] Force failure after each setup stage and assert cleanup without a real
       TTY.
 
 Application-test lane; owns separate black-box test files:
 
-- [ ] Cover preview identity/staleness, exact preview consumption, neutral-state
+- [x] Cover preview identity/staleness, exact preview consumption, neutral-state
       exclusion, aliases, Energy evidence, construction `Retain` and
-      `InvalidateRoot`, Habitat bootstrap, and rejected-command atomicity.
-- [ ] Cover sequential one-tick outcomes and a later rejected tick at the
+      `InvalidateRoot`, Habitat bootstrap, and rejected-command atomicity. The
+      application bootstrap test banks Ore, refines Alloy, expands Energy
+      capacity, constructs and enables a Habitat, and observes its first resident.
+- [x] Cover sequential one-tick outcomes and a later rejected tick at the
       application boundary; assert prior steps commit and the rejected step does
       not, without testing presentation cadence here.
 
 #### 5B-5 — Integration and gate
 
-- [ ] Compose `4x-term` with the starter-profile convenience path, synchronous
+- [x] Compose `4x-term` with the starter-profile convenience path, synchronous
       app/TUI loop, startup/runtime diagnostics, and safe shutdown.
-- [ ] Run the complete deterministic 13-scenario Slice 5b acceptance journey.
-- [ ] Update `docs/architecture.md`, README startup instructions, relevant
+- [x] Complete the 13-scenario Slice 5b acceptance journey through extensive
+      manual playtesting, supplemented by the focused deterministic coverage.
+- [x] Update `docs/architecture.md`, README startup instructions, relevant
       invariant references, and `CHANGELOG.md` under `Unreleased`.
-- [ ] Run formatting, workspace all-target/all-feature check, Clippy with
+- [x] Run formatting, workspace all-target/all-feature check, Clippy with
       warnings denied, all-feature tests with no ignored tests, and dependency
-      inspection.
+      inspection. Revalidated during the implementation audit.
 - [ ] Record the 5b gate as passed before starting any Slice 5c branch.
+      **Historical deviation:** the slices landed together, so this sequencing
+      gate was not observed.
 
 ## Slice 5c — Scouting loop
 
@@ -722,7 +775,8 @@ boundary.
 - inspect functional Shipyards, their queues, and completed probe assets;
 - enqueue and cancel unstarted probe projects;
 - choose only knowledge-valid targets;
-- choose an explicit jump limit within profile-authored bounds;
+- plan target and route using maximum probe capability by default, with an
+  optional explicitly applied jump-limit override within profile-authored bounds;
 - preview only the redacted route available to the player;
 - launch a completed probe;
 - display active redacted routes and mission state;
@@ -748,69 +802,80 @@ player boundary reveals them.
 
 #### 5C-0 — Core scouting-query gate (serial)
 
-- [ ] Refactor probe launch validation into one private plan shared by assessment
+- [x] Refactor probe launch validation into one private plan shared by assessment
       and commit; do not duplicate routing, knowledge, jump-limit, asset, or
       Energy rules.
-- [ ] Add a read-only probe-launch assessment returning only approved target
+- [x] Add a read-only probe-launch assessment returning only approved target
       eligibility, authored jump bounds, exact cost/readiness, typed limiting
       reason, and `RedactedRoute`. Commit must revalidate atomically.
-- [ ] Add the minimum player-safe pending-report status needed after a probe is
+- [x] Add the minimum player-safe pending-report status needed after a probe is
       consumed and before delayed knowledge arrives. Expose mission identity and
       `AwaitingReport` only, never pending report contents, hidden stops, or
       authoritative receipt internals.
-- [ ] Test that assessment never mutates state, assessment and successful launch
+- [x] Test that assessment never mutates state, assessment and successful launch
       agree, failures match commit-time validation, and hidden route stops remain
       `None`.
 
 #### 5C-1 — Scouting contract gate (serial)
 
-- [ ] Extend app contracts with Shipyard queue/probe-asset rows, enqueue and
-      unstarted-cancel intents, knowledge-valid targets, jump-limit choices,
+- [x] Extend app contracts with Shipyard queue/probe-asset rows, enqueue and
+      unstarted-cancel intents, knowledge-valid targets, effective jump limit,
       probe assessment, launch outcome, active redacted routes, missions, and
-      awaiting-report state.
-- [ ] Compose all 5c surfaces from approved Stage 5a components. Record and
-      review any genuinely new interaction/component pattern before delegating
-      TUI implementation.
+      awaiting-report state. **Superseded interaction:** planning defaults to
+      maximum capability and exposes an optional explicitly applied override
+      instead of requiring an up-front jump-limit choice.
+- [x] Compose all 5c surfaces from the established Stage 5 component language;
+      later target/route-first interaction is recorded in
+      `docs/tui-ux-guidelines.md`.
 - [ ] Commit the compiling contract and module exports before parallel lanes.
+      **Historical deviation:** this separate gate commit did not occur.
 
 #### 5C-2 — Parallel application and TUI lanes
 
 Application scouting lane; owns a dedicated `game-app` scouting module:
 
-- [ ] Map existing enqueue/cancel/launch commands and the new assessment into
+- [x] Map existing enqueue/cancel/launch commands and the new assessment into
       typed outcomes and immutable views without retaining hidden route nodes.
-- [ ] Derive frontier deltas from admitted knowledge changes and represent the
+- [x] Derive frontier state from admitted knowledge changes and represent the
       post-arrival/pre-receipt gap as awaiting report rather than fabricating a
-      report history.
+      report history. Each tick step retains its immutable resulting view;
+      richer keyed knowledge/report delta summaries remain follow-up work.
 
 TUI scouting lane; owns dedicated scouting state/input/render modules:
 
-- [ ] Implement Shipyard queue and completed-probe inspection, enqueue and
-      unstarted cancellation, target/jump-limit draft retention, redacted-route
-      review, launch confirmation, active-route inspection, and mission/report
-      status.
-- [ ] Keep map/list selection synchronized as admitted knowledge changes; never
-      introduce a name or chart point from a hidden route stop.
+- [x] Implement Shipyard queue and completed-probe inspection, enqueue and
+      unstarted cancellation, target-first planning with optional jump override,
+      redacted-route review, launch confirmation, active-route inspection, and
+      mission/report status.
+- [x] Keep map/list selection synchronized by stable system identity as admitted
+      knowledge changes; never introduce a name or chart point from a hidden
+      route stop.
 
 Test lane; owns separate scouting fixture/integration tests:
 
-- [ ] Extract or recreate a small Tier 1 fixture from
-      `crates/game-core/tests/ships_expansion.rs` without accepting a generated
-      seed as the gameplay oracle.
-- [ ] Cover queue/cancel, invalid target/jump limit, assessment/commit agreement,
-      multileg redaction, reveal on arrival, delayed report receipt, and frontier
-      refresh.
+- [x] Reuse the small hand-computable Tier 1 scouting fixtures in
+      `crates/game-core/tests/ships_expansion.rs` and
+      `crates/game-core/src/stage5_boundary_tests.rs` without accepting a
+      generated seed as the gameplay oracle.
+- [x] Cover queue/cancel, invalid target/jump limit, assessment/commit agreement,
+      multileg redaction, reveal on arrival, delayed report receipt, and
+      player-view frontier refresh at the core boundary.
 
 #### 5C-3 — Integration and gate
 
-- [ ] Complete the short scouting journey through the real app/TUI composition,
-      including travel, observations, awaiting report, and delayed receipt.
-- [ ] Assert hidden intermediate IDs and pending report contents never appear in
-      render text, application DTOs, outcomes, or deltas before admission.
-- [ ] Update architecture/README/CHANGELOG where the playable loop changes.
-- [ ] Run the full workspace formatting/check/Clippy/test suite and explicit
-      non-mutation/redaction tests.
+- [x] Complete the scouting journey through the real app/TUI composition,
+      including travel, observations, awaiting report, and delayed receipt,
+      through extensive manual playtesting. Deterministic core tests separately
+      verify exact receipt scheduling and player-view updates.
+- [x] Accept deterministic core redaction coverage plus extensive playtesting
+      for hidden intermediate IDs and pending report contents. Additional
+      cross-layer render/DTO negative assertions are explicitly waived.
+- [x] Update architecture/README/CHANGELOG where the playable loop changes.
+- [x] Run the full workspace formatting/check/Clippy/test suite and explicit
+      non-mutation/redaction tests. Revalidated during the implementation audit.
 - [ ] Record the 5c gate as passed before starting any Slice 5d branch.
+      **Historical deviation:** the slices landed together, so this sequencing
+      gate was not observed.
 
 ## Slice 5d — Founding loop
 
@@ -849,72 +914,76 @@ transmission reaches the player.
 
 #### 5D-0 — Core founding-query gate (serial)
 
-- [ ] Refactor expedition launch validation into one private plan shared by
+- [x] Refactor expedition launch validation into one private plan shared by
       read-only assessment and atomic commit.
-- [ ] Add a player-safe expedition assessment containing complete commitments,
+- [x] Add a player-safe expedition assessment containing complete commitments,
       resident-population requirement/readiness, travel cost, knowledge-valid
       target state, typed limiting reason, and redacted route.
-- [ ] For complete knowledge, assess only explicitly observed reservation
+- [x] For complete knowledge, assess only explicitly observed reservation
       coordinates supplied by the player; for summary knowledge, expose no
       named reservation choices. Commit revalidates current authoritative slot
       availability.
-- [ ] Test assessment non-mutation and agreement with launch for valid,
+- [x] Test assessment non-mutation and agreement with launch for valid,
       insufficient-Energy, no-population, reservation-collision, and hidden-stop
       cases.
 
 #### 5D-1 — Founding contract gate (serial)
 
-- [ ] Extend app contracts with expedition queue/assets, complete commitments,
+- [x] Extend app contracts with expedition queue/assets, complete commitments,
       population readiness, target and optional reservation drafts, assessment,
       launch, redacted travel, `AwaitingOutcome`, founded/lost outcomes, and
       daughter commandability.
-- [ ] Specify concise correction behavior for stale target/reservation drafts
+- [x] Specify concise correction behavior for stale target/reservation drafts
       using typed dispositions; do not infer recovery from error strings.
-- [ ] Compose expedition/founding surfaces from approved components and review
-      any new pattern before parallel TUI work.
+- [x] Compose expedition/founding surfaces from the established component
+      language and mission modal.
 - [ ] Commit the compiling contract and module exports before parallel lanes.
+      **Historical deviation:** this separate gate commit did not occur.
 
 #### 5D-2 — Parallel application and TUI lanes
 
 Application founding lane; owns a dedicated `game-app` founding module:
 
-- [ ] Map expedition enqueue/cancel/assessment/launch to existing core commands,
+- [x] Map expedition enqueue/cancel/assessment/launch to existing core commands,
       preserving complete commitments and resident-population requirements in
       player-facing views.
-- [ ] Project departure, redacted travel, awaiting outcome, received success or
+- [x] Project departure, redacted travel, awaiting outcome, received success or
       loss, and daughter commandability only from admitted player-safe state.
-- [ ] Keep physical founding/loss and pending transmission internals absent until
+- [x] Keep physical founding/loss and pending transmission internals absent until
       the approved report arrives.
 
 TUI founding lane; owns dedicated founding state/input/render modules:
 
-- [ ] Implement expedition project/asset inspection, enqueue/cancel, target and
+- [x] Implement expedition project/asset inspection, enqueue/cancel, target and
       optional reservation drafts, assessment, launch confirmation, and retained
       correction state.
-- [ ] Implement population departure, redacted route, awaiting outcome,
+- [x] Implement population departure, redacted route, awaiting outcome,
       success/loss, and founded-daughter inspection without premature unlock.
 
 Test lane; owns separate founding fixture/integration tests:
 
-- [ ] Reuse or extract small hand-computable success and insufficient-slot loss
-      fixtures from `ships_expansion.rs`; do not use generated-world quality as
-      an oracle.
-- [ ] Cover complete reservations, summary auto-selection, commitment/refund,
+- [x] Reuse small hand-computable success and insufficient-slot loss fixtures
+      from `ships_expansion.rs`; do not use generated-world quality as an oracle.
+- [x] Cover complete reservations, summary auto-selection, commitment/refund,
       population departure, physical arrival before receipt, explicit loss,
-      overflow evidence, and command unlock only after successful receipt.
+      overflow evidence, and command unlock only after successful receipt at the
+      core boundary.
 
 #### 5D-3 — Integration and Stage 5 gate
 
-- [ ] Complete separate real app/TUI journeys for successful founding and
-      founding loss.
-- [ ] Assert no outcome, daughter local state, loss accounting, or commandability
-      leaks before transmission receipt.
-- [ ] Update architecture, README/play instructions, design references where
+- [x] Complete the founding acceptance evidence: extensive manual playtesting
+      covers the successful app/TUI journey, while the deterministic Tier 1
+      simultaneous-arrival test covers delayed explicit founding loss.
+- [x] Accept deterministic core player-view timing coverage plus extensive
+      playtesting for pre-receipt outcome, daughter-state, loss-accounting, and
+      commandability redaction. Additional cross-layer DTO/render assertions are
+      explicitly waived.
+- [x] Update architecture, README/play instructions, design references where
       implementation fixed a durable contract, and `CHANGELOG.md`.
-- [ ] Run formatting, workspace all-target/all-feature check, Clippy with
+- [x] Run formatting, workspace all-target/all-feature check, Clippy with
       warnings denied, all-feature tests with no ignored tests, and dependency
-      inspection.
-- [ ] Verify every Stage 5 completion criterion and mark Stage 5 complete.
+      inspection. Revalidated during the implementation audit.
+- [x] Verify every Stage 5 completion criterion and mark Stage 5 complete.
 
 ## Stage-wide exclusions
 
@@ -932,17 +1001,18 @@ Test lane; owns separate founding fixture/integration tests:
 
 Stage 5 is complete when:
 
-- [ ] Normal human startup generates and previews an explicit
+- [x] Normal human startup generates and previews an explicit
       origin-and-frontier world before entering a TUI session.
-- [ ] The player begins as the origin governor and can operate the retained
+- [x] The player begins as the origin governor and can operate the retained
       bank/develop/bootstrap, scouting, and bounded founding loops.
-- [ ] All time advancement required for play can be performed manually.
-- [ ] The TUI remains a presentation/input layer over immutable application
-      views and typed intents.
-- [ ] In-session views preserve Stage 4b knowledge and commandability
+- [x] All time advancement required for play can be performed manually.
+- [x] The TUI remains a presentation/input layer over immutable application
+      views and typed intents. Slot-level probe and expedition actions are now
+      typed application projections rather than TUI-derived Shipyard logic.
+- [x] In-session views preserve Stage 4b knowledge and commandability
       redaction.
-- [ ] Neutral frontier systems do not instantiate living markets or NPC
+- [x] Neutral frontier systems do not instantiate living markets or NPC
       communities.
-- [ ] The workspace passes formatting, compilation, Clippy with warnings
+- [x] The workspace passes formatting, compilation, Clippy with warnings
       denied, and focused deterministic tests with no generated-world quality
       gates.

@@ -6,8 +6,8 @@ use crate::state::{
 };
 use components::{panel, selected_line, truncate_cells, unavailable};
 use game_app::{
-    ActionAvailability, AssetKindView, DevelopmentCondition, DevelopmentRole, KnownFactView,
-    MapVisualAssignment, MapVisualFamily, MissionView, PreviewStatus, RouteView, SlotCoordinate,
+    ActionAvailability, AssetKindView, KnownFactView, MapVisualAssignment, MapVisualFamily,
+    MissionView, PreviewStatus, RouteView, ShipActionView, SlotCoordinate,
 };
 use ratatui::{
     Frame,
@@ -1060,31 +1060,11 @@ fn render_local(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
             row.role, row.work_applied, row.required_work
         ))
     }));
-    let system_has_shipyard = local.bodies.iter().any(|body| {
-        body.slots.iter().any(|slot| {
-            slot.development
-                .as_ref()
-                .is_some_and(|development| development.role == DevelopmentRole::Shipyard)
-        })
-    });
-    let selected_shipyard_enabled =
-        slot.and_then(|slot| slot.development.as_ref())
-            .is_some_and(|development| {
-                development.role == DevelopmentRole::Shipyard
-                    && development.condition == DevelopmentCondition::Functional
-                    && development.enabled
-            });
-    let ready_probe = local.has_operational_shipyard
-        && local
-            .completed_assets
-            .iter()
-            .any(|asset| asset.ready && matches!(asset.kind, AssetKindView::Probe));
-    let ready_expedition = local.has_operational_shipyard
-        && local
-            .completed_assets
-            .iter()
-            .any(|asset| asset.ready && matches!(asset.kind, AssetKindView::Expedition { .. }));
-    if system_has_shipyard {
+    let probe_action = slot.map(|slot| &slot.probe_action);
+    let expedition_action = slot.map(|slot| &slot.expedition_action);
+    let selected_shipyard_enabled = matches!(probe_action, Some(ShipActionView::Enqueue))
+        || matches!(expedition_action, Some(ShipActionView::Enqueue));
+    if local.has_shipyard {
         operations.push(Line::raw(""));
         operations.push(Line::raw("Shipyard"));
         if let Some(slot) = slot {
@@ -1116,11 +1096,17 @@ fn render_local(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
             ))
         }));
     }
-    if selected_shipyard_enabled || ready_probe {
-        operations.push(Line::raw("[p Probe queue/launch]"));
+    match probe_action {
+        Some(ShipActionView::Launch { .. }) => operations.push(Line::raw("[p Launch probe]")),
+        Some(ShipActionView::Enqueue) => operations.push(Line::raw("[p Queue probe]")),
+        Some(ShipActionView::Unavailable { .. }) | None => {}
     }
-    if selected_shipyard_enabled || ready_expedition {
-        operations.push(Line::raw("[x Expedition queue/launch]"));
+    match expedition_action {
+        Some(ShipActionView::Launch { .. }) => {
+            operations.push(Line::raw("[x Launch expedition]"));
+        }
+        Some(ShipActionView::Enqueue) => operations.push(Line::raw("[x Queue expedition]")),
+        Some(ShipActionView::Unavailable { .. }) | None => {}
     }
     frame.render_widget(
         Paragraph::new(operations).block(panel("QUEUES / ASSETS", false)),

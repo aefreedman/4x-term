@@ -295,6 +295,8 @@ impl StartupCoordinator {
             visual_coordinates,
             aliases: BTreeMap::new(),
             latest_outcome: None,
+            #[cfg(test)]
+            forced_next_tick_error: None,
         })
     }
 }
@@ -657,6 +659,8 @@ pub struct SlotView {
     pub habitat: Option<HabitatView>,
     pub shipyard_queue: Vec<ShipyardProjectView>,
     pub construction_options: Vec<ConstructionOptionView>,
+    pub probe_action: ShipActionView,
+    pub expedition_action: ShipActionView,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -688,6 +692,16 @@ pub enum AssetKindView {
     },
 }
 
+/// Application-owned interpretation of the ship action available from the
+/// currently selected slot. The TUI consumes this instead of reconstructing
+/// Shipyard and completed-asset rules from raw rows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShipActionView {
+    Launch { ship_id: ShipId },
+    Enqueue,
+    Unavailable { message: String },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompletedAssetView {
     pub ship_id: ShipId,
@@ -699,6 +713,7 @@ pub struct CompletedAssetView {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalSystemView {
     pub system_id: ContentId,
+    pub has_shipyard: bool,
     pub has_operational_shipyard: bool,
     pub stocks: Vec<ResourceAmountView>,
     pub energy: EnergyView,
@@ -1033,6 +1048,8 @@ pub struct Session {
     visual_coordinates: BTreeMap<u64, ChartCoordinate>,
     aliases: BTreeMap<ContentId, String>,
     latest_outcome: Option<ApplicationOutcome>,
+    #[cfg(test)]
+    forced_next_tick_error: Option<CoreError>,
 }
 
 impl Session {
@@ -1307,6 +1324,10 @@ impl Session {
 
     fn advance_one_tick(&mut self) -> Result<SessionOutcome, ApplicationError> {
         let before = self.playing_view()?;
+        #[cfg(test)]
+        if let Some(error) = self.forced_next_tick_error.take() {
+            return Ok(self.rejected(IntentKind::AdvanceOneTick, error, None));
+        }
         match self.world.advance_tick() {
             Ok(core_after) => {
                 let outcome =
@@ -1553,10 +1574,63 @@ impl Session {
 
     fn local_view(&self, snapshot: &SystemSnapshot, core: &PlayerWorldView) -> LocalSystemView {
         let occupied = &snapshot.local_population.occupied_habitat_slots;
+        let has_shipyard = snapshot.bodies.iter().any(|body| {
+            body.slots.iter().any(|slot| {
+                slot.development.as_ref().is_some_and(|development| {
+                    development.definition.role == DevelopmentRole::Shipyard
+                })
+            })
+        });
+        let has_operational_shipyard = snapshot.bodies.iter().any(|body| {
+            body.slots.iter().any(|slot| {
+                slot.development.as_ref().is_some_and(|development| {
+                    development.definition.role == DevelopmentRole::Shipyard
+                        && development.definition.condition == DevelopmentCondition::Functional
+                        && development.enabled
+                })
+            })
+        });
+        let ready_probe = has_operational_shipyard
+            .then(|| {
+                snapshot
+                    .completed_assets
+                    .iter()
+                    .find_map(|asset| match asset {
+                        CompletedAsset::Probe {
+                            ship_id,
+                            available_at_tick,
+                        } if core.time.tick >= *available_at_tick => Some(ship_id.clone()),
+                        _ => None,
+                    })
+            })
+            .flatten();
+        let ready_expedition = has_operational_shipyard
+            .then(|| {
+                snapshot
+                    .completed_assets
+                    .iter()
+                    .find_map(|asset| match asset {
+                        CompletedAsset::Expedition {
+                            ship_id,
+                            available_at_tick,
+                            ..
+                        } if core.time.tick >= *available_at_tick => Some(ship_id.clone()),
+                        _ => None,
+                    })
+            })
+            .flatten();
         let bodies = snapshot
             .bodies
             .iter()
-            .map(|body| self.body_view(snapshot, body, occupied))
+            .map(|body| {
+                self.body_view(
+                    snapshot,
+                    body,
+                    occupied,
+                    ready_probe.as_ref(),
+                    ready_expedition.as_ref(),
+                )
+            })
             .collect();
         let construction_queue = snapshot
             .construction_queue
@@ -1585,15 +1659,8 @@ impl Session {
             .collect();
         LocalSystemView {
             system_id: snapshot.location.clone(),
-            has_operational_shipyard: snapshot.bodies.iter().any(|body| {
-                body.slots.iter().any(|slot| {
-                    slot.development.as_ref().is_some_and(|development| {
-                        development.definition.role == DevelopmentRole::Shipyard
-                            && development.definition.condition == DevelopmentCondition::Functional
-                            && development.enabled
-                    })
-                })
-            }),
+            has_shipyard,
+            has_operational_shipyard,
             stocks: resource_rows(&snapshot.stocks, &self.catalogue),
             energy: EnergyView {
                 resource_id: self.catalogue.energy_resource.clone(),
@@ -1626,6 +1693,8 @@ impl Session {
         snapshot: &SystemSnapshot,
         body: &BodySnapshot,
         occupied: &[SlotCoordinate],
+        ready_probe: Option<&ShipId>,
+        ready_expedition: Option<&ShipId>,
     ) -> BodyView {
         let slots = body
             .slots
@@ -1714,6 +1783,27 @@ impl Session {
                     } else {
                         Vec::new()
                     };
+                let enqueue_available = slot.development.as_ref().is_some_and(|development| {
+                    development.definition.role == DevelopmentRole::Shipyard
+                        && development.definition.condition == DevelopmentCondition::Functional
+                        && development.enabled
+                        && development.shipyard.is_some()
+                });
+                let ship_action = |ready: Option<&ShipId>, kind: &str| {
+                    if let Some(ship_id) = ready {
+                        ShipActionView::Launch {
+                            ship_id: ship_id.clone(),
+                        }
+                    } else if enqueue_available {
+                        ShipActionView::Enqueue
+                    } else {
+                        ShipActionView::Unavailable {
+                            message: format!(
+                                "No ready {kind}; select an enabled Shipyard slot to queue one"
+                            ),
+                        }
+                    }
+                };
                 SlotView {
                     slot_id: slot.id.clone(),
                     slot_label: slot
@@ -1727,6 +1817,8 @@ impl Session {
                     habitat,
                     shipyard_queue,
                     construction_options,
+                    probe_action: ship_action(ready_probe, "probe"),
+                    expedition_action: ship_action(ready_expedition, "expedition"),
                 }
             })
             .collect();

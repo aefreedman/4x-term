@@ -339,6 +339,238 @@ fn valid_construction_and_one_tick_return_immutable_intermediate_views() {
 }
 
 #[test]
+fn habitat_bootstrap_runs_through_application_intents_and_views() {
+    let mut session = started_session(12);
+    let initial = session.playing_view().unwrap();
+    let origin_id = initial.local_systems[0].system_id.clone();
+    let (refinery_body, refinery_slot) = initial.local_systems[0]
+        .bodies
+        .iter()
+        .find_map(|body| {
+            body.slots.iter().find_map(|slot| {
+                slot.construction_options
+                    .iter()
+                    .any(|option| option.role == DevelopmentRole::Refinery)
+                    .then(|| (body.body_id.clone(), slot.slot_id.clone()))
+            })
+        })
+        .expect("generated origin has a slot that can host a Refinery");
+    assert!(matches!(
+        session
+            .dispatch(SessionIntent::EnqueueConstruction {
+                system_id: origin_id.clone(),
+                body_id: refinery_body.clone(),
+                slot_id: refinery_slot.clone(),
+                role: DevelopmentRole::Refinery,
+                extractor_resource_id: None,
+            })
+            .unwrap(),
+        SessionOutcome::Applied { .. }
+    ));
+
+    let ore = id("core:ore");
+    let (extractor_body, extractor_slot) =
+        wait_for_construction_option(&mut session, DevelopmentRole::Extractor, Some(&ore), 200);
+    assert!(matches!(
+        session
+            .dispatch(SessionIntent::EnqueueConstruction {
+                system_id: origin_id.clone(),
+                body_id: extractor_body.clone(),
+                slot_id: extractor_slot.clone(),
+                role: DevelopmentRole::Extractor,
+                extractor_resource_id: Some(ore.clone()),
+            })
+            .unwrap(),
+        SessionOutcome::Applied { .. }
+    ));
+    assert!(matches!(
+        session
+            .dispatch(SessionIntent::SetDevelopmentOperationalEnabled {
+                system_id: origin_id.clone(),
+                body_id: refinery_body.clone(),
+                slot_id: refinery_slot.clone(),
+                enabled: false,
+            })
+            .unwrap(),
+        SessionOutcome::Applied { .. }
+    ));
+    let ore_ready = (0..100).any(|_| {
+        assert!(matches!(
+            session.dispatch(SessionIntent::AdvanceOneTick).unwrap(),
+            SessionOutcome::Tick(_)
+        ));
+        session.playing_view().unwrap().local_systems[0]
+            .stocks
+            .iter()
+            .find(|stock| stock.resource_id == ore)
+            .is_some_and(|stock| stock.quantity >= 12)
+    });
+    assert!(ore_ready, "Extractor should bank enough Ore for refining");
+    assert!(matches!(
+        session
+            .dispatch(SessionIntent::SetDevelopmentOperationalEnabled {
+                system_id: origin_id.clone(),
+                body_id: extractor_body,
+                slot_id: extractor_slot,
+                enabled: false,
+            })
+            .unwrap(),
+        SessionOutcome::Applied { .. }
+    ));
+    assert!(matches!(
+        session
+            .dispatch(SessionIntent::SetDevelopmentOperationalEnabled {
+                system_id: origin_id.clone(),
+                body_id: refinery_body.clone(),
+                slot_id: refinery_slot.clone(),
+                enabled: true,
+            })
+            .unwrap(),
+        SessionOutcome::Applied { .. }
+    ));
+
+    let (battery_body, battery_slot) =
+        wait_for_construction_option(&mut session, DevelopmentRole::Battery, None, 200);
+    assert!(matches!(
+        session
+            .dispatch(SessionIntent::EnqueueConstruction {
+                system_id: origin_id.clone(),
+                body_id: battery_body,
+                slot_id: battery_slot,
+                role: DevelopmentRole::Battery,
+                extractor_resource_id: None,
+            })
+            .unwrap(),
+        SessionOutcome::Applied { .. }
+    ));
+    let expanded_capacity = (0..50).any(|_| {
+        assert!(matches!(
+            session.dispatch(SessionIntent::AdvanceOneTick).unwrap(),
+            SessionOutcome::Tick(_)
+        ));
+        session.playing_view().unwrap().local_systems[0]
+            .energy
+            .capacity
+            > 10
+    });
+    assert!(expanded_capacity, "Battery should expand Energy capacity");
+
+    let habitat_alloy_ready = (0..50).any(|_| {
+        assert!(matches!(
+            session.dispatch(SessionIntent::AdvanceOneTick).unwrap(),
+            SessionOutcome::Tick(_)
+        ));
+        session.playing_view().unwrap().local_systems[0]
+            .stocks
+            .iter()
+            .find(|stock| stock.resource_id == id("core:alloy"))
+            .is_some_and(|stock| stock.quantity >= 4)
+    });
+    assert!(habitat_alloy_ready, "Refinery should produce Habitat Alloy");
+    assert!(matches!(
+        session
+            .dispatch(SessionIntent::SetDevelopmentOperationalEnabled {
+                system_id: origin_id.clone(),
+                body_id: refinery_body,
+                slot_id: refinery_slot,
+                enabled: false,
+            })
+            .unwrap(),
+        SessionOutcome::Applied { .. }
+    ));
+
+    let (body_id, slot_id) =
+        wait_for_construction_option(&mut session, DevelopmentRole::Habitat, None, 200);
+
+    let queued = session
+        .dispatch(SessionIntent::EnqueueConstruction {
+            system_id: origin_id.clone(),
+            body_id: body_id.clone(),
+            slot_id: slot_id.clone(),
+            role: DevelopmentRole::Habitat,
+            extractor_resource_id: None,
+        })
+        .unwrap();
+    assert!(
+        matches!(queued, SessionOutcome::Applied { .. }),
+        "Habitat queue rejected: {queued:?}"
+    );
+
+    let habitat = (0..50).find_map(|_| {
+        let view = session.playing_view().unwrap();
+        let habitat = view.local_systems[0]
+            .bodies
+            .iter()
+            .find(|body| body.body_id == body_id)
+            .and_then(|body| body.slots.iter().find(|slot| slot.slot_id == slot_id))
+            .and_then(|slot| slot.habitat.clone());
+        if habitat.is_none() {
+            assert!(matches!(
+                session.dispatch(SessionIntent::AdvanceOneTick).unwrap(),
+                SessionOutcome::Tick(_)
+            ));
+        }
+        habitat
+    });
+    let habitat = habitat.expect("queued Habitat completes through application ticks");
+
+    let enabled = session
+        .dispatch(SessionIntent::SetHabitatGenerationEnabled {
+            system_id: origin_id,
+            body_id: habitat.body_id,
+            slot_id: habitat.slot_id,
+            enabled: true,
+        })
+        .unwrap();
+    assert!(matches!(enabled, SessionOutcome::Applied { .. }));
+
+    let populated = (0..50).any(|_| {
+        let outcome = session
+            .dispatch(SessionIntent::AdvanceOneTick)
+            .expect("bootstrap tick");
+        assert!(matches!(outcome, SessionOutcome::Tick(_)));
+        session.playing_view().unwrap().local_systems[0].population_count == 1
+    });
+    assert!(
+        populated,
+        "enabled Habitat should create the first resident"
+    );
+}
+
+#[test]
+fn successful_tick_then_rejected_tick_preserves_the_committed_view() {
+    let mut session = started_session(13);
+    let first = session.dispatch(SessionIntent::AdvanceOneTick).unwrap();
+    let SessionOutcome::Tick(first) = first else {
+        panic!("first tick should commit")
+    };
+    assert_eq!(first.view.time.tick, 1);
+    let committed = session.playing_view().unwrap();
+
+    session.forced_next_tick_error = Some(CoreError::Overflow);
+    let rejected = session.dispatch(SessionIntent::AdvanceOneTick).unwrap();
+    assert!(matches!(
+        rejected,
+        SessionOutcome::Rejected(ApplicationOutcome {
+            intent: IntentKind::AdvanceOneTick,
+            limiting_reason: Some(LimitingReason::ArithmeticOverflow),
+            ..
+        })
+    ));
+
+    let after = session.playing_view().unwrap();
+    assert_eq!(after.time, committed.time);
+    assert_eq!(
+        after.local_systems[0].stocks,
+        committed.local_systems[0].stocks
+    );
+    assert_eq!(
+        after.local_systems[0].construction_queue,
+        committed.local_systems[0].construction_queue
+    );
+}
+
+#[test]
 fn probe_and_expedition_assessments_are_typed_and_non_mutating() {
     let mut session = started_session(11);
     let before = session.playing_view().unwrap();
@@ -382,6 +614,38 @@ fn probe_and_expedition_assessments_are_typed_and_non_mutating() {
         session.playing_view().unwrap().local_systems[0].stocks,
         before.local_systems[0].stocks
     );
+}
+
+fn wait_for_construction_option(
+    session: &mut Session,
+    role: DevelopmentRole,
+    extractor_resource: Option<&ContentId>,
+    maximum_ticks: usize,
+) -> (ContentId, ContentId) {
+    (0..maximum_ticks)
+        .find_map(|_| {
+            let view = session.playing_view().unwrap();
+            let coordinate = view.local_systems[0].bodies.iter().find_map(|body| {
+                body.slots.iter().find_map(|slot| {
+                    slot.construction_options
+                        .iter()
+                        .find(|option| {
+                            option.role == role
+                                && option.extractor_resource_id.as_ref() == extractor_resource
+                                && matches!(option.availability, ActionAvailability::Available)
+                        })
+                        .map(|_| (body.body_id.clone(), slot.slot_id.clone()))
+                })
+            });
+            if coordinate.is_none() {
+                assert!(matches!(
+                    session.dispatch(SessionIntent::AdvanceOneTick).unwrap(),
+                    SessionOutcome::Tick(_)
+                ));
+            }
+            coordinate
+        })
+        .unwrap_or_else(|| panic!("{role:?} option did not become available"))
 }
 
 fn id(value: &str) -> ContentId {

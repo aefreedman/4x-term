@@ -2,11 +2,10 @@ use crate::input::{Action, Direction, KeyboardLayout, map_key};
 use crate::terminal::TerminalEvent;
 use crossterm::event::KeyEvent;
 use game_app::{
-    ActionAvailability, ApplicationError, ApplicationOutcome, AssetKindView, BodyView, ContentId,
-    DevelopmentCondition, DraftDisposition, ExpeditionAssessmentView, ExpeditionReservations,
-    GenerationPreviewView, PlayingView, ProbeAssessmentView, ProfileDescriptor, Session,
-    SessionIntent, SessionOutcome, ShipProjectKind, StartupCoordinator, StartupFailure,
-    StartupView, TickStepView,
+    ActionAvailability, ApplicationError, ApplicationOutcome, BodyView, ContentId,
+    DraftDisposition, ExpeditionAssessmentView, ExpeditionReservations, GenerationPreviewView,
+    PlayingView, ProbeAssessmentView, ProfileDescriptor, Session, SessionIntent, SessionOutcome,
+    ShipActionView, ShipProjectKind, StartupCoordinator, StartupFailure, StartupView, TickStepView,
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -779,16 +778,8 @@ impl TuiState {
                 self.request_development_toggle()
             }
             Action::Character('g') if self.screen == Screen::Local => self.request_habitat_toggle(),
-            Action::Character('p')
-                if self.screen == Screen::Local && self.can_ship_action(true) =>
-            {
-                self.probe_action()?
-            }
-            Action::Character('x')
-                if self.screen == Screen::Local && self.can_ship_action(false) =>
-            {
-                self.expedition_action()?
-            }
+            Action::Character('p') if self.screen == Screen::Local => self.ship_action(true)?,
+            Action::Character('x') if self.screen == Screen::Local => self.ship_action(false)?,
             Action::Character('c') if self.screen == Screen::Local => {
                 self.cancel_first_project()?
             }
@@ -971,43 +962,26 @@ impl TuiState {
         Ok(())
     }
 
-    fn can_ship_action(&self, probe: bool) -> bool {
-        let Some(local) = self.selected_local() else {
-            return false;
-        };
-        let ready_asset = local.has_operational_shipyard
-            && local.completed_assets.iter().any(|asset| {
-                asset.ready
-                    && matches!(
-                        (&asset.kind, probe),
-                        (AssetKindView::Probe, true) | (AssetKindView::Expedition { .. }, false)
-                    )
-            });
-        let selected_shipyard = self
-            .selected_body_view()
-            .and_then(|body| body.slots.get(self.selected_slot))
-            .and_then(|slot| slot.development.as_ref())
-            .is_some_and(|development| {
-                development.role == game_app::DevelopmentRole::Shipyard
-                    && development.condition == DevelopmentCondition::Functional
-                    && development.enabled
-                    && matches!(development.toggle, ActionAvailability::Available)
-            });
-        ready_asset || selected_shipyard
+    fn selected_ship_action(&self, probe: bool) -> Option<&ShipActionView> {
+        let slot = self.selected_body_view()?.slots.get(self.selected_slot)?;
+        Some(if probe {
+            &slot.probe_action
+        } else {
+            &slot.expedition_action
+        })
     }
 
-    fn probe_action(&mut self) -> Result<(), ApplicationError> {
-        if self.begin_mission(true)? {
-            return Ok(());
+    fn ship_action(&mut self, probe: bool) -> Result<(), ApplicationError> {
+        let action = self.selected_ship_action(probe).cloned();
+        match action {
+            Some(ShipActionView::Launch { ship_id }) => self.begin_mission(probe, &ship_id),
+            Some(ShipActionView::Enqueue) => self.enqueue_ship(if probe {
+                ShipProjectKind::Probe
+            } else {
+                ShipProjectKind::Expedition
+            }),
+            Some(ShipActionView::Unavailable { .. }) | None => Ok(()),
         }
-        self.enqueue_ship(ShipProjectKind::Probe)
-    }
-
-    fn expedition_action(&mut self) -> Result<(), ApplicationError> {
-        if self.begin_mission(false)? {
-            return Ok(());
-        }
-        self.enqueue_ship(ShipProjectKind::Expedition)
     }
 
     fn enqueue_ship(&mut self, kind: ShipProjectKind) -> Result<(), ApplicationError> {
@@ -1029,19 +1003,13 @@ impl TuiState {
         Ok(())
     }
 
-    fn begin_mission(&mut self, probe: bool) -> Result<bool, ApplicationError> {
+    fn begin_mission(
+        &mut self,
+        probe: bool,
+        ship_id: &game_app::ShipId,
+    ) -> Result<(), ApplicationError> {
         let Some(local) = self.selected_local() else {
-            return Ok(false);
-        };
-        let asset = local.completed_assets.iter().find(|asset| {
-            asset.ready
-                && matches!(
-                    (&asset.kind, probe),
-                    (AssetKindView::Probe, true) | (AssetKindView::Expedition { .. }, false)
-                )
-        });
-        let Some(asset) = asset else {
-            return Ok(false);
+            return Ok(());
         };
         let source = local.system_id.clone();
         let target = self
@@ -1050,12 +1018,12 @@ impl TuiState {
             .and_then(|view| view.systems.iter().find(|row| row.system_id != source))
             .map(|row| row.system_id.clone());
         let Some(target) = target else {
-            return Ok(false);
+            return Ok(());
         };
         let intent = if probe {
             SessionIntent::AssessProbeLaunch {
                 source_id: source,
-                ship_id: asset.ship_id.clone(),
+                ship_id: ship_id.clone(),
                 target_id: target,
                 jump_limit: self
                     .playing_view
@@ -1065,7 +1033,7 @@ impl TuiState {
         } else {
             SessionIntent::AssessExpeditionLaunch {
                 source_id: source,
-                ship_id: asset.ship_id.clone(),
+                ship_id: ship_id.clone(),
                 target_id: target,
                 reservations: None,
             }
@@ -1089,7 +1057,7 @@ impl TuiState {
             }
             _ => None,
         };
-        Ok(self.modal.is_some())
+        Ok(())
     }
 
     fn clear_probe_jump_override(
@@ -1267,21 +1235,18 @@ impl TuiState {
             .dispatch(intent)?;
         match outcome {
             SessionOutcome::Applied { outcome, view } => {
-                self.playing_view = Some(view);
+                self.replace_playing_view(view);
                 self.notice = Some(outcome.clone());
-                self.retain_selection();
                 Ok(Some(outcome))
             }
             SessionOutcome::Tick(step) => {
-                self.playing_view = Some(step.view);
-                self.retain_selection();
+                self.replace_playing_view(step.view);
                 Ok(None)
             }
             SessionOutcome::ProbeLaunched { outcome, view, .. }
             | SessionOutcome::ExpeditionLaunched { outcome, view, .. } => {
-                self.playing_view = Some(view);
+                self.replace_playing_view(view);
                 self.notice = Some(outcome.clone());
-                self.retain_selection();
                 Ok(Some(outcome))
             }
             SessionOutcome::Rejected(outcome) => {
@@ -1294,16 +1259,29 @@ impl TuiState {
         }
     }
 
-    fn retain_selection(&mut self) {
-        let len = self
+    pub(crate) fn replace_playing_view(&mut self, view: PlayingView) {
+        let selected_id = self.selected_system_id().cloned();
+        let previous_index = self.selected_system;
+        self.playing_view = Some(view);
+        let systems = &self
             .playing_view
             .as_ref()
-            .map_or(0, |view| view.systems.len());
-        if len == 0 {
-            self.selected_system = 0;
-        } else {
-            self.selected_system = self.selected_system.min(len - 1);
-        }
+            .expect("view was replaced")
+            .systems;
+        self.selected_system = selected_id
+            .as_ref()
+            .and_then(|selected| {
+                systems
+                    .iter()
+                    .position(|system| &system.system_id == selected)
+            })
+            .unwrap_or_else(|| {
+                if systems.is_empty() {
+                    0
+                } else {
+                    previous_index.min(systems.len() - 1)
+                }
+            });
     }
 
     pub fn advance_due(&mut self, now: Duration) -> Result<(), ApplicationError> {
@@ -1333,7 +1311,7 @@ impl TuiState {
             .dispatch(SessionIntent::AdvanceOneTick)?;
         match outcome {
             SessionOutcome::Tick(step) => {
-                self.playing_view = Some(step.view.clone());
+                self.replace_playing_view(step.view.clone());
                 batch.history.push(step);
                 batch.selected_history = batch.history.len() - 1;
                 if batch.history.len() >= usize::from(batch.requested) {

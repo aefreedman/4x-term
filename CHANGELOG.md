@@ -80,6 +80,10 @@
   match the active selection.
 - Manual frame pacing no longer removes Help, Settings, editor, construction,
   mission, or confirmation modals before their next rendered frame.
+- Knowledge refresh now retains the selected system by stable identity when new
+  discoveries reorder the system list.
+- Probe and expedition shortcuts and hints now consume typed application-owned
+  launch/enqueue choices instead of reconstructing Shipyard legality in the TUI.
 
 ### Removed
 

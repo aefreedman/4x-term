@@ -4,7 +4,7 @@ use crate::state::{
 };
 use game_app::{
     ActionAvailability, ApplicationOutcome, ContentId, DraftDisposition, IntentKind,
-    LimitingReason, PreviewStatus, ProbeAssessmentView, ProfileDescriptor, ShipId,
+    LimitingReason, PreviewStatus, ProbeAssessmentView, ProfileDescriptor, ShipActionView, ShipId,
 };
 use std::{path::PathBuf, time::Duration};
 
@@ -321,6 +321,20 @@ fn navigation_only_changes_the_selection_visible_on_the_current_screen() {
 }
 
 #[test]
+fn view_refresh_retains_selected_system_identity_when_rows_reorder() {
+    let mut state = playing_state();
+    assert!(state.playing_view().unwrap().systems.len() > 1);
+    state.selected_system = 1;
+    let selected = state.selected_system_id().unwrap().clone();
+
+    let mut reordered = state.playing_view().unwrap().clone();
+    reordered.systems.reverse();
+    state.replace_playing_view(reordered);
+
+    assert_eq!(state.selected_system_id(), Some(&selected));
+}
+
+#[test]
 fn dashboard_opens_read_only_details_for_a_remote_system() {
     let mut state = playing_state();
     let remote = state
@@ -347,6 +361,34 @@ fn dashboard_opens_read_only_details_for_a_remote_system() {
         .handle_action(Action::Confirm, Duration::ZERO)
         .unwrap();
     assert_eq!(state.screen, Screen::SystemDetails);
+}
+
+#[test]
+fn ship_shortcuts_follow_application_provided_slot_actions() {
+    let mut state = playing_state();
+    state.screen = Screen::Local;
+    state.selected_body = 0;
+    state.selected_slot = 0;
+    let selected = state.selected_system_id().unwrap().clone();
+    let mut view = state.playing_view().unwrap().clone();
+    let local = view
+        .local_systems
+        .iter_mut()
+        .find(|local| local.system_id == selected)
+        .unwrap();
+    local.bodies[0].slots[0].probe_action = ShipActionView::Enqueue;
+    state.replace_playing_view(view);
+
+    state
+        .handle_action(Action::Character('p'), Duration::ZERO)
+        .unwrap();
+
+    assert!(
+        state
+            .notice
+            .as_ref()
+            .is_some_and(|outcome| outcome.intent == IntentKind::EnqueueProbe)
+    );
 }
 
 #[test]
