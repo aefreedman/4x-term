@@ -10,11 +10,7 @@ tags:
 ---
 # Design Direction
 
-Direction records committed outcomes and principles that future design must
-honor. It is not evidence that a mechanic exists today. When direction and
-[current design](../current/README.md) differ, classify the difference as
-intentional staging, pending migration, or a possible defect and seek review
-rather than assuming precedence.
+Direction records committed outcomes and principles that future design must honor. It is not evidence that a mechanic exists today. When direction and [current design](../current/README.md) differ, classify the difference as intentional staging, pending migration, or a possible defect and seek review rather than assuming precedence.
 
 ## Direction pages
 
@@ -29,15 +25,11 @@ rather than assuming precedence.
 
 ## Decision references
 
-Use canonical page and heading links for ordinary citations. Semantic
-`design_ids` exist only for durable cross-document decisions. They describe a
-concept, not its current authority or implementation status. Ideas receive no
-such ID until promoted. Do not introduce new sequential G/Q labels.
+Use canonical page and heading links for ordinary citations. Semantic `design_ids` exist only for durable cross-document decisions. They describe a concept, not its current authority or implementation status. Ideas receive no such ID until promoted. Do not introduce new sequential G/Q labels.
 
 ## Legacy G-label mapping
 
-Completed plans and historical discussions may retain the old labels. This table
-keeps them resolvable without making them the active vocabulary.
+Completed plans and historical discussions may retain the old labels. This table keeps them resolvable without making them the active vocabulary.
 
 | Legacy | Classification | Semantic decision or canonical destination |
 | --- | --- | --- |

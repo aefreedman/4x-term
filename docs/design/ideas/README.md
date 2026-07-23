@@ -10,10 +10,7 @@ tags:
 ---
 # Design Ideas
 
-Everything in this folder is non-authoritative. These pages record possibilities,
-not roadmap commitments or implementation requirements. An idea becomes
-committed direction or current design only through explicit review and
-promotion; an implementation plan alone is insufficient.
+Everything in this folder is non-authoritative. These pages record possibilities, not roadmap commitments or implementation requirements. An idea becomes committed direction or current design only through explicit review and promotion; an implementation plan alone is insufficient.
 
 - [Infrastructure and Slots](infrastructure-and-slots.md)
 - [World Generation](world-generation.md)
@@ -22,7 +19,4 @@ promotion; an implementation plan alone is insufficient.
 - [Scouting and Information](scouting-and-information.md)
 - [Expeditions and Reclamation](expeditions-and-reclamation.md)
 
-Collector curtailment was removed during consolidation: current Collectors have
-zero operating upkeep, and avoiding overflow alone did not establish a
-meaningful decision. It may be proposed again if a concrete operating model
-creates one.
+Collector curtailment was removed during consolidation: current Collectors have zero operating upkeep, and avoiding overflow alone did not establish a meaningful decision. It may be proposed again if a concrete operating model creates one.

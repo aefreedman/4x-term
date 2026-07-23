@@ -46,50 +46,30 @@ Required generator tuning includes:
 
 Frontier presence is an integer basis-point value in `0..=10_000`. Origin presence is mandatory and does not use a presence roll. Resource-bearing-body counts are truncated and renormalized to the generated body's valid range rather than clamped.
 
-Reviewed origin/frontier ranges and structural guarantees are fixed design
-contracts rather than missing defaults. Their single canonical statement is
-[World Generation](world-generation.md#constructive-origin-contract); this page
-owns the profile schema and validation semantics, not a duplicate range table.
-Changing a reviewed range requires design review even when its active
-representation is configuration.
+Reviewed origin/frontier ranges and structural guarantees are fixed design contracts rather than missing defaults. Their single canonical statement is [World Generation](world-generation.md#constructive-origin-contract); this page owns the profile schema and validation semantics, not a duplicate range table. Changing a reviewed range requires design review even when its active representation is configuration.
 
 ## Shipped `starter` profile
 
-`starter` is an explicitly selected iteration baseline. It is not a canonical
-world, preferred seed, generation-quality target, or acceptance oracle. Its
-active mutable values are owned by
-[`content/profiles/starter.ron`](../../../content/profiles/starter.ron); this page
-does not reproduce them.
+`starter` is an explicitly selected iteration baseline. It is not a canonical world, preferred seed, generation-quality target, or acceptance oracle. Its active mutable values are owned by [`content/profiles/starter.ron`](../../../content/profiles/starter.ron); this page does not reproduce them.
 
 The profile supplies complete values for:
 
 - life support, free work, retention, development recipes, and production;
 - Habitat, Shipyard, probe, expedition, and founding commitments;
-- jump limits, speeds, travel-Energy rates, reveal radius, and communication
-  rate;
+- jump limits, speeds, travel-Energy rates, reveal radius, and communication rate;
 - frontier density, coordinate bounds, cells, integer noise, and jitter;
-- resource declarations, origin/frontier deposit distributions, and summary
-  thresholds; and
+- resource declarations, origin/frontier deposit distributions, and summary thresholds; and
 - seasonal shape and baseline.
 
-These values have distinct semantics even when a shipped profile currently makes
-them equal. Reveal radius is not an alias for probe jump range; probe and
-expedition movement values are independently authored; project material
-commitment is distinct from per-progress-tick and launch Energy; and naturally
-deposit-bearing declarations are resource-specific.
+These values have distinct semantics even when a shipped profile currently makes them equal. Reveal radius is not an alias for probe jump range; probe and expedition movement values are independently authored; project material commitment is distinct from per-progress-tick and launch Energy; and naturally deposit-bearing declarations are resource-specific.
 
 The durable behavior using those values is owned by the focused current pages:
 
-- [Systems and Resources](systems-and-resources.md) — funding, construction,
-  production, physical ownership, and reconciliation;
-- [Energy and Seasons](energy-and-seasons.md) — production, spending priority,
-  retention, and overflow;
-- [Population and Habitats](population-and-habitats.md) — generation progress and
-  life support;
-- [Ships and Expansion](ships-and-expansion.md) — project and founding
-  commitments; and
-- [World Generation](world-generation.md) — reviewed ranges, placement,
-  reachability, and generated knowledge.
+- [Systems and Resources](systems-and-resources.md) — funding, construction, production, physical ownership, and reconciliation;
+- [Energy and Seasons](energy-and-seasons.md) — production, spending priority, retention, and overflow;
+- [Population and Habitats](population-and-habitats.md) — generation progress and life support;
+- [Ships and Expansion](ships-and-expansion.md) — project and founding commitments; and
+- [World Generation](world-generation.md) — reviewed ranges, placement, reachability, and generated knowledge.
 
 ## Editing and identity
 

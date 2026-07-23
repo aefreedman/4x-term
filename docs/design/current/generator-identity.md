@@ -64,9 +64,7 @@ Revision identity is not a compatibility promise for pre-generator authored worl
 
 ## Deterministic random streams
 
-Revision 1 uses the exact canonical encoding, domain-separated SplitMix64
-streams, distributions, and placement algorithm in
-[Frontier Generator Revision 1](generator-revision-1.md). A stream is derived from:
+Revision 1 uses the exact canonical encoding, domain-separated SplitMix64 streams, distributions, and placement algorithm in [Frontier Generator Revision 1](generator-revision-1.md). A stream is derived from:
 
 - the seed;
 - generator family and revision;

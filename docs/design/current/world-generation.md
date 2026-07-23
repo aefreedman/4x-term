@@ -41,9 +41,7 @@ The origin guarantees:
 - profile-authored starting stocks; and
 - an origin community at population `0`. The origin remains commandable at zero population.
 
-The active `starter` stock values are owned by
-[`content/profiles/starter.ron`](../../../content/profiles/starter.ron). Their
-exact quantities are mutable tuning, not part of the structural guarantee.
+The active `starter` stock values are owned by [`content/profiles/starter.ron`](../../../content/profiles/starter.ron). Their exact quantities are mutable tuning, not part of the structural guarantee.
 
 Origin resource-bearing-body counts, per-body quantities, and placement use validated origin-specific distributions. Mandatory presence is not a universal quantity floor. A resource may occur on multiple origin bodies.
 
@@ -57,16 +55,9 @@ Every non-origin system uses frontier parameters independently of the origin.
 
 Frontier system strength is represented in hundredths and sampled from a bounded triangular distribution over `0.10..=3.00` with mode `1.00`. It scales the complete-cycle output of every Collector in the system.
 
-Each frontier body has an eccentricity represented in hundredths and sampled
-from a bounded triangular distribution over `0.00..=1.50` with mode `1.00`.
-Strength and eccentricity are immutable generated map properties. Strength
-changes complete-cycle Collector production; eccentricity changes only its
-phase distribution.
+Each frontier body has an eccentricity represented in hundredths and sampled from a bounded triangular distribution over `0.00..=1.50` with mode `1.00`. Strength and eccentricity are immutable generated map properties. Strength changes complete-cycle Collector production; eccentricity changes only its phase distribution.
 
-[Energy and Seasons](energy-and-seasons.md#ten-phase-seasonal-curve) owns the
-profile-authored curve, scaling formula, fixed-point rounding, and deterministic
-phase apportionment. World generation supplies the validated properties to that
-mechanic rather than owning a second copy of its production contract.
+[Energy and Seasons](energy-and-seasons.md#ten-phase-seasonal-curve) owns the profile-authored curve, scaling formula, fixed-point rounding, and deterministic phase apportionment. World generation supplies the validated properties to that mechanic rather than owning a second copy of its production contract.
 
 ### Bodies, slots, and material resources
 
@@ -97,11 +88,7 @@ target_non_origin = target_system_count - 1
 weight_i          = raw_noise_i + 1
 ```
 
-The bounds are divided into fixed-point cells. Seeded multi-octave integer
-value noise gives every eligible cell an exact positive density weight. The
-canonical byte encoding, random streams, triangular weights, noise interpolation,
-cell domains, jitter, and generated-ID algorithm are frozen in
-[Frontier Generator Revision 1](generator-revision-1.md). Each eligible cell independently places at most one system with exact rational probability:
+The bounds are divided into fixed-point cells. Seeded multi-octave integer value noise gives every eligible cell an exact positive density weight. The canonical byte encoding, random streams, triangular weights, noise interpolation, cell domains, jitter, and generated-ID algorithm are frozen in [Frontier Generator Revision 1](generator-revision-1.md). Each eligible cell independently places at most one system with exact rational probability:
 
 ```text
 min(1, target_non_origin × weight_i / sum_of_all_eligible_weights)

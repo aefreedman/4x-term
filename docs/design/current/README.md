@@ -10,10 +10,7 @@ tags:
 ---
 # Current Design Contracts
 
-These pages define approved current mechanics. No draft belongs in this folder.
-A current contract may be a pragmatic stage toward [long-term direction](../direction/README.md);
-that difference is not automatically a defect or permission to implement the
-directional state.
+These pages define approved current mechanics. No draft belongs in this folder. A current contract may be a pragmatic stage toward [long-term direction](../direction/README.md); that difference is not automatically a defect or permission to implement the directional state.
 
 ## Canonical ownership
 
@@ -30,15 +27,8 @@ directional state.
 | Ship projects, launch, travel, and founding | [Ships and Expansion](ships-and-expansion.md) |
 | Global phase order, activation, and atomicity | [Simulation Timing](simulation-timing.md) |
 
-The owning page should state the complete formula or transition. Secondary pages
-should state only the consequence needed for their domain and link to the owner.
-Cross-domain invariants may be repeated when omission would make a page
-misleading, but mutable tuning values should link to their configuration source.
+The owning page should state the complete formula or transition. Secondary pages should state only the consequence needed for their domain and link to the owner. Cross-domain invariants may be repeated when omission would make a page misleading, but mutable tuning values should link to their configuration source.
 
 ## Current versus direction
 
-Current direct remote control, current observation payloads, current empty
-frontier generation, and current generic slots remain authoritative until
-explicitly revised. Direction pages describe intended delegation, two-channel
-information, pre-existing world texture, and other longer-term outcomes without
-claiming those mechanics already exist.
+Current direct remote control, current observation payloads, current empty frontier generation, and current generic slots remain authoritative until explicitly revised. Direction pages describe intended delegation, two-channel information, pre-existing world texture, and other longer-term outcomes without claiming those mechanics already exist.
