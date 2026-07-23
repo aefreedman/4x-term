@@ -22,6 +22,7 @@ Direction records committed outcomes and principles that future design must hono
 - [Information and Distance](information-and-distance.md) — deterministic hidden truth and two information channels.
 - [World Structure](world-structure.md) — player origin, constructive generation, and pre-existing world texture.
 - [Prototype Migration](prototype-migration.md) — retained substrate and rejected compatibility obligations.
+- [Concentric Development](concentric-development.md) — three-ring prioritization, dependability, and bounded vertical slices.
 
 ## Decision references
 
