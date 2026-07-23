@@ -9,53 +9,24 @@ source_direction: docs/plans/2026-07-20-testing-stance-correction.md
 
 ## Purpose
 
-This is the Stage 1 decision record for moving from the runnable authored
-20-system market-trading prototype to the governance-and-expansion game in the
-[Governance Sandbox](../design/direction/foundations.md). It
-classifies responsibilities, not whole files, as **keep**, **reshape**,
-**replace**, or **remove**. A file appears in more than one row when it contains
-both durable contracts and obsolete product assumptions.
+This is the Stage 1 decision record for moving from the runnable authored 20-system market-trading prototype to the governance-and-expansion game in the [Governance Sandbox](../design/direction/foundations.md). It classifies responsibilities, not whole files, as **keep**, **reshape**, **replace**, or **remove**. A file appears in more than one row when it contains both durable contracts and obsolete product assumptions.
 
-At the time of this Stage 1 record, the executable remained unchanged. The
-current implementation status is maintained in the
-[Testing Stance and Constructive Worldgen transition](2026-07-20-testing-stance-correction.md).
-Stage 3 subsequently completed on 2026-07-20; the original decisions below are
-preserved as historical authority rather than rewritten as if their destination
-already existed during Stage 1.
+At the time of this Stage 1 record, the executable remained unchanged. The current implementation status is maintained in the [Testing Stance and Constructive Worldgen transition](2026-07-20-testing-stance-correction.md). Stage 3 subsequently completed on 2026-07-20; the original decisions below are preserved as historical authority rather than rewritten as if their destination already existed during Stage 1.
 
-All file/line citations and pre-cutover type or test names in the inventory are
-historical evidence from the Stage 1 repository snapshot. They are not current
-implementation pointers after the Stage 3 replacement.
+All file/line citations and pre-cutover type or test names in the inventory are historical evidence from the Stage 1 repository snapshot. They are not current implementation pointers after the Stage 3 replacement.
 
 ## Classification rules
 
-- **Keep**: preserve the responsibility or contract. Its present API may still
-  change.
-- **Reshape**: retain the gameplay responsibility but re-derive it for origin
-  and daughter communities, dead geography, or player-owned logistics.
-- **Replace**: introduce a different responsibility or representation; no
-  compatibility layer is required.
-- **Remove**: delete when its retained mechanism coverage has moved or its
-  obsolete feature is retired. No replacement is required unless the new game
-  needs the responsibility.
+- **Keep**: preserve the responsibility or contract. Its present API may still change.
+- **Reshape**: retain the gameplay responsibility but re-derive it for origin and daughter communities, dead geography, or player-owned logistics.
+- **Replace**: introduce a different responsibility or representation; no compatibility layer is required.
+- **Remove**: delete when its retained mechanism coverage has moved or its obsolete feature is retired. No replacement is required unless the new game needs the responsibility.
 
-Future owners are the numbered transition stages. Stage 2 establishes test
-boundaries, Stage 3 separates geography from living actors, Stage 4 owns
-constructive generation, Stage 5 restores startup/player identity, and Stage 7
-verifies that Stages 2–3 completed retirement. Generated-world diagnostics and
-runtime replay have no scheduled transition stage.
+Future owners are the numbered transition stages. Stage 2 establishes test boundaries, Stage 3 separates geography from living actors, Stage 4 owns constructive generation, Stage 5 restores startup/player identity, and Stage 7 verifies that Stages 2–3 completed retirement. Generated-world diagnostics and runtime replay have no scheduled transition stage.
 
 ## Implementation status after Stage 3
 
-Stage 3 completed the destructive substrate cutover on 2026-07-20. The current
-workspace contains only `game-core` and `game-content`; its 15 focused tests
-(nine core and six content) have no ignored tests. The runtime now represents
-stable resources and locations, exactly one living origin community, physical
-stocks and deposits, reclaimable sites, and explicit topology without markets.
-The app, TUI, CLI, production authored content, trader/fleet ecology, pricing,
-wallets, commercial contracts, and legacy acceptance surface are absent.
-Stages 4–8 remain future work, so this boundary is intentionally headless and
-non-playable.
+Stage 3 completed the destructive substrate cutover on 2026-07-20. The current workspace contains only `game-core` and `game-content`; its 15 focused tests (nine core and six content) have no ignored tests. The runtime now represents stable resources and locations, exactly one living origin community, physical stocks and deposits, reclaimable sites, and explicit topology without markets. The app, TUI, CLI, production authored content, trader/fleet ecology, pricing, wallets, commercial contracts, and legacy acceptance surface are absent. Stages 4–8 remain future work, so this boundary is intentionally headless and non-playable.
 
 ## Migration inventory
 
@@ -155,51 +126,27 @@ non-playable.
 
 ## Stage 2 test-development backlog (historical)
 
-This backlog records the Stage 1 handoff to Stage 2; it is not a current todo
-list after Stages 2–3 completion.
+This backlog records the Stage 1 handoff to Stage 2; it is not a current todo list after Stages 2–3 completion.
 
-Stage 1 changes no tests. Stage 2 should use the inventory above to identify
-focused retained evidence before deleting obsolete modules. This is not a
-one-for-one replacement exercise: delete broad tests and their implementation
-when no retained responsibility justifies them.
+Stage 1 changes no tests. Stage 2 should use the inventory above to identify focused retained evidence before deleting obsolete modules. This is not a one-for-one replacement exercise: delete broad tests and their implementation when no retained responsibility justifies them.
 
-1. Label every current family **Tier 1 mechanism**, **candidate named
-   invariant**, **constructive guarantee**, **descriptive-only**, or
-   **obsolete premise**.
+1. Label every current family **Tier 1 mechanism**, **candidate named invariant**, **constructive guarantee**, **descriptive-only**, or **obsolete premise**.
 2. For each candidate invariant, record:
    - exact oracle;
    - applicability rule;
    - fixture or generated setup proving the assertion is non-vacuous;
    - failure output and replay identity.
-3. Preserve checked arithmetic, deterministic ordering, atomic rejection,
-   exact reconciliation, stable IDs, and source-aware validation in focused
-   fixtures even when their current market/trader wrappers are removed.
-4. Extract surviving seasonal, population, brownout, production, route, and
-   logistics mechanisms only into small fixtures with known outcomes; their
-   current balance constants are not presumed durable.
-5. Treat repository-content counts, ongoing trade, NPC profitability, universal
-   survival, aggregate metastability, population ratchets, and required
-   player-impact divergence as obsolete premises.
-6. Keep deterministic seed corpora as regression inputs only. Never introduce
-   pass percentages, reject/reroll screening, or statistical world-quality
-   thresholds.
-7. Turn real generated failure classes into retained Tier 1 reproductions when
-   the mechanism can be isolated and hand-computed.
+3. Preserve checked arithmetic, deterministic ordering, atomic rejection, exact reconciliation, stable IDs, and source-aware validation in focused fixtures even when their current market/trader wrappers are removed.
+4. Extract surviving seasonal, population, brownout, production, route, and logistics mechanisms only into small fixtures with known outcomes; their current balance constants are not presumed durable.
+5. Treat repository-content counts, ongoing trade, NPC profitability, universal survival, aggregate metastability, population ratchets, and required player-impact divergence as obsolete premises.
+6. Keep deterministic seed corpora as regression inputs only. Never introduce pass percentages, reject/reroll screening, or statistical world-quality thresholds.
+7. Turn real generated failure classes into retained Tier 1 reproductions when the mechanism can be isolated and hand-computed.
 
-G18 constructive guarantee tests cannot be implemented until Stage 4 defines
-exact units, values, inequalities, generation configuration, and replay
-identity. Stage 2 may reserve registry entries but must not invent those
-contracts.
+G18 constructive guarantee tests cannot be implemented until Stage 4 defines exact units, values, inequalities, generation configuration, and replay identity. Stage 2 may reserve registry entries but must not invent those contracts.
 
 ## Migration execution correction
 
-Stage owner numbers record dependency context, not a requirement to keep the
-legacy game operational until the latest listed stage. Stages 2–3 should perform
-most deletion once retained low-level responsibilities are isolated. The
-workspace must remain buildable around retained contracts, but normal startup,
-headless play, authored content, diagnostics, TUI flows, and legacy acceptance
-may be absent until Stage 5 restores a truthful executable. Do not archive
-removed source/content/tests/UI; use Git history.
+Stage owner numbers record dependency context, not a requirement to keep the legacy game operational until the latest listed stage. Stages 2–3 should perform most deletion once retained low-level responsibilities are isolated. The workspace must remain buildable around retained contracts, but normal startup, headless play, authored content, diagnostics, TUI flows, and legacy acceptance may be absent until Stage 5 restores a truthful executable. Do not archive removed source/content/tests/UI; use Git history.
 
 ## Stage 1 boundary
 
@@ -215,88 +162,38 @@ This audit deliberately performs no destination implementation:
 
 ## Open questions assigned to later stages
 
-- **Stage 2:** Which current focused tests are genuinely non-vacuous named
-  invariants, and what canonical names, exact oracles, and applicability rules
-  belong in the invariant registry?
-- **Stage 3 (closed 2026-07-20):** The minimum substrate is stable resources and
-  finite locations; exactly one origin community with nonzero population and
-  physical stocks; separately referenced nonzero deposits and minimally typed
-  reclaimable sites; and explicit normalized topology that permits empty or
-  disconnected graphs. Bodies, slots, site internals, surveys, information
-  layers, and generation guarantees remain deferred.
-- **Stage 4:** What exact authored origin resource/infrastructure engine makes
-  bank/develop pressure hand-computable without population mutation, scouting,
-  or generated-world claims?
-- **Stage 4b:** Which structural origin/neighborhood records, topology rules,
-  generation identity, and bounded outward action make G18 constructive without
-  economic inequalities, quantity floors, or assumed reclaimable-site needs?
-- **Stage 5:** How does complete generation identity select normal play, and
-  what is the smallest truthful origin-first app/TUI startup flow?
-- **Stage 7:** Does a final working-tree and CI search prove that Stages 2–3
-  deleted every unjustified market/economy/trader surface and compatibility
-  copy?
+- **Stage 2:** Which current focused tests are genuinely non-vacuous named invariants, and what canonical names, exact oracles, and applicability rules belong in the invariant registry?
+- **Stage 3 (closed 2026-07-20):** The minimum substrate is stable resources and finite locations; exactly one origin community with nonzero population and physical stocks; separately referenced nonzero deposits and minimally typed reclaimable sites; and explicit normalized topology that permits empty or disconnected graphs. Bodies, slots, site internals, surveys, information layers, and generation guarantees remain deferred.
+- **Stage 4:** What exact authored origin resource/infrastructure engine makes bank/develop pressure hand-computable without population mutation, scouting, or generated-world claims?
+- **Stage 4b:** Which structural origin/neighborhood records, topology rules, generation identity, and bounded outward action make G18 constructive without economic inequalities, quantity floors, or assumed reclaimable-site needs?
+- **Stage 5:** How does complete generation identity select normal play, and what is the smallest truthful origin-first app/TUI startup flow?
+- **Stage 7:** Does a final working-tree and CI search prove that Stages 2–3 deleted every unjustified market/economy/trader surface and compatibility copy?
 
 ## Stage 1 completion evidence
 
 - Contributor policy: `AGENTS.md`
 - Architecture testing boundary: `docs/architecture.md`
 - Executable/target distinction: `README.md`
-- Transition source of truth:
-  `docs/plans/2026-07-20-testing-stance-correction.md`
+- Transition source of truth: `docs/plans/2026-07-20-testing-stance-correction.md`
 
-At Stage 1 completion, implementation and CI behavior were intentionally
-unchanged. Stage 2 subsequently moved current durable contracts into the
-[Engine Invariant Registry](../2026-07-20-engine-invariant-registry.md) and deleted
-superseded working-tree history. Later stages must re-read the cited code before
-acting because line numbers and coupling can change after this audit date.
+At Stage 1 completion, implementation and CI behavior were intentionally unchanged. Stage 2 subsequently moved current durable contracts into the [Engine Invariant Registry](../2026-07-20-engine-invariant-registry.md) and deleted superseded working-tree history. Later stages must re-read the cited code before acting because line numbers and coupling can change after this audit date.
 
 ## Stage 2 completion evidence
 
-This section is historical Stage 2 evidence. Paths and test names that Stage 3
-later deleted are not current registry evidence.
+This section is historical Stage 2 evidence. Paths and test names that Stage 3 later deleted are not current registry evidence.
 
-- Active and reserved contracts:
-  [Engine Invariant Registry](../2026-07-20-engine-invariant-registry.md)
-- Direct Tier 1 content fixtures and retained provenance checks:
-  `crates/game-content/src/lib.rs`
-- Focused reconciliation, ordering, atomicity, and identifier evidence:
-  `crates/game-core/src/tests.rs` and
-  `crates/game-core/src/energy_logistics/tests.rs`
+- Active and reserved contracts: [Engine Invariant Registry](../2026-07-20-engine-invariant-registry.md)
+- Direct Tier 1 content fixtures and retained provenance checks: `crates/game-content/src/lib.rs`
+- Focused reconciliation, ordering, atomicity, and identifier evidence: `crates/game-core/src/tests.rs` and `crates/game-core/src/energy_logistics/tests.rs`
 - Retained CI boundary: `.github/workflows/ci.yml`
-- Removed surfaces: repository acceptance and ignored soaks, legacy CLI
-  diagnostics/acceptance, authored-world quality predicates, prototype archive,
-  and completed prototype todos. The Stage 1 plan remains part of the active
-  staged-migration record.
-- Validation: formatting, workspace check, Clippy with warnings denied, and 201
-  retained tests passed with zero ignored tests.
+- Removed surfaces: repository acceptance and ignored soaks, legacy CLI diagnostics/acceptance, authored-world quality predicates, prototype archive, and completed prototype todos. The Stage 1 plan remains part of the active staged-migration record.
+- Validation: formatting, workspace check, Clippy with warnings denied, and 201 retained tests passed with zero ignored tests.
 
 ## Stage 3 completion evidence
 
-- Accepted implementation plan:
-  `docs/plans/2026-07-20-feature-origin-frontier-substrate-stage-3-plan.md`.
-- Retained workspace: `game-core` and `game-content` only. `game-app`,
-  `game-tui`, `game-cli`, and production `content/` are absent; no compatibility
-  shells or translated authored market universe remain.
-- Core substrate: `crates/game-core/src/lib.rs` defines stable resources and
-  locations, one origin community, physical stores/deposits, reclaimable sites,
-  explicit topology, normalized snapshots, checked Energy arithmetic, and
-  atomic resource transfer accounting.
-- Content substrate: `crates/game-content/src/lib.rs` compiles one source-aware
-  Stage 3 RON world and aggregates deterministic diagnostics before returning a
-  definition. Its fixtures are test-only Tier 1 worlds.
-- Current exact registry evidence includes
-  `input_permutations_produce_equal_snapshots`, `normalizes_permuted_input`,
-  `energy_transfer_reconciles_exactly`,
-  `resource_transfer_rejections_are_atomic_on_every_path`,
-  `energy_arithmetic_is_checked`,
-  `content_id_validation_and_display_are_stable`,
-  `compiles_a_dead_isolated_location_and_instantiates_world_state`,
-  `aggregates_exact_source_aware_diagnostics`,
-  `parse_errors_include_document_provenance`,
-  `unknown_fields_are_rejected_in_top_level_and_nested_sources`, and
-  `location_diagnostics_are_complete_and_permutation_independent`. No legacy
-  market/trader test is current evidence, and automated logistics is reserved
-  because no such domain exists.
-- Validation on 2026-07-20: `cargo test --workspace --all-features -- --list`
-  resolved nine `game-core` and six `game-content` tests (15 total), zero doc
-  tests, and no ignored test attributes in the retained crates.
+- Accepted implementation plan: `docs/plans/2026-07-20-feature-origin-frontier-substrate-stage-3-plan.md`.
+- Retained workspace: `game-core` and `game-content` only. `game-app`, `game-tui`, `game-cli`, and production `content/` are absent; no compatibility shells or translated authored market universe remain.
+- Core substrate: `crates/game-core/src/lib.rs` defines stable resources and locations, one origin community, physical stores/deposits, reclaimable sites, explicit topology, normalized snapshots, checked Energy arithmetic, and atomic resource transfer accounting.
+- Content substrate: `crates/game-content/src/lib.rs` compiles one source-aware Stage 3 RON world and aggregates deterministic diagnostics before returning a definition. Its fixtures are test-only Tier 1 worlds.
+- Current exact registry evidence includes `input_permutations_produce_equal_snapshots`, `normalizes_permuted_input`, `energy_transfer_reconciles_exactly`, `resource_transfer_rejections_are_atomic_on_every_path`, `energy_arithmetic_is_checked`, `content_id_validation_and_display_are_stable`, `compiles_a_dead_isolated_location_and_instantiates_world_state`, `aggregates_exact_source_aware_diagnostics`, `parse_errors_include_document_provenance`, `unknown_fields_are_rejected_in_top_level_and_nested_sources`, and `location_diagnostics_are_complete_and_permutation_independent`. No legacy market/trader test is current evidence, and automated logistics is reserved because no such domain exists.
+- Validation on 2026-07-20: `cargo test --workspace --all-features -- --list` resolved nine `game-core` and six `game-content` tests (15 total), zero doc tests, and no ignored test attributes in the retained crates.
