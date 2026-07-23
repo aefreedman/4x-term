@@ -16,6 +16,8 @@ Everything in this folder is non-authoritative. These pages record possibilities
 - [World Generation](world-generation.md)
 - [Governance and Politics](governance-and-politics.md)
 - [Production and Capability](production-and-capability.md)
+- [Margin and Energy Allocation](margin-and-energy-allocation.md)
+- [Survey Couriers](survey-couriers.md)
 - [Scouting and Information](scouting-and-information.md)
 - [Expeditions and Reclamation](expeditions-and-reclamation.md)
 
