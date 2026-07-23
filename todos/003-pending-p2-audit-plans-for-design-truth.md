@@ -12,18 +12,13 @@ dependencies: []
 
 ## Problem Statement
 
-The design hierarchy under `docs/design/` is now authoritative, but completed
-implementation plans may still contain approved mechanical contracts that were
-never extracted into `docs/design/current/`. Plans are execution history and
-must not remain the only source for current behavior.
+The design hierarchy under `docs/design/` is now authoritative, but completed implementation plans may still contain approved mechanical contracts that were never extracted into `docs/design/current/`. Plans are execution history and must not remain the only source for current behavior.
 
 ## Findings
 
-- The documentation consolidation established current, direction, lore, and idea
-  authority scopes.
+- The documentation consolidation established current, direction, lore, and idea authority scopes.
 - The consolidation intentionally did not audit every file under `docs/plans/`.
-- The previously known dependency in `tuning-profiles.md` was resolved during
-  consolidation by linking focused current pages and configuration.
+- The previously known dependency in `tuning-profiles.md` was resolved during consolidation by linking focused current pages and configuration.
 - Other plan-only contracts may remain and require a bounded audit.
 
 ## Proposed Solution
@@ -44,9 +39,7 @@ must not remain the only source for current behavior.
 
 ## Recommended Action
 
-Start with plans cited by current design or code-facing documentation, record
-candidate contracts by canonical owning page, and review ambiguous or conflicting
-items before editing current design.
+Start with plans cited by current design or code-facing documentation, record candidate contracts by canonical owning page, and review ambiguous or conflicting items before editing current design.
 
 ## Technical Details
 
