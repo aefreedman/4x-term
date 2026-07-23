@@ -10,15 +10,9 @@ source: "../plans/2026-07-21-feature-playable-startup-stage-5-plan.md"
 
 ## Review purpose
 
-This approved supplement establishes a reusable terminal design system,
-classifies the required Slice 5b surfaces, fixes common interaction behavior,
-and records the application-view boundary. It remains an implementation-plan
-supplement rather than durable game-design documentation. It does not select
-Rust dependencies or implement widgets.
+This approved supplement establishes a reusable terminal design system, classifies the required Slice 5b surfaces, fixes common interaction behavior, and records the application-view boundary. It remains an implementation-plan supplement rather than durable game-design documentation. It does not select Rust dependencies or implement widgets.
 
-The overall direction and every decision below are approved. Local panel
-composition may evolve inside this system; new interaction patterns or
-component types require review.
+The overall direction and every decision below are approved. Local panel composition may evolve inside this system; new interaction patterns or component types require review.
 
 See the exact-cell [reference wireframes](2026-07-21-stage-5a-tui-reference-wireframes-supplement.md).
 
@@ -76,9 +70,7 @@ Reject:
 - unbounded panel proliferation; and
 - inspection paths that bypass player knowledge.
 
-The resulting identity is a **map-centered governance terminal**: atmospheric
-but restrained, dense but navigable, and explicit about focus, state, and
-command consequences.
+The resulting identity is a **map-centered governance terminal**: atmospheric but restrained, dense but navigable, and explicit about focus, state, and command consequences.
 
 ## Canvas and shell
 
@@ -90,19 +82,11 @@ The minimum and reference canvas is exactly `160x45` terminal cells.
 | `1..43` | Workspace | Screen-specific panels use the full available height. Panels stretch to the workspace edge rather than reserving empty vertical bands. |
 | `44` | Global action bar | Only stable global actions such as Help, Settings, and Quit. No status sentence, input count, canvas size, or diagnostic prose. |
 
-Focused-panel prompts live in a `PanelActionBar` on the panel's bottom interior
-row, rendered as button-like labels such as `[Enter Confirm] [Esc Back]`. They
-are not appended to explanatory block text.
+Focused-panel prompts live in a `PanelActionBar` on the panel's bottom interior row, rendered as button-like labels such as `[Enter Confirm] [Esc Back]`. They are not appended to explanatory block text.
 
-Larger terminals retain the title and single global action bar. Extra height extends workspace viewports.
-The selected-system and Energy columns keep their reference widths; extra width
-is assigned two cells to the map for every one cell assigned to the system list.
-Below the minimum, the workspace is replaced by `SafetyView` and gameplay input
-is blocked.
+Larger terminals retain the title and single global action bar. Extra height extends workspace viewports. The selected-system and Energy columns keep their reference widths; extra width is assigned two cells to the map for every one cell assigned to the system list. Below the minimum, the workspace is replaced by `SafetyView` and gameplay input is blocked.
 
-ASCII borders are the exact-cell baseline. Single-width box-drawing glyphs may
-be a theme substitution. Panels use one interior padding cell when doing so does
-not compromise exact numeric display.
+ASCII borders are the exact-cell baseline. Single-width box-drawing glyphs may be a theme substitution. Panels use one interior padding cell when doing so does not compromise exact numeric display.
 
 ## Semantic markers
 
@@ -121,16 +105,11 @@ Color may reinforce but never replace these text or structural cues:
 | `^ more:N`, `v more:N` | Viewport overflow |
 | `--` | Value not yet observed or not applicable |
 
-Uncharted systems never receive glyphs or list identities. Their existence is
-shown only as an aggregate such as `Uncharted: 12`. The application maps the
-core's existence-only knowledge aggregate to player-facing `Uncharted`.
+Uncharted systems never receive glyphs or list identities. Their existence is shown only as an aggregate such as `Uncharted: 12`. The application maps the core's existence-only knowledge aggregate to player-facing `Uncharted`.
 
 ## Player-facing system names
 
-Generated frontier systems use a fictional survey-catalog style modeled on
-real astronomical catalogs such as HD, HIP, and Gliese: `FSC NNNNNN`, where
-`FSC` means **Frontier Survey Catalogue** and the six-digit number is the
-system's existing stable generated ordinal.
+Generated frontier systems use a fictional survey-catalog style modeled on real astronomical catalogs such as HD, HIP, and Gliese: `FSC NNNNNN`, where `FSC` means **Frontier Survey Catalogue** and the six-digit number is the system's existing stable generated ordinal.
 
 Examples:
 
@@ -139,18 +118,9 @@ Examples:
 - `FSC 000017 b` — first known body in that system;
 - `FSC 000017 c` — second known body.
 
-The scheme is deterministic, compact, sortable, and does not encode a hidden
-position or resource fact. `game-app` resolves stable IDs into these labels;
-the TUI only renders supplied labels.
+The scheme is deterministic, compact, sortable, and does not encode a hidden position or resource fact. `game-app` resolves stable IDs into these labels; the TUI only renders supplied labels.
 
-Once a system is charted, the player may assign a personal alias. Lists and map
-detail show the alias as the primary label and retain `FSC NNNNNN` in selected
-detail for disambiguation. Aliases are trimmed, single-line, and at most 32
-display cells. Duplicate aliases are allowed because the catalogue label remains
-stable. Clearing an alias restores the catalogue label. Stage 5 has no saves, so
-aliases last for the current application session only; ownership is nevertheless
-in `game-app`, not TUI-local state, so later persistence can retain the same
-contract.
+Once a system is charted, the player may assign a personal alias. Lists and map detail show the alias as the primary label and retain `FSC NNNNNN` in selected detail for disambiguation. Aliases are trimmed, single-line, and at most 32 display cells. Duplicate aliases are allowed because the catalogue label remains stable. Clearing an alias restores the catalogue label. Stage 5 has no saves, so aliases last for the current application session only; ownership is nevertheless in `game-app`, not TUI-local state, so later persistence can retain the same contract.
 
 ## Component system
 
@@ -173,27 +143,20 @@ contract.
 | `Overlay` | Context-preserving temporary layer | help, value entry, confirm, rejection |
 | `SafetyView` | Blocks unsafe interaction | undersized, unrecoverable startup |
 
-An implementation agent may compose an unwireframed surface from these
-components. A missing component or semantic variant is a design-review gap, not
-permission to add a one-off widget language.
+An implementation agent may compose an unwireframed surface from these components. A missing component or semantic variant is a design-review gap, not permission to add a one-off widget language.
 
 ## Formatting and overflow
 
-- Player-facing labels are primary. Stable IDs appear only for disambiguation,
-  reproduction, or explicit detailed inspection.
-- Long labels truncate with `...`; inspecting the row reveals the complete
-  value.
-- Exact integer quantities are right-aligned and never abbreviated. Preserve up
-  to 20 digits by sacrificing label width first.
+- Player-facing labels are primary. Stable IDs appear only for disambiguation, reproduction, or explicit detailed inspection.
+- Long labels truncate with `...`; inspecting the row reveals the complete value.
+- Exact integer quantities are right-aligned and never abbreviated. Preserve up to 20 digits by sacrificing label width first.
 - Progress always includes exact values, for example `[####....] 4/8`.
 - Selected rows remain in view after an immutable view refresh.
 - Lists show selected position and hidden row counts.
 - Empty collections say what is absent and, when application-provided, why.
 - Useful unavailable actions remain visible with their limiting reason.
-- Generator fingerprints, provenance, family/revision, canvas dimensions, and
-  other reproduction/debug metadata do not appear in the human TUI.
-- The TUI does not calculate costs, legality, seasonal output, forecasts, or
-  runway.
+- Generator fingerprints, provenance, family/revision, canvas dimensions, and other reproduction/debug metadata do not appear in the human TUI.
+- The TUI does not calculate costs, legality, seasonal output, forecasts, or runway.
 
 ## Navigation grammar
 
@@ -206,8 +169,7 @@ Widgets receive semantic actions, never raw layout-specific navigation keys.
 | Left | `Left` | `h` | `n` |
 | Right | `Right` | `l` | `i` |
 
-Printable keys enter text when a text/value editor has focus. Navigation
-mapping applies only where the focused component accepts navigation.
+Printable keys enter text when a text/value editor has focus. Navigation mapping applies only where the focused component accepts navigation.
 
 | Input | Semantic action | Contract |
 | --- | --- | --- |
@@ -232,25 +194,13 @@ Input precedence is strict and one event is handled by at most one layer:
 5. global controls; and
 6. focused-panel controls.
 
-A focused editor consumes printable characters before semantic navigation or
-global shortcuts. `Esc` exits the editor without committing; only then do
-layout navigation letters, `.`, `t`, or `q` regain their global/contextual
-meaning.
+A focused editor consumes printable characters before semantic navigation or global shortcuts. `Esc` exits the editor without committing; only then do layout navigation letters, `.`, `t`, or `q` regain their global/contextual meaning.
 
 ### Interaction-coherence gate
 
-A composition must not imply more focus targets than it implements. Exactly one
-visible component owns directional input; every accepted direction changes a
-selection visible in that component; and the direction must agree with the
-rows' spatial arrangement. Tab is reserved for traversal between two or more
-interactive focus targets, never for traversing rows in a single list. A child
-surface must not retain navigation that changes an off-screen parent selection.
+A composition must not imply more focus targets than it implements. Exactly one visible component owns directional input; every accepted direction changes a selection visible in that component; and the direction must agree with the rows' spatial arrangement. Tab is reserved for traversal between two or more interactive focus targets, never for traversing rows in a single list. A child surface must not retain navigation that changes an off-screen parent selection.
 
-Before approval, each surface needs an interaction table and a keyboard-only
-prediction walkthrough by a reviewer who has not been taught the controls.
-Rendering, routing, and state tests must be reviewed together rather than as
-independently correct layers. The active checklist and exact review procedure
-are in [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.md).
+Before approval, each surface needs an interaction table and a keyboard-only prediction walkthrough by a reviewer who has not been taught the controls. Rendering, routing, and state tests must be reviewed together rather than as independently correct layers. The active checklist and exact review procedure are in [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.md).
 
 ## Surface inventory and navigation
 
@@ -305,23 +255,16 @@ are in [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.md).
 
 ## Knowledge map contract
 
-The map and list share one stable selected system ID. Selection from either
-updates both. The map never receives or infers a hidden position.
+The map and list share one stable selected system ID. Selection from either updates both. The map never receives or infers a hidden position.
 
 - The origin is centered as the player's reference point.
-- A system with a player-known position is plotted relative to the origin using
-  an application-provided chart coordinate.
-- Identified systems without a known position appear only in the synchronized
-  list with `--` for position, never at invented map coordinates.
+- A system with a player-known position is plotted relative to the origin using an application-provided chart coordinate.
+- Identified systems without a known position appear only in the synchronized list with `--` for position, never at invented map coordinates.
 - Uncharted indications appear only as a count.
-- Colliding chart cells use a stack marker and cycle only among identities
-  already admitted to the player view.
+- Colliding chart cells use a stack marker and cycle only among identities already admitted to the player view.
 - Off-screen charted systems receive edge indicators and remain list-selectable.
-- The map panel uses its full interior as a glyph field. Legends, knowledge
-  explanations, and unpositioned-system prose belong in the list/detail
-  surfaces rather than consuming map space.
-- The TUI performs viewport clipping and selection; coordinate projection and
-  knowledge admission are application responsibilities.
+- The map panel uses its full interior as a glyph field. Legends, knowledge explanations, and unpositioned-system prose belong in the list/detail surfaces rather than consuming map space.
+- The TUI performs viewport clipping and selection; coordinate projection and knowledge admission are application responsibilities.
 
 ## Dedicated Energy render
 
@@ -341,8 +284,7 @@ It renders only application-provided values:
 - last-tick retention overflow; and
 - an explicit unavailable state before the first completed tick.
 
-Forecasts, expected production, and runway are absent unless later supplied as
-approved core/application values.
+Forecasts, expected production, and runway are absent unless later supplied as approved core/application values.
 
 ## Command-flow state machines
 
@@ -363,10 +305,7 @@ Start rejected -> remain on current preview, show structural startup error,
 Start cancel -> return to current preview
 ```
 
-The startup coordinator outside `game-tui` owns compiled profile data and the
-current generated artifact. The TUI receives typed startup views/intents only.
-Slice 5b must choose whether this coordinator lives in `game-app` or the thin
-executable; `game-tui` never loads content or receives `WorldDefinition`.
+The startup coordinator outside `game-tui` owns compiled profile data and the current generated artifact. The TUI receives typed startup views/intents only. Slice 5b must choose whether this coordinator lives in `game-app` or the thin executable; `game-tui` never loads content or receives `WorldDefinition`.
 
 ### Rename a charted system
 
@@ -378,9 +317,7 @@ Select charted system -> r -> edit alias
 Esc -> close without changing the current alias
 ```
 
-Uncharted indications and identified systems without a player-known position
-cannot be renamed. Alias mutation changes application-session annotation only;
-it does not mutate `WorldState` or generated definitions.
+Uncharted indications and identified systems without a player-known position cannot be renamed. Alias mutation changes application-session annotation only; it does not mutate `WorldState` or generated definitions.
 
 ### Slot-first construction
 
@@ -415,8 +352,7 @@ Inspect Habitat
   -> rejected: retain prior PlayingView, show typed reason, keep dashboard focus
 ```
 
-The rejected tick is uncommitted by the core and the TUI does not fabricate an
-intermediate state.
+The rejected tick is uncommitted by the core and the TUI does not fabricate an intermediate state.
 
 ### Multi-tick
 
@@ -432,14 +368,7 @@ intermediate state.
   -> summary retains all completed ticks
 ```
 
-The cadence is presentation pacing for an explicit manual command, not
-real-time or autonomous simulation. Interruption happens only between ticks. A
-rejected tick remains uncommitted, stops the batch, retains all earlier
-committed rows, focuses the rejected summary row, and displays the typed reason
-with requested/completed counts. Resize below minimum requests the same
-between-tick stop and enters the safety view. Recovery returns to a stopped
-summary and requires a new explicit confirmation before any remaining ticks
-run. No tick is partially committed or displayed.
+The cadence is presentation pacing for an explicit manual command, not real-time or autonomous simulation. Interruption happens only between ticks. A rejected tick remains uncommitted, stops the batch, retains all earlier committed rows, focuses the rejected summary row, and displays the typed reason with requested/completed counts. Resize below minimum requests the same between-tick stop and enters the safety view. Recovery returns to a stopped summary and requires a new explicit confirmation before any remaining ticks run. No tick is partially committed or displayed.
 
 ### Quit
 
@@ -454,36 +383,26 @@ Undersized -> apply the same session-sensitive rule: immediate before play,
 
 ### Ownership
 
-- A startup coordinator owns profile compilation and the current generated
-  artifact.
-- Starting consumes that artifact and transfers its definition into the sole
-  mutable session owner.
+- A startup coordinator owns profile compilation and the current generated artifact.
+- Starting consumes that artifact and transfers its definition into the sole mutable session owner.
 - The session owner exclusively owns `WorldState`.
 - The TUI receives immutable, presentation-ready values and emits typed intents.
-- The TUI never receives `GeneratedWorldArtifact`, `WorldDefinition`,
-  `WorldState`, test-support snapshots, tuning, recipes, or hidden locations.
+- The TUI never receives `GeneratedWorldArtifact`, `WorldDefinition`, `WorldState`, test-support snapshots, tuning, recipes, or hidden locations.
 
 ### Required view families
 
 - `StartupView`: editable profile/seed inputs, validation, and Generate action.
-- `GenerationPreviewView`: allowlisted seed/profile/origin summary,
-  current/stale state, Start availability.
-- `PlayingView`: seed/profile session identity plus a projection derived from
-  `PlayerWorldView` and non-secret catalog labels.
+- `GenerationPreviewView`: allowlisted seed/profile/origin summary, current/stale state, Start availability.
+- `PlayingView`: seed/profile session identity plus a projection derived from `PlayerWorldView` and non-secret catalog labels.
 - `SystemDetailView`: fact-aware summary or commandable local detail.
-- `ConstructionDraftView`: stable IDs, resolved labels, exact costs,
-  availability, and limiting reason.
+- `ConstructionDraftView`: stable IDs, resolved labels, exact costs, availability, and limiting reason.
 - `EnergyView`: current values plus optional last-tick evidence.
-- `ApplicationOutcome`: typed acceptance/rejection, player message, and explicit
-  draft-retention classification.
+- `ApplicationOutcome`: typed acceptance/rejection, player message, and explicit draft-retention classification.
 - `TickStepView`: resulting immutable playing view plus player-visible delta.
 
-Action availability is typed as `Available { ... }` or
-`Unavailable { limiting_reason }`. Displayed availability assists the player;
-commit-time legality still comes from core validation.
+Action availability is typed as `Available { ... }` or `Unavailable { limiting_reason }`. Displayed availability assists the player; commit-time legality still comes from core validation.
 
-Intents carry stable domain IDs, never row indices, labels, widget IDs, terminal
-coordinates, or raw key events.
+Intents carry stable domain IDs, never row indices, labels, widget IDs, terminal coordinates, or raw key events.
 
 ### Current contract gaps assigned to the application boundary
 
@@ -496,8 +415,7 @@ coordinates, or raw key events.
 - player-facing mapping of `CoreError`; and
 - player-visible per-tick deltas.
 
-These gaps must not be filled by reading complete generated definitions in the
-TUI or duplicating core rules.
+These gaps must not be filled by reading complete generated definitions in the TUI or duplicating core rules.
 
 ### Exact Slice 5b intent contract
 
@@ -512,96 +430,45 @@ Startup intents:
 
 Session intents:
 
-- `EnqueueConstruction { system_id, body_id, slot_id, role,
-  extractor_resource_id }`
+- `EnqueueConstruction { system_id, body_id, slot_id, role, extractor_resource_id }`
 - `SetHabitatGenerationEnabled { system_id, body_id, slot_id, enabled }`
 - `SetSystemAlias { system_id, alias }`, where `alias: None` clears it
 - `AdvanceOneTick`
 
-Multi-tick is a TUI/application orchestration over repeated `AdvanceOneTick`
-intents, never a core batch mutation. Navigation, focus, selected rows, help,
-global user settings (including keyboard mode), multi-tick count editing, and
-quit confirmation are local TUI intents and do not enter the simulation owner
-or generation identity.
+Multi-tick is a TUI/application orchestration over repeated `AdvanceOneTick` intents, never a core batch mutation. Navigation, focus, selected rows, help, global user settings (including keyboard mode), multi-tick count editing, and quit confirmation are local TUI intents and do not enter the simulation owner or generation identity.
 
 ### Exact Slice 5b view fields
 
-`StartupView` contains profile-path text/error, seed text/error, Generate
-availability, optional source-aware diagnostic, and optional
-`GenerationPreviewView`. Keyboard mode is not a startup-generation field.
+`StartupView` contains profile-path text/error, seed text/error, Generate availability, optional source-aware diagnostic, and optional `GenerationPreviewView`. Keyboard mode is not a startup-generation field.
 
-`GenerationPreviewView` contains current/stale state, seed, player-facing
-profile name, allowlisted origin ID/label/community, origin body count,
-guaranteed developments, initial origin stocks, and Start availability/reason.
-It contains no generator revision/fingerprint/provenance/count and no neutral
-identity, position, body, resource, or topology data.
+`GenerationPreviewView` contains current/stale state, seed, player-facing profile name, allowlisted origin ID/label/community, origin body count, guaranteed developments, initial origin stocks, and Start availability/reason. It contains no generator revision/fingerprint/provenance/count and no neutral identity, position, body, resource, or topology data.
 
-`PlayingView` contains seed/profile session identity, time/season presentation,
-identified system-list entries, chart entries only for
-known positions, unpositioned identified entries, uncharted indication count,
-selected-system detail, optional commandable local detail, optional
-`EnergyView`, latest `ApplicationOutcome`, and contextual/global actions.
+`PlayingView` contains seed/profile session identity, time/season presentation, identified system-list entries, chart entries only for known positions, unpositioned identified entries, uncharted indication count, selected-system detail, optional commandable local detail, optional `EnergyView`, latest `ApplicationOutcome`, and contextual/global actions.
 
-Each system-list entry contains stable system ID, stable catalogue label,
-optional player alias, resolved primary display label, knowledge level,
-positioned/unpositioned state, commandability when player-visible,
-and observation freshness supplied by admitted facts. Summary detail contains
-only admitted fact rows. Local detail contains bodies/slots, stocks, construction queue, completed
-assets, derived local population count, and Habitat rows with stable ID/label,
-functional and occupied state, generation-enabled state, exact progress and
-required Energy, ready state, and toggle availability/reason. Occupancy and
-population remain derived presentation, not separately writable state.
+Each system-list entry contains stable system ID, stable catalogue label, optional player alias, resolved primary display label, knowledge level, positioned/unpositioned state, commandability when player-visible, and observation freshness supplied by admitted facts. Summary detail contains only admitted fact rows. Local detail contains bodies/slots, stocks, construction queue, completed assets, derived local population count, and Habitat rows with stable ID/label, functional and occupied state, generation-enabled state, exact progress and required Energy, ready state, and toggle availability/reason. Occupancy and population remain derived presentation, not separately writable state.
 
-`ConstructionDraftView` contains system/body/slot stable IDs and labels,
-available and unavailable role choices, eligible Extractor target choices,
-exact application-provided costs, availability, and limiting reason.
+`ConstructionDraftView` contains system/body/slot stable IDs and labels, available and unavailable role choices, eligible Extractor target choices, exact application-provided costs, availability, and limiting reason.
 
-`EnergyView` contains current quantity, capacity, headroom, seasonal position,
-and optional last-completed-tick evidence with required/paid/unpaid life
-support, supported/underserved population, and retention overflow.
+`EnergyView` contains current quantity, capacity, headroom, seasonal position, and optional last-completed-tick evidence with required/paid/unpaid life support, supported/underserved population, and retention overflow.
 
-`ApplicationOutcome` contains accepted/rejected kind, player-facing message,
-optional stable result IDs, and, for rejected draft commands, a
-`DraftDisposition` of `Retain` or `InvalidateRoot`. Accepted construction closes
-its draft without a rejection disposition. `TickStepView` contains the resulting immutable `PlayingView`
-and an ordered player-visible delta; an empty delta is explicit.
+`ApplicationOutcome` contains accepted/rejected kind, player-facing message, optional stable result IDs, and, for rejected draft commands, a `DraftDisposition` of `Retain` or `InvalidateRoot`. Accepted construction closes its draft without a rejection disposition. `TickStepView` contains the resulting immutable `PlayingView` and an ordered player-visible delta; an empty delta is explicit.
 
 ## UX acceptance walkthroughs
 
-Slice 5b tests should use small deterministic authored fixtures except where an
-explicit generation request verifies preview identity.
+Slice 5b tests should use small deterministic authored fixtures except where an explicit generation request verifies preview identity.
 
-1. Edit startup inputs, generate, inspect preview, make it stale, regenerate,
-   and start exactly the current preview.
-2. Enter play and confirm a distinctive hidden neutral system appears in
-   neither preview nor initial playing output.
-3. Synchronize map/list selection for positioned and unpositioned identified systems;
-   show uncharted knowledge only as a count and use `FSC NNNNNN` labels only
-   after identification.
-4. Rename a charted system, observe the alias in map/list/detail presentation,
-   retain its catalogue label in detail, reject an invalid alias without losing
-   text, and clear back to the catalogue label.
-5. Inspect origin Energy before tick one, then after a tick with payment,
-   shortage, and overflow evidence.
+1. Edit startup inputs, generate, inspect preview, make it stale, regenerate, and start exactly the current preview.
+2. Enter play and confirm a distinctive hidden neutral system appears in neither preview nor initial playing output.
+3. Synchronize map/list selection for positioned and unpositioned identified systems; show uncharted knowledge only as a count and use `FSC NNNNNN` labels only after identification.
+4. Rename a charted system, observe the alias in map/list/detail presentation, retain its catalogue label in detail, reject an invalid alias without losing text, and clear back to the catalogue label.
+5. Inspect origin Energy before tick one, then after a tick with payment, shortage, and overflow evidence.
 6. Select an empty slot, construct successfully, and observe queue state.
-7. Trigger a retainable construction rejection, correct the draft, and commit.
-   In a separate deterministic branch, return `InvalidateRoot`, close the draft,
-   refresh the slot list, and retain no stale role or target selection.
-8. Enable Habitat generation; inspect functional/occupied/enabled state, exact
-   progress and required Energy, ready state, and toggle availability/reason;
-   observe preserved progress and unavailable states; advance until bootstrap
-   completes; and observe the derived local population count.
+7. Trigger a retainable construction rejection, correct the draft, and commit. In a separate deterministic branch, return `InvalidateRoot`, close the draft, refresh the slot list, and retain no stale role or target selection.
+8. Enable Habitat generation; inspect functional/occupied/enabled state, exact progress and required Energy, ready state, and toggle availability/reason; observe preserved progress and unavailable states; advance until bootstrap completes; and observe the derived local population count.
 9. Advance one tick successfully, then exercise a rejected uncommitted tick.
-10. Use a controllable clock to verify the default 5 ticks/sec pace, selectable
-    1/5/10 rates, pause, one-tick step while paused, resume, and between-tick
-    stop without real sleeps. In a separate run, reject a later tick, preserve
-    earlier committed rows, and leave the rejected tick uncommitted.
-11. Resize below minimum during a draft and during multi-tick; recover focus,
-    overlay, draft, and completed history without dispatching an extra intent.
-    A previously running batch recovers as Stopped and never resumes
-    automatically.
-12. Switch QWERTY/Colemak-DH layouts while arrow keys continue to work and text
-    fields consume printable input before global shortcuts.
+10. Use a controllable clock to verify the default 5 ticks/sec pace, selectable 1/5/10 rates, pause, one-tick step while paused, resume, and between-tick stop without real sleeps. In a separate run, reject a later tick, preserve earlier committed rows, and leave the rejected tick uncommitted.
+11. Resize below minimum during a draft and during multi-tick; recover focus, overlay, draft, and completed history without dispatching an extra intent. A previously running batch recovers as Stopped and never resumes automatically.
+12. Switch QWERTY/Colemak-DH layouts while arrow keys continue to work and text fields consume printable input before global shortcuts.
 13. Attempt to quit a live unsaved session, cancel by default, then confirm.
 
 ## Deferred design

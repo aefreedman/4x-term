@@ -10,27 +10,13 @@ source: "2026-07-21-stage-5a-tui-design-foundation-supplement.md"
 
 ## Reading the wireframes
 
-Each frame is exactly `160x45` ASCII cells. The panels use the complete
-workspace from rows 1–43; row 44 contains only stable global actions. Focused
-panel prompts appear on the panel's bottom interior row as button-like actions.
-Example labels and quantities are fixture data, not production balance promises.
-These reference compositions, component edge states, multi-tick behavior, and
-correctable-rejection behavior are approved in the design foundation.
+Each frame is exactly `160x45` ASCII cells. The panels use the complete workspace from rows 1–43; row 44 contains only stable global actions. Focused panel prompts appear on the panel's bottom interior row as button-like actions. Example labels and quantities are fixture data, not production balance promises. These reference compositions, component edge states, multi-tick behavior, and correctable-rejection behavior are approved in the design foundation.
 
-See the [design foundation](2026-07-21-stage-5a-tui-design-foundation-supplement.md)
-for component, interaction, knowledge, and application-view contracts.
+See the [design foundation](2026-07-21-stage-5a-tui-design-foundation-supplement.md) for component, interaction, knowledge, and application-view contracts.
 
 ### Navigation coherence amendment
 
-The dashboard and local compositions retain the reference geometry, but their
-original duplicated action hints are superseded by the active interaction
-rules. On the dashboard, only the System list is focused: Up/Down selects its
-visible rows, the map and summary panels synchronize read-only, and Enter opens
-controllable systems directly in local management while opening a browsable
-detail surface for read-only systems. In local management, only slot
-rows receive selection markers and Up/Down traverses those rows across body
-headings. Tab is not advertised where there is only one interactive focus
-target. See [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.md).
+The dashboard and local compositions retain the reference geometry, but their original duplicated action hints are superseded by the active interaction rules. On the dashboard, only the System list is focused: Up/Down selects its visible rows, the map and summary panels synchronize read-only, and Enter opens controllable systems directly in local management while opening a browsable detail surface for read-only systems. In local management, only slot rows receive selection markers and Up/Down traverses those rows across body headings. Tab is not advertised where there is only one interactive focus target. See [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.md).
 
 ## A. Startup and world preview
 
@@ -234,34 +220,19 @@ target. See [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.m
 
 ## Component edge-state references
 
-- Invalid form fields preserve entered text and show a concise diagnostic in
-  the owning panel.
+- Invalid form fields preserve entered text and show a concise diagnostic in the owning panel.
 - Empty lists retain their panel and say what is absent.
-- Overflowing lists keep selection visible and show hidden-row count near the
-  list, not in a global status footer.
+- Overflowing lists keep selection visible and show hidden-row count near the list, not in a global status footer.
 - Unavailable actions remain visible only when the reason helps the player.
-- A charted system list exposes `[r Rename]`; the alias editor keeps the stable
-  `FSC NNNNNN` label visible and offers Apply, Clear, and Back actions.
-- A running multi-tick panel exposes Space Pause and Esc Stop; while paused it
-  exposes Space Resume, Enter Step, and Esc Stop.
+- A charted system list exposes `[r Rename]`; the alias editor keeps the stable `FSC NNNNNN` label visible and offers Apply, Clear, and Back actions.
+- A running multi-tick panel exposes Space Pause and Esc Stop; while paused it exposes Space Resume, Enter Step, and Esc Stop.
 - Unknown values use `--`; zero is reserved for an observed exact zero.
 - Long labels truncate in collections and appear in full in selected detail.
 - Exact quantities remain unabridged and right-aligned.
-- The undersized view states required/current dimensions and exposes Settings,
-  resize recovery, and session-sensitive Quit without gameplay actions.
+- The undersized view states required/current dimensions and exposes Settings, resize recovery, and session-sensitive Quit without gameplay actions.
 
 ## Review notes
 
-The map is a full panel, not a graph or explanatory diagram. It renders only
-application-provided map visuals, player-known chart points, and current
-active-ship positions. A visual's pivot stays within four map units of its actual
-system and remains after discovery; the exact point overlays one cell as `*` or
-selected `@`. A ship is a yellow `+`; it carries no route, direction, type, or
-progress detail. Identified systems without an observed position stay in the
-synchronized system list with `--`; uncharted systems remain only an aggregate
-count.
+The map is a full panel, not a graph or explanatory diagram. It renders only application-provided map visuals, player-known chart points, and current active-ship positions. A visual's pivot stays within four map units of its actual system and remains after discovery; the exact point overlays one cell as `*` or selected `@`. A ship is a yellow `+`; it carries no route, direction, type, or progress detail. Identified systems without an observed position stay in the synchronized system list with `--`; uncharted systems remain only an aggregate count.
 
-The startup preview contains only seed, profile, and origin-facing gameplay
-information. Keyboard mode belongs to global user settings. Generator revision,
-fingerprint, provenance, canvas dimensions, and other debug/reproduction data
-do not appear in the human interface.
+The startup preview contains only seed, profile, and origin-facing gameplay information. Keyboard mode belongs to global user settings. Generator revision, fingerprint, provenance, canvas dimensions, and other debug/reproduction data do not appear in the human interface.
