@@ -6,35 +6,22 @@
 
 ### Added
 
-- A new human-play `4x-term` terminal experience with editable or random seeds,
-  generated-world previews, explicit start, safe terminal restoration, and a
-  keyboard-first `160x45` reference layout.
-- Origin development through resource production, construction queues,
-  Batteries, Extractors, Refineries, Habitats, population growth, and Shipyards.
-- Frontier expansion through probe scouting, delayed knowledge reports,
-  Shipyard projects, expedition travel, settlement, and expedition loss.
-- A synchronized frontier map and system list with deterministic uncertainty
-  visuals, aliases, active ship positions, and read-only knowledge details.
-- QWERTY and Colemak-DH navigation, contextual help, terminal-size recovery,
-  and interruptible manual batches at 1, 5, or 10 ticks per second.
-- Deterministic world identity derived from generator revision, seed, and strict
-  RON profile content, with `content/profiles/starter.ron` as the default profile.
-- Player knowledge and communication delay: hidden systems and routes stay
-  redacted, scouting and founding outcomes arrive later, and remote systems
-  become controllable only after settlement reports arrive.
-- Whole-world atomic simulation of Energy, resources, population, construction,
-  ships, and time.
+- A new human-play `4x-term` terminal experience with editable or random seeds, generated-world previews, explicit start, safe terminal restoration, and a keyboard-first `160x45` reference layout.
+- Origin development through resource production, construction queues, Batteries, Extractors, Refineries, Habitats, population growth, and Shipyards.
+- Frontier expansion through probe scouting, delayed knowledge reports, Shipyard projects, expedition travel, settlement, and expedition loss.
+- A synchronized frontier map and system list with deterministic uncertainty visuals, aliases, active ship positions, and read-only knowledge details.
+- QWERTY and Colemak-DH navigation, contextual help, terminal-size recovery, and interruptible manual batches at 1, 5, or 10 ticks per second.
+- Deterministic world identity derived from generator revision, seed, and strict RON profile content, with `content/profiles/starter.ron` as the default profile.
+- Player knowledge and communication delay: hidden systems and routes stay redacted, scouting and founding outcomes arrive later, and remote systems become controllable only after settlement reports arrive.
+- Whole-world atomic simulation of Energy, resources, population, construction, ships, and time.
 
 ### Changed
 
-- **Breaking:** replaced the trader-first authored market game with an
-  origin-first generated-world expansion game. Existing sessions and content
-  from earlier releases are not compatible.
+- **Breaking:** replaced the trader-first authored market game with an origin-first generated-world expansion game. Existing sessions and content from earlier releases are not compatible.
 
 ### Removed
 
-- The previous trader fleets, markets, Energy logistics contracts, governance,
-  intelligence, encyclopedia, and activity-based terminal interface.
+- The previous trader fleets, markets, Energy logistics contracts, governance, intelligence, encyclopedia, and activity-based terminal interface.
 
 ## 0.7.1 - 2026-07-20
 

@@ -18,7 +18,7 @@ This folder contains a small, rerunnable macOS bootstrap inspired by the setup u
    ./setup/bootstrap-macos.sh
    ```
 
-   Use `--skip-brew` when the Homebrew dependencies are already installed.
+Use `--skip-brew` when the Homebrew dependencies are already installed.
 
 4. Ensure the Rust user toolchain is on `PATH`, then verify the environment:
 
