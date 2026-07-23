@@ -4,6 +4,11 @@ type: design-current
 status: approved
 authority: normative
 horizon: current
+tags:
+  - ships
+  - expansion
+  - construction
+  - travel
 ---
 # Ships and Expansion
 

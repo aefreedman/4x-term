@@ -4,6 +4,11 @@ type: design-current
 status: approved
 authority: normative
 horizon: current
+tags:
+  - scouting
+  - knowledge
+  - visibility
+  - probes
 ---
 # Scouting and Knowledge
 

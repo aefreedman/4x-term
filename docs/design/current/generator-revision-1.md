@@ -4,6 +4,11 @@ type: design-current
 status: approved
 authority: normative
 horizon: current
+tags:
+  - world-generation
+  - generator-revision
+  - determinism
+  - testing
 ---
 # Frontier Generator Revision 1
 

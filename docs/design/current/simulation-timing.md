@@ -4,6 +4,11 @@ type: design-current
 status: approved
 authority: normative
 horizon: current
+tags:
+  - simulation
+  - ticks
+  - commands
+  - determinism
 ---
 # Simulation Timing
 

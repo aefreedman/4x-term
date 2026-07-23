@@ -4,6 +4,11 @@ type: design-current
 status: approved
 authority: normative
 horizon: current
+tags:
+  - world-generation
+  - origin
+  - frontier
+  - testing
 design_ids:
   - worldgen.constructive-origin
   - testing.generated-world-invariants

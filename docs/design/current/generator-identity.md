@@ -4,6 +4,11 @@ type: design-current
 status: approved
 authority: normative
 horizon: current
+tags:
+  - world-generation
+  - determinism
+  - generator-identity
+  - saves
 ---
 # Generator Identity
 

@@ -4,6 +4,11 @@ type: design-current
 status: approved
 authority: normative
 horizon: current
+tags:
+  - star-systems
+  - resources
+  - deposits
+  - production
 ---
 # Systems and Resources
 

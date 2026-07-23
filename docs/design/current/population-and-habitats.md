@@ -4,6 +4,11 @@ type: design-current
 status: approved
 authority: normative
 horizon: current
+tags:
+  - population
+  - habitats
+  - workforce
+  - upkeep
 ---
 # Population and Habitats
 
