@@ -12,3 +12,4 @@ target/
 
 # Generated Compound Game Dev artifact index.
 .compound-game-dev/
+.worktrees
