@@ -248,7 +248,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "game-app"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "game-content",
  "game-core",
@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "game-content"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "game-core",
  "ron",
@@ -269,14 +269,14 @@ dependencies = [
 
 [[package]]
 name = "game-core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "game-play"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "game-app",
  "game-tui",
@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "game-tui"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "crossterm",
  "game-app",
