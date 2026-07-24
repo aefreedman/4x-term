@@ -31,7 +31,7 @@ The audit distinguishes technical availability from dependability. Existing impl
 - current contracts indexed by [Current Design](../design/current/README.md);
 - the completed [Stage 4b bounded-expansion plan](2026-07-20-feature-constructive-world-generation-stage-4b-plan.md);
 - the completed and re-audited [Stage 5 playable-startup plan](2026-07-21-feature-playable-startup-stage-5-plan.md);
-- [Terminal UX Guidelines](../tui-ux-guidelines.md);
+- [Terminal Experience](../design/direction/terminal-experience.md), [current Terminal Interactions](../design/current/terminal-interactions.md), and the [Terminal UX Review Checklist](../tui-ux-guidelines.md);
 - TUI state, rendering, and focused interaction tests under `crates/game-tui/src/`;
 - application intents, views, assessments, and tests under `crates/game-app/src/`; and
 - deterministic simulation coverage under `crates/game-core/tests/` and `crates/game-core/src/stage5_boundary_tests.rs`.

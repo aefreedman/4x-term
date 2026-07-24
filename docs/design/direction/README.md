@@ -23,6 +23,7 @@ Direction records committed outcomes and principles that future design must hono
 - [World Structure](world-structure.md) — player origin, constructive generation, and pre-existing world texture.
 - [Prototype Migration](prototype-migration.md) — retained substrate and rejected compatibility obligations.
 - [Concentric Development](concentric-development.md) — three-ring prioritization, dependability, and bounded vertical slices.
+- [Terminal Experience](terminal-experience.md) — predictable keyboard-first focus, navigation, availability, and recovery.
 
 ## Decision references
 

@@ -450,7 +450,7 @@ TUI-state/input lane; owns semantic input, local state, drafts, and clock logic:
 
 Renderer lane; owns `game-tui/src/render/**` and semantic render tests:
 
-- [x] Implement the approved component language and `160x45` compositions, deterministic larger viewports, clipping/scrolling, and textual semantic cues. **Superseded composition:** later one-focus navigation, uncertainty visuals, and active ship markers replace portions of the reference wireframes; durable behavior is recorded in `docs/tui-ux-guidelines.md`.
+- [x] Implement the approved component language and `160x45` compositions, deterministic larger viewports, clipping/scrolling, and textual semantic cues. **Superseded composition:** later one-focus navigation, uncertainty visuals, and active ship markers replace portions of the reference wireframes; approved behavior is recorded in `docs/design/current/terminal-interactions.md` and durable interaction principles in `docs/design/direction/terminal-experience.md`.
 - [x] Accept the existing semantic `TestBackend` coverage for startup, dashboard, uncertainty/ship visuals, and size boundaries. Additional rejection, batch, alias, and extreme-content render cases are explicitly waived based on extensive playtesting; broad goldens remain excluded.
 
 Terminal lane; owns terminal lifecycle/event-loop code and dedicated tests:
@@ -512,7 +512,7 @@ A short deterministic fixture or explicit generated request demonstrates that an
 #### 5C-1 — Scouting contract gate (serial)
 
 - [x] Extend app contracts with Shipyard queue/probe-asset rows, enqueue and unstarted-cancel intents, knowledge-valid targets, effective jump limit, probe assessment, launch outcome, active redacted routes, missions, and awaiting-report state. **Superseded interaction:** planning defaults to maximum capability and exposes an optional explicitly applied override instead of requiring an up-front jump-limit choice.
-- [x] Compose all 5c surfaces from the established Stage 5 component language; later target/route-first interaction is recorded in `docs/tui-ux-guidelines.md`.
+- [x] Compose all 5c surfaces from the established Stage 5 component language; later target/route-first interaction is recorded in `docs/design/current/terminal-interactions.md`.
 - [ ] Commit the compiling contract and module exports before parallel lanes. **Historical deviation:** this separate gate commit did not occur.
 
 #### 5C-2 — Parallel application and TUI lanes

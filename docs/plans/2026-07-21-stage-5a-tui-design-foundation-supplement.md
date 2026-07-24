@@ -200,7 +200,7 @@ A focused editor consumes printable characters before semantic navigation or glo
 
 A composition must not imply more focus targets than it implements. Exactly one visible component owns directional input; every accepted direction changes a selection visible in that component; and the direction must agree with the rows' spatial arrangement. Tab is reserved for traversal between two or more interactive focus targets, never for traversing rows in a single list. A child surface must not retain navigation that changes an off-screen parent selection.
 
-Before approval, each surface needs an interaction table and a keyboard-only prediction walkthrough by a reviewer who has not been taught the controls. Rendering, routing, and state tests must be reviewed together rather than as independently correct layers. The active checklist and exact review procedure are in [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.md).
+Before approval, each surface needs an interaction table and a keyboard-only prediction walkthrough by a reviewer who has not been taught the controls. Rendering, routing, and state tests must be reviewed together rather than as independently correct layers. The durable principles are in [Terminal Experience](../design/direction/terminal-experience.md), and the exact review procedure is in the [Terminal UX Review Checklist](../tui-ux-guidelines.md).
 
 ## Surface inventory and navigation
 

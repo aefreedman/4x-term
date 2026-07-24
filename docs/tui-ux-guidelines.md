@@ -1,27 +1,17 @@
 ---
-title: "Terminal UX Guidelines and Review Checklist"
-type: design-guideline
+title: "Terminal UX Review Checklist"
+type: review-checklist
 status: active
+authority: procedural
 date: 2026-07-21
 ---
-# Terminal UX Guidelines and Review Checklist
+# Terminal UX Review Checklist
 
 ## Purpose
 
-This document turns the terminal design foundation's focus and navigation goals into reviewable interaction rules. It applies to every keyboard-driven surface, including temporary drafts and overlays.
+This checklist turns the committed [Terminal Experience](design/direction/terminal-experience.md) principles and approved [current terminal interactions](design/current/terminal-interactions.md) into reviewable evidence. It applies to every keyboard-driven surface, including temporary drafts and overlays.
 
-## Interaction rules
-
-1. **One visible focus.** Exactly one component owns directional input. Its border/title treatment must agree with the component containing the selected row. Read-only synchronized panels are never styled as focused.
-2. **Visible effects only.** A navigation event may change only state represented on the current surface. It must not move a cursor in a hidden list or retain an invalid child cursor after changing its parent.
-3. **Spatially honest directions.** Up/Down traverses vertically presented rows; Left/Right traverses horizontal choices or an explicitly pictured hierarchy. Do not assign directions merely because they are unused.
-4. **Focus and selection are distinct.** Focus identifies the component that receives input. Selection identifies one row inside it. Nested parent and child rows must not both use the same selection marker.
-5. **Tab means focus traversal.** Tab/Shift-Tab appears in hints and help only when a composition has at least two interactive focus targets with a defined order. It never substitutes for ordinary list traversal.
-6. **Activation must match its label.** Enter's contextual label names the resulting surface or action. Do not label an action “Details” when details are already visible or when it opens a management screen.
-7. **Unavailable transitions remain in context.** If inspection or management is unavailable, show the reason before activation and do not navigate to a dead-end screen.
-8. **Hints are executable contracts.** A focused panel owns its contextual action bar. Every shown action works in that context, and every discoverable primary action is shown there. The global bar contains only stable globals.
-9. **Screen changes reset dependent cursors.** Changing a parent selection or entering a child surface establishes a valid, visible child selection.
-10. **No memorized mode grammar.** Reusing a key with contextual meaning is acceptable only when focus, geometry, title, and hints make the meaning predictable before the key is pressed.
+The linked design pages own experience direction and current behavior. This page owns review procedure and does not override either contract.
 
 ## Required interaction table
 
@@ -39,29 +29,13 @@ Before implementing or approving a surface, record:
 | Unavailable case | Visible reason and retained context |
 | Refresh | Which focus, selection, and draft state survives a view refresh? |
 
-A blank or “implicit” answer is a design gap.
-
-## Dashboard interaction table
-
-| Item | Dashboard | Local management |
-| --- | --- | --- |
-| Entry | Start current preview or Esc from a child surface | Enter from a commandable system's detail surface |
-| Exit | Quit confirmation for the live session | Esc returns to dashboard |
-| Visible focus | System list | Bodies / Slots list |
-| Selection | Last selected visible system row | First visible slot on entry; retained visible slot after refresh |
-| Directions | Up/Down traverses system rows; map/detail synchronize read-only | Up/Down traverses visible slot rows across read-only body headings |
-| Tab order | None; only one interactive focus target | None; only one interactive focus target |
-| Enter | `[Enter Manage]` opens controllable systems directly; `[Enter Details]` opens received knowledge for read-only systems | Contextual commands use their named keys; Enter is not advertised |
-| Unavailable case | Read-only details remain browsable; management is offered only for commandable local systems | Unavailable Build/Habitat actions are omitted or explained in detail |
-| Refresh | Selected system remains visible and valid | Selected system and slot remain visible and valid |
-
-Probe planning treats target and calculated route as the primary decision. It uses the probe's maximum capability automatically; typed numbers create an optional maximum-jump-per-leg override. Edited overrides must be explicitly applied so route, Energy, and availability are refreshed before launch review.
+A blank or “implicit” answer is a design gap. Once approved, current behavior belongs in [Terminal Interactions](design/current/terminal-interactions.md) rather than being duplicated here.
 
 ## Review process
 
 ### 1. Static coherence review
 
-Compare the interaction table with rendering and routing code. Reject the surface if focus styling, key hints, and action handling disagree, even when each works independently.
+Compare the approved interaction table with rendering and routing code. Reject the surface if focus styling, key hints, and action handling disagree, even when each works independently.
 
 ### 2. Prediction walkthrough
 

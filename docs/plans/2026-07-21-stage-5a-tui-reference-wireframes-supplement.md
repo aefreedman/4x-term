@@ -16,7 +16,7 @@ See the [design foundation](2026-07-21-stage-5a-tui-design-foundation-supplement
 
 ### Navigation coherence amendment
 
-The dashboard and local compositions retain the reference geometry, but their original duplicated action hints are superseded by the active interaction rules. On the dashboard, only the System list is focused: Up/Down selects its visible rows, the map and summary panels synchronize read-only, and Enter opens controllable systems directly in local management while opening a browsable detail surface for read-only systems. In local management, only slot rows receive selection markers and Up/Down traverses those rows across body headings. Tab is not advertised where there is only one interactive focus target. See [Terminal UX Guidelines and Review Checklist](../tui-ux-guidelines.md).
+The dashboard and local compositions retain the reference geometry, but their original duplicated action hints are superseded by the active interaction rules. On the dashboard, only the System list is focused: Up/Down selects its visible rows, the map and summary panels synchronize read-only, and Enter opens controllable systems directly in local management while opening a browsable detail surface for read-only systems. In local management, only slot rows receive selection markers and Up/Down traverses those rows across body headings. Tab is not advertised where there is only one interactive focus target. See the approved [current Terminal Interactions](../design/current/terminal-interactions.md).
 
 ## A. Startup and world preview
 

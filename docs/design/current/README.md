@@ -26,6 +26,7 @@ These pages define approved current mechanics. No draft belongs in this folder. 
 | Knowledge facts, observations, and merging | [Scouting and Knowledge](scouting-and-knowledge.md) |
 | Ship projects, launch, travel, and founding | [Ships and Expansion](ships-and-expansion.md) |
 | Global phase order, activation, and atomicity | [Simulation Timing](simulation-timing.md) |
+| Current dashboard, local-management, and probe-planning behavior | [Terminal Interactions](terminal-interactions.md) |
 
 The owning page should state the complete formula or transition. Secondary pages should state only the consequence needed for their domain and link to the owner. Cross-domain invariants may be repeated when omission would make a page misleading, but mutable tuning values should link to their configuration source.
 
