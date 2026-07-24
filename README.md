@@ -34,6 +34,15 @@ cargo run -p game-play
 
 The startup screen defaults to `content/profiles/starter.ron` and seed `0`. Edit either field before generation if desired, preview the origin scaffold, and explicitly confirm Start. Press `?` for contextual help. Arrow keys always navigate; Settings switches between QWERTY (`hjkl`) and Colemak-DH (`unei`). Sessions are not saved.
 
+For an opt-in local semantic playtest trace, use `-T` or `--playtest-trace`:
+
+```bash
+cargo run -p game-play -- -T
+cargo run -p game-play -- --playtest-trace playtest-logs/my-session.ronl
+```
+
+With no explicit path, tracing writes a non-overwriting `.ronl` trace and sibling `.summary.ron` under the ignored `playtest-logs/` directory. Traces contain player-safe semantic actions and outcomes, not raw keys, screen contents, aliases, machine paths, or hidden world state. No data is transmitted.
+
 ## Validation
 
 The acceptance surface is buildability plus focused deterministic core, content, application, TUI-state, renderer, and terminal-lifecycle tests.

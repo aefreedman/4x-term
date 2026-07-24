@@ -1,13 +1,22 @@
 use crate::input::{Action, Direction, KeyboardLayout, map_key};
+use crate::playtest::{
+    DraftTransition, MilestoneKind, PlaytestEvent, StartupActionKind, TickSource, TraceDraftKind,
+    TraceIntentContext, TraceIntentKind, TraceModal, TraceScreen, TraceSurface,
+    expedition_assessment_event, outcome_view, probe_assessment_event, resolved_event, tick_event,
+};
 use crate::terminal::TerminalEvent;
 use crossterm::event::KeyEvent;
 use game_app::{
-    ActionAvailability, ApplicationError, ApplicationOutcome, BodyView, ContentId,
+    ActionAvailability, ApplicationError, ApplicationOutcome, AssetKindView, BodyView, ContentId,
     DraftDisposition, ExpeditionAssessmentView, ExpeditionReservations, GenerationPreviewView,
-    PlayingView, ProbeAssessmentView, ProfileDescriptor, Session, SessionIntent, SessionOutcome,
-    ShipActionView, ShipProjectKind, StartupCoordinator, StartupFailure, StartupView, TickStepView,
+    MissionView, PlayingView, ProbeAssessmentView, ProfileDescriptor, Session, SessionIntent,
+    SessionOutcome, ShipActionView, ShipProjectKind, StartupCoordinator, StartupFailure,
+    StartupView, TickStepView,
 };
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 pub const MIN_WIDTH: u16 = 160;
 pub const MIN_HEIGHT: u16 = 45;
@@ -127,6 +136,23 @@ pub enum Modal {
     Mission(Box<MissionDraft>),
 }
 
+struct PlaytestTraceState {
+    events: VecDeque<PlaytestEvent>,
+    milestones: BTreeSet<MilestoneKind>,
+    origin_id: Option<String>,
+    preview_generated: bool,
+    draft_resolved: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SemanticSnapshot {
+    surface: TraceSurface,
+    draft: Option<TraceDraftKind>,
+    selected_system: Option<ContentId>,
+    should_quit: bool,
+    playing: bool,
+}
+
 /// Stateful terminal adapter. It owns only presentation state plus the two
 /// public game-app coordinators; authoritative simulation remains in `Session`.
 pub struct TuiState {
@@ -151,6 +177,7 @@ pub struct TuiState {
     pub terminal_size: (u16, u16),
     pub should_quit: bool,
     pub default_batch_rate: u8,
+    playtest_trace: Option<PlaytestTraceState>,
 }
 
 impl TuiState {
@@ -180,7 +207,43 @@ impl TuiState {
             terminal_size: (MIN_WIDTH, MIN_HEIGHT),
             should_quit: false,
             default_batch_rate: 5,
+            playtest_trace: None,
         }
+    }
+
+    #[must_use]
+    pub fn enable_playtest_trace(mut self, package_version: &str) -> Self {
+        let (seed, profile_name) = self.startup_view.as_ref().map_or_else(
+            || (0, "profile".to_owned()),
+            |view| {
+                (
+                    view.seed_text.parse().unwrap_or_default(),
+                    view.profile.display_name.clone(),
+                )
+            },
+        );
+        let mut trace = PlaytestTraceState {
+            events: VecDeque::new(),
+            milestones: BTreeSet::new(),
+            origin_id: None,
+            preview_generated: false,
+            draft_resolved: false,
+        };
+        trace.events.push_back(PlaytestEvent::TraceStarted {
+            schema_version: crate::playtest::PLAYTEST_TRACE_SCHEMA_VERSION,
+            package_version: package_version.to_owned(),
+            seed,
+            profile_name,
+            current_tick: None,
+        });
+        self.playtest_trace = Some(trace);
+        self
+    }
+
+    pub(crate) fn drain_playtest_events(&mut self) -> VecDeque<PlaytestEvent> {
+        self.playtest_trace
+            .as_mut()
+            .map_or_else(VecDeque::new, |trace| std::mem::take(&mut trace.events))
     }
 
     #[must_use]
@@ -212,6 +275,127 @@ impl TuiState {
         self.startup_view.as_ref()?.preview.as_ref()
     }
 
+    fn current_tick(&self) -> Option<u64> {
+        self.playing_view.as_ref().map(|view| view.time.tick)
+    }
+
+    fn emit_playtest(&mut self, event: PlaytestEvent) {
+        if let Some(trace) = &mut self.playtest_trace {
+            trace.events.push_back(event);
+        }
+    }
+
+    fn semantic_snapshot(&self) -> SemanticSnapshot {
+        SemanticSnapshot {
+            surface: self.trace_surface(),
+            draft: self.trace_draft(),
+            selected_system: self.selected_system_id().cloned(),
+            should_quit: self.should_quit,
+            playing: self.is_playing(),
+        }
+    }
+
+    fn trace_surface(&self) -> TraceSurface {
+        TraceSurface {
+            screen: match self.screen {
+                Screen::Dashboard => TraceScreen::Dashboard,
+                Screen::SystemDetails => TraceScreen::SystemDetails,
+                Screen::Local => TraceScreen::Local,
+                Screen::Operations => TraceScreen::Operations,
+            },
+            modal: self.modal.as_ref().map(|modal| match modal {
+                Modal::Help => TraceModal::Help,
+                Modal::Settings => TraceModal::Settings,
+                Modal::Editor(_) => TraceModal::Editor,
+                Modal::Confirm(_) => TraceModal::Confirmation,
+                Modal::Rejection(_) => TraceModal::Rejection,
+                Modal::Batch(_) => TraceModal::Batch,
+                Modal::Mission(_) => TraceModal::Mission,
+            }),
+        }
+    }
+
+    fn trace_draft(&self) -> Option<TraceDraftKind> {
+        if self.construction.is_some() {
+            return Some(TraceDraftKind::Construction);
+        }
+        if let Some(draft) = &self.mission_draft {
+            return Some(match draft {
+                MissionDraft::Probe(_) => TraceDraftKind::Probe,
+                MissionDraft::Expedition(_) => TraceDraftKind::Expedition,
+            });
+        }
+        match self.modal.as_ref() {
+            Some(Modal::Confirm(Confirmation::Development { .. })) => {
+                Some(TraceDraftKind::DevelopmentOperation)
+            }
+            Some(Modal::Confirm(Confirmation::Habitat { .. })) => Some(TraceDraftKind::Habitat),
+            Some(Modal::Mission(mission)) => Some(match &**mission {
+                MissionDraft::Probe(_) => TraceDraftKind::Probe,
+                MissionDraft::Expedition(_) => TraceDraftKind::Expedition,
+            }),
+            _ => None,
+        }
+    }
+
+    fn observe_semantic_transition(&mut self, before: SemanticSnapshot) {
+        let after = self.semantic_snapshot();
+        let current_tick = self.current_tick();
+        if before.surface != after.surface {
+            self.emit_playtest(PlaytestEvent::SurfaceChanged {
+                from: before.surface,
+                to: after.surface,
+                current_tick,
+            });
+        }
+        if before.selected_system != after.selected_system
+            || before.surface.screen != after.surface.screen
+        {
+            self.emit_playtest(PlaytestEvent::SelectionChanged {
+                screen: after.surface.screen,
+                system_id: after.selected_system.map(|id| id.to_string()),
+                current_tick,
+            });
+        }
+        let resolved = self
+            .playtest_trace
+            .as_ref()
+            .is_some_and(|trace| trace.draft_resolved);
+        if before.draft != after.draft {
+            if let Some(kind) = before.draft
+                && !resolved
+            {
+                self.emit_playtest(PlaytestEvent::DraftChanged {
+                    kind,
+                    transition: DraftTransition::Cancelled,
+                    current_tick,
+                });
+            }
+            if let Some(kind) = after.draft {
+                self.emit_playtest(PlaytestEvent::DraftChanged {
+                    kind,
+                    transition: DraftTransition::Started,
+                    current_tick,
+                });
+            }
+        }
+        if !before.should_quit && after.should_quit {
+            if !before.playing && !after.playing {
+                self.emit_playtest(PlaytestEvent::StartupAction {
+                    kind: StartupActionKind::StartupAbandoned,
+                    succeeded: true,
+                    accepted_seed: None,
+                    accepted_profile_name: None,
+                    current_tick,
+                });
+            }
+            self.emit_playtest(PlaytestEvent::TraceEnded {
+                orderly: true,
+                final_tick: current_tick,
+            });
+        }
+    }
+
     pub fn handle_event(
         &mut self,
         event: TerminalEvent,
@@ -232,6 +416,20 @@ impl TuiState {
     }
 
     pub fn handle_action(&mut self, action: Action, now: Duration) -> Result<(), ApplicationError> {
+        let before = self.semantic_snapshot();
+        if let Some(trace) = &mut self.playtest_trace {
+            trace.draft_resolved = false;
+        }
+        let result = self.handle_action_inner(action, now);
+        self.observe_semantic_transition(before);
+        result
+    }
+
+    fn handle_action_inner(
+        &mut self,
+        action: Action,
+        now: Duration,
+    ) -> Result<(), ApplicationError> {
         // Safety has absolute precedence. Existing quit confirmation is still
         // operable, but no gameplay action can pass this branch.
         if self.undersized {
@@ -342,16 +540,34 @@ impl TuiState {
 
     fn generate(&mut self) {
         if let Some(startup) = self.startup.as_mut() {
-            let _ = startup.generate_preview();
+            let succeeded = startup.generate_preview().is_ok();
             self.startup_view = Some(startup.view());
-            if self
-                .startup_view
-                .as_ref()
-                .and_then(|view| view.preview.as_ref())
-                .is_some()
-            {
+            if succeeded {
                 self.startup_focus = 4;
             }
+            let was_generated = self
+                .playtest_trace
+                .as_ref()
+                .is_some_and(|trace| trace.preview_generated);
+            let kind = if succeeded {
+                if was_generated {
+                    StartupActionKind::PreviewRegenerated
+                } else {
+                    StartupActionKind::PreviewGenerated
+                }
+            } else {
+                StartupActionKind::PreviewGenerationFailed
+            };
+            if succeeded && let Some(trace) = &mut self.playtest_trace {
+                trace.preview_generated = true;
+            }
+            self.emit_playtest(PlaytestEvent::StartupAction {
+                kind,
+                succeeded,
+                accepted_seed: None,
+                accepted_profile_name: None,
+                current_tick: None,
+            });
         }
     }
 
@@ -362,17 +578,42 @@ impl TuiState {
         if startup.request_start_current_preview().is_err() {
             self.startup_view = Some(startup.view());
             self.startup = Some(startup);
+            self.emit_playtest(PlaytestEvent::StartupAction {
+                kind: StartupActionKind::PreviewAcceptanceFailed,
+                succeeded: false,
+                accepted_seed: None,
+                accepted_profile_name: None,
+                current_tick: None,
+            });
             return Ok(());
         }
         match startup.confirm_start_current_preview() {
             Ok(session) => {
-                self.playing_view = Some(session.playing_view()?);
+                let view = session.playing_view()?;
+                let accepted_seed = view.seed;
+                let accepted_profile_name = view.profile_name.clone();
+                self.observe_view_transition(None, &view);
+                self.playing_view = Some(view);
                 self.session = Some(session);
                 self.startup_view = None;
+                self.emit_playtest(PlaytestEvent::StartupAction {
+                    kind: StartupActionKind::PreviewAccepted,
+                    succeeded: true,
+                    accepted_seed: Some(accepted_seed),
+                    accepted_profile_name: Some(accepted_profile_name),
+                    current_tick: self.current_tick(),
+                });
             }
             Err(_) => {
                 self.startup_view = Some(startup.view());
                 self.startup = Some(startup);
+                self.emit_playtest(PlaytestEvent::StartupAction {
+                    kind: StartupActionKind::PreviewAcceptanceFailed,
+                    succeeded: false,
+                    accepted_seed: None,
+                    accepted_profile_name: None,
+                    current_tick: None,
+                });
             }
         }
         Ok(())
@@ -615,15 +856,15 @@ impl TuiState {
                                     self.modal = Some(Modal::Mission(mission));
                                     return Ok(());
                                 }
-                                let outcome =
-                                    self.session.as_mut().expect("playing session").dispatch(
-                                        SessionIntent::AssessProbeLaunch {
-                                            source_id: probe.source_id.clone(),
-                                            ship_id: probe.ship_id.clone(),
-                                            target_id: probe.target_id.clone(),
-                                            jump_limit,
-                                        },
-                                    )?;
+                                let outcome = self.dispatch_session(
+                                    SessionIntent::AssessProbeLaunch {
+                                        source_id: probe.source_id.clone(),
+                                        ship_id: probe.ship_id.clone(),
+                                        target_id: probe.target_id.clone(),
+                                        jump_limit,
+                                    },
+                                    TickSource::Direct,
+                                )?;
                                 if let SessionOutcome::ProbeAssessment(value) = outcome {
                                     *probe = value;
                                 }
@@ -1038,11 +1279,7 @@ impl TuiState {
                 reservations: None,
             }
         };
-        let outcome = self
-            .session
-            .as_mut()
-            .expect("playing session")
-            .dispatch(intent)?;
+        let outcome = self.dispatch_session(intent, TickSource::Direct)?;
         self.modal = match outcome {
             SessionOutcome::ProbeAssessment(value) => {
                 self.mission_jump_override = None;
@@ -1067,13 +1304,14 @@ impl TuiState {
         let MissionDraft::Probe(probe) = mission else {
             return Ok(());
         };
-        let outcome = self.session.as_mut().expect("playing session").dispatch(
+        let outcome = self.dispatch_session(
             SessionIntent::AssessProbeLaunch {
                 source_id: probe.source_id.clone(),
                 ship_id: probe.ship_id.clone(),
                 target_id: probe.target_id.clone(),
                 jump_limit: probe.maximum_jump_limit,
             },
+            TickSource::Direct,
         )?;
         if let SessionOutcome::ProbeAssessment(value) = outcome {
             *probe = value;
@@ -1111,13 +1349,14 @@ impl TuiState {
                     habitat: choices[next].clone(),
                     collector: choices[(next + 1) % choices.len()].clone(),
                 };
-                let outcome = self.session.as_mut().expect("playing session").dispatch(
+                let outcome = self.dispatch_session(
                     SessionIntent::AssessExpeditionLaunch {
                         source_id: expedition.source_id.clone(),
                         ship_id: expedition.ship_id.clone(),
                         target_id: expedition.target_id.clone(),
                         reservations: Some(reservations),
                     },
+                    TickSource::Direct,
                 )?;
                 if let SessionOutcome::ExpeditionAssessment(value) = outcome {
                     *expedition = value;
@@ -1168,12 +1407,7 @@ impl TuiState {
                 reservations: None,
             },
         };
-        match self
-            .session
-            .as_mut()
-            .expect("playing session")
-            .dispatch(intent)?
-        {
+        match self.dispatch_session(intent, TickSource::Direct)? {
             SessionOutcome::ProbeAssessment(value) => *mission = MissionDraft::Probe(value),
             SessionOutcome::ExpeditionAssessment(value) => {
                 *mission = MissionDraft::Expedition(value);
@@ -1224,15 +1458,199 @@ impl TuiState {
         Ok(())
     }
 
-    fn dispatch(
+    fn dispatch_session(
         &mut self,
         intent: SessionIntent,
-    ) -> Result<Option<ApplicationOutcome>, ApplicationError> {
+        tick_source: TickSource,
+    ) -> Result<SessionOutcome, ApplicationError> {
+        let kind = TraceIntentKind::from_intent(&intent);
+        let context = TraceIntentContext::from_intent(&intent);
+        let before_view = self.playing_view.clone();
+        self.emit_playtest(PlaytestEvent::IntentDispatched {
+            kind,
+            context: context.clone(),
+            current_tick: self.current_tick(),
+        });
+
         let outcome = self
             .session
             .as_mut()
             .expect("session exists while playing")
             .dispatch(intent)?;
+        let after_view = outcome_view(&outcome).cloned();
+        let outcome_tick = after_view
+            .as_ref()
+            .map(|view| view.time.tick)
+            .or_else(|| self.current_tick());
+        match &outcome {
+            SessionOutcome::Applied { outcome, .. }
+            | SessionOutcome::ProbeLaunched { outcome, .. }
+            | SessionOutcome::ExpeditionLaunched { outcome, .. }
+            | SessionOutcome::Rejected(outcome) => {
+                self.emit_playtest(resolved_event(outcome, outcome_tick));
+                self.observe_draft_outcome(outcome, outcome_tick);
+                if outcome.accepted {
+                    self.observe_accepted_intent(kind, &context, outcome_tick.unwrap_or_default());
+                }
+            }
+            SessionOutcome::Tick(step) => {
+                self.emit_playtest(tick_event(&step.delta, tick_source));
+                if !step.delta.newly_identified_systems.is_empty() {
+                    self.emit_milestone(
+                        MilestoneKind::FirstProbeReportReceived,
+                        step.delta.to_tick,
+                    );
+                }
+            }
+            SessionOutcome::ProbeAssessment(assessment) => {
+                self.emit_playtest(probe_assessment_event(assessment, outcome_tick));
+            }
+            SessionOutcome::ExpeditionAssessment(assessment) => {
+                self.emit_playtest(expedition_assessment_event(assessment, outcome_tick));
+            }
+        }
+        if let Some(after_view) = &after_view {
+            self.observe_view_transition(before_view.as_ref(), after_view);
+        }
+        Ok(outcome)
+    }
+
+    fn observe_draft_outcome(&mut self, outcome: &ApplicationOutcome, tick: Option<u64>) {
+        let kind = match outcome.intent {
+            game_app::IntentKind::Construction => Some(TraceDraftKind::Construction),
+            game_app::IntentKind::DevelopmentOperation => {
+                Some(TraceDraftKind::DevelopmentOperation)
+            }
+            game_app::IntentKind::Habitat => Some(TraceDraftKind::Habitat),
+            game_app::IntentKind::LaunchProbe => Some(TraceDraftKind::Probe),
+            game_app::IntentKind::LaunchExpedition => Some(TraceDraftKind::Expedition),
+            _ => None,
+        };
+        let Some(kind) = kind else {
+            return;
+        };
+        let transition = if outcome.accepted {
+            DraftTransition::Committed
+        } else {
+            match outcome.draft_disposition {
+                Some(DraftDisposition::Retain) => DraftTransition::Retained,
+                Some(DraftDisposition::InvalidateRoot) => DraftTransition::Invalidated,
+                None => return,
+            }
+        };
+        if let Some(trace) = &mut self.playtest_trace {
+            trace.draft_resolved = true;
+        }
+        self.emit_playtest(PlaytestEvent::DraftChanged {
+            kind,
+            transition,
+            current_tick: tick,
+        });
+    }
+
+    fn observe_accepted_intent(
+        &mut self,
+        kind: TraceIntentKind,
+        context: &TraceIntentContext,
+        tick: u64,
+    ) {
+        match kind {
+            TraceIntentKind::Construction => {
+                self.emit_milestone(MilestoneKind::FirstConstructionQueued, tick)
+            }
+            TraceIntentKind::DevelopmentOperation | TraceIntentKind::Habitat => {
+                self.emit_milestone(MilestoneKind::FirstDevelopmentOperationChanged, tick)
+            }
+            TraceIntentKind::EnqueueProbe => {
+                self.emit_milestone(MilestoneKind::FirstShipProjectQueued, tick)
+            }
+            TraceIntentKind::EnqueueExpedition => {
+                self.emit_milestone(MilestoneKind::FirstShipProjectQueued, tick);
+                self.emit_milestone(MilestoneKind::FirstExpeditionQueued, tick);
+            }
+            TraceIntentKind::LaunchProbe => {
+                self.emit_milestone(MilestoneKind::FirstProbeLaunched, tick)
+            }
+            TraceIntentKind::LaunchExpedition => {
+                self.emit_milestone(MilestoneKind::FirstExpeditionLaunched, tick)
+            }
+            _ => {}
+        }
+        let origin_id = self
+            .playtest_trace
+            .as_ref()
+            .and_then(|trace| trace.origin_id.as_deref());
+        if context
+            .system_id
+            .as_deref()
+            .is_some_and(|system_id| origin_id.is_some_and(|origin_id| system_id != origin_id))
+        {
+            self.emit_milestone(MilestoneKind::FirstDaughterGovernanceAction, tick);
+        }
+    }
+
+    fn observe_view_transition(&mut self, before: Option<&PlayingView>, after: &PlayingView) {
+        let tick = after.time.tick;
+        if before.is_none() {
+            if let Some(trace) = &mut self.playtest_trace {
+                trace.origin_id = after
+                    .local_systems
+                    .first()
+                    .map(|system| system.system_id.to_string());
+            }
+            self.emit_milestone(MilestoneKind::OriginCommandable, tick);
+        }
+        if let Some(before) = before
+            && development_count(after) > development_count(before)
+        {
+            self.emit_milestone(MilestoneKind::FirstDevelopmentCompleted, tick);
+        }
+        let before_probe_ready = before.is_some_and(|view| has_asset(view, true));
+        if !before_probe_ready && has_asset(after, true) {
+            self.emit_milestone(MilestoneKind::FirstProbeReady, tick);
+        }
+        let before_expedition_ready = before.is_some_and(|view| has_asset(view, false));
+        if !before_expedition_ready && has_asset(after, false) {
+            self.emit_milestone(MilestoneKind::FirstExpeditionReady, tick);
+        }
+        let before_awaiting_report = before.is_some_and(|view| {
+            view.probe_reports
+                .iter()
+                .any(|report| report.awaiting_report)
+        });
+        if !before_awaiting_report
+            && after
+                .probe_reports
+                .iter()
+                .any(|report| report.awaiting_report)
+        {
+            self.emit_milestone(MilestoneKind::FirstProbeAwaitingReport, tick);
+        }
+        let before_founding_outcome = before.is_some_and(has_founding_outcome);
+        if !before_founding_outcome && has_founding_outcome(after) {
+            self.emit_milestone(MilestoneKind::FirstFoundingOutcomeReceived, tick);
+        }
+        let before_local_count = before.map_or(0, |view| view.local_systems.len());
+        if before_local_count <= 1 && after.local_systems.len() > 1 {
+            self.emit_milestone(MilestoneKind::FirstDaughterCommandable, tick);
+        }
+    }
+
+    fn emit_milestone(&mut self, kind: MilestoneKind, tick: u64) {
+        let inserted = self
+            .playtest_trace
+            .as_mut()
+            .is_some_and(|trace| trace.milestones.insert(kind));
+        if inserted {
+            self.emit_playtest(PlaytestEvent::MilestoneObserved { kind, tick });
+        }
+    }
+
+    fn dispatch(
+        &mut self,
+        intent: SessionIntent,
+    ) -> Result<Option<ApplicationOutcome>, ApplicationError> {
+        let outcome = self.dispatch_session(intent, TickSource::Direct)?;
         match outcome {
             SessionOutcome::Applied { outcome, view } => {
                 self.replace_playing_view(view);
@@ -1304,11 +1722,7 @@ impl TuiState {
         now: Duration,
         paused_step: bool,
     ) -> Result<(), ApplicationError> {
-        let outcome = self
-            .session
-            .as_mut()
-            .expect("batch requires session")
-            .dispatch(SessionIntent::AdvanceOneTick)?;
+        let outcome = self.dispatch_session(SessionIntent::AdvanceOneTick, TickSource::Batch)?;
         match outcome {
             SessionOutcome::Tick(step) => {
                 self.replace_playing_view(step.view.clone());
@@ -1365,6 +1779,36 @@ impl TuiState {
             }
         }
     }
+}
+
+fn development_count(view: &PlayingView) -> usize {
+    view.local_systems
+        .iter()
+        .flat_map(|system| &system.bodies)
+        .flat_map(|body| &body.slots)
+        .filter(|slot| slot.development.is_some())
+        .count()
+}
+
+fn has_asset(view: &PlayingView, probe: bool) -> bool {
+    view.local_systems.iter().any(|system| {
+        system.completed_assets.iter().any(|asset| {
+            asset.ready
+                && matches!(
+                    (&asset.kind, probe),
+                    (AssetKindView::Probe, true) | (AssetKindView::Expedition { .. }, false)
+                )
+        })
+    })
+}
+
+fn has_founding_outcome(view: &PlayingView) -> bool {
+    view.missions.iter().any(|mission| {
+        matches!(
+            mission,
+            MissionView::Founded { .. } | MissionView::FoundingLost { .. }
+        )
+    })
 }
 
 fn offset(index: usize, delta: isize, len: usize) -> usize {

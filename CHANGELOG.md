@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Opt-in local playtest analytics through `-T` / `--playtest-trace`, with non-overwriting semantic RON-lines traces and derived summaries that preserve the player knowledge boundary.
+
 ## 0.8.0 - 2026-07-21
 
 ### Added

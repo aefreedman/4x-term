@@ -9,6 +9,7 @@
 # Rust build output and runtime diagnostics.
 target/
 *.log
+playtest-logs/
 
 # Generated Compound Game Dev artifact index.
 .compound-game-dev/

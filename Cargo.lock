@@ -280,6 +280,8 @@ version = "0.8.0"
 dependencies = [
  "game-app",
  "game-tui",
+ "ron",
+ "serde",
 ]
 
 [[package]]
@@ -289,6 +291,7 @@ dependencies = [
  "crossterm",
  "game-app",
  "ratatui",
+ "serde",
  "thiserror",
  "unicode-width",
 ]

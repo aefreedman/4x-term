@@ -1,4 +1,5 @@
 use crate::input::{Action, Direction};
+use crate::playtest::{MilestoneKind, PlaytestEvent, TickSource, TraceIntentKind};
 use crate::state::{
     BatchStatus, Confirmation, ConstructionDraft, MissionDraft, Modal, Screen, TuiState,
 };
@@ -8,10 +9,13 @@ use game_app::{
 };
 use std::{path::PathBuf, time::Duration};
 
+fn profile() -> ProfileDescriptor {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content/profiles/starter.ron");
+    ProfileDescriptor::new(path, "starter-profile")
+}
+
 fn playing_state() -> TuiState {
-    let profile =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content/profiles/starter.ron");
-    let mut state = TuiState::new(ProfileDescriptor::new(profile, "starter-profile"), 17);
+    let mut state = TuiState::new(profile(), 17);
     state.startup_focus = 3;
     state
         .handle_action(Action::Confirm, Duration::ZERO)
@@ -575,4 +579,171 @@ fn live_session_quit_defaults_to_cancel() {
         .handle_action(Action::Confirm, Duration::ZERO)
         .unwrap();
     assert!(state.should_quit);
+}
+
+#[test]
+fn traced_startup_records_only_logical_identity_and_origin_milestone() {
+    let mut state = TuiState::new(profile(), 17).enable_playtest_trace("test-version");
+    let started = state.drain_playtest_events();
+    assert!(matches!(
+        started.front(),
+        Some(PlaytestEvent::TraceStarted {
+            package_version,
+            seed: 17,
+            profile_name,
+            ..
+        }) if package_version == "test-version" && profile_name == "starter"
+    ));
+
+    state.startup_focus = 3;
+    state
+        .handle_action(Action::Confirm, Duration::ZERO)
+        .unwrap();
+    state.startup_focus = 4;
+    state
+        .handle_action(Action::Confirm, Duration::ZERO)
+        .unwrap();
+    let events = state.drain_playtest_events();
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        PlaytestEvent::MilestoneObserved {
+            kind: MilestoneKind::OriginCommandable,
+            tick: 0
+        }
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        PlaytestEvent::StartupAction {
+            kind: crate::playtest::StartupActionKind::PreviewAccepted,
+            succeeded: true,
+            accepted_seed: Some(17),
+            accepted_profile_name: Some(profile_name),
+            current_tick: Some(0)
+        } if profile_name == "starter"
+    )));
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        PlaytestEvent::MilestoneObserved {
+            kind: MilestoneKind::FirstDevelopmentCompleted,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn accepted_startup_identity_reflects_seed_edits_after_trace_start() {
+    let mut state = TuiState::new(profile(), 17).enable_playtest_trace("test-version");
+    state.drain_playtest_events();
+    state.startup_focus = 1;
+    state
+        .handle_action(Action::Confirm, Duration::ZERO)
+        .unwrap();
+    state.handle_action(Action::Delete, Duration::ZERO).unwrap();
+    state
+        .handle_action(Action::Character('4'), Duration::ZERO)
+        .unwrap();
+    state
+        .handle_action(Action::Character('2'), Duration::ZERO)
+        .unwrap();
+    state
+        .handle_action(Action::Confirm, Duration::ZERO)
+        .unwrap();
+    state.startup_focus = 3;
+    state
+        .handle_action(Action::Confirm, Duration::ZERO)
+        .unwrap();
+    state.startup_focus = 4;
+    state
+        .handle_action(Action::Confirm, Duration::ZERO)
+        .unwrap();
+
+    assert!(state.drain_playtest_events().iter().any(|event| matches!(
+        event,
+        PlaytestEvent::StartupAction {
+            kind: crate::playtest::StartupActionKind::PreviewAccepted,
+            accepted_seed: Some(42),
+            accepted_profile_name: Some(profile_name),
+            ..
+        } if profile_name == "starter"
+    )));
+}
+
+#[test]
+fn direct_and_batch_ticks_are_each_observed_exactly_once() {
+    let mut direct = playing_state().enable_playtest_trace("test-version");
+    direct.drain_playtest_events();
+    direct
+        .handle_action(Action::AdvanceOne, Duration::ZERO)
+        .unwrap();
+    let events = direct.drain_playtest_events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                PlaytestEvent::IntentDispatched {
+                    kind: TraceIntentKind::AdvanceOneTick,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                PlaytestEvent::TickAdvanced {
+                    source: TickSource::Direct,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+
+    let mut batch = playing_state().enable_playtest_trace("test-version");
+    batch.drain_playtest_events();
+    batch
+        .handle_action(Action::AdvanceMany, Duration::ZERO)
+        .unwrap();
+    batch
+        .handle_action(Action::Confirm, Duration::ZERO)
+        .unwrap();
+    batch.drain_playtest_events();
+    batch.advance_due(Duration::ZERO).unwrap();
+    let events = batch.drain_playtest_events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                PlaytestEvent::TickAdvanced {
+                    source: TickSource::Batch,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn confirmed_quit_emits_one_orderly_trace_end() {
+    let mut state = playing_state().enable_playtest_trace("test-version");
+    state.drain_playtest_events();
+    state.handle_action(Action::Quit, Duration::ZERO).unwrap();
+    state
+        .handle_action(Action::Confirm, Duration::ZERO)
+        .unwrap();
+    let events = state.drain_playtest_events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, PlaytestEvent::TraceEnded { orderly: true, .. }))
+            .count(),
+        1
+    );
 }

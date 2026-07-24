@@ -1,7 +1,7 @@
 ---
 title: "Playtest Analytics: Local Ring 1 Session Tracing"
 type: feature
-status: planned
+status: completed
 date: 2026-07-23
 tags:
   - analytics
@@ -16,6 +16,16 @@ tags:
 Add an opt-in, local playtest trace to augment the [Ring 1 Maturity Audit](2026-07-23-ring-1-maturity-audit.md) with descriptive behavioral evidence. The trace should connect semantic TUI interactions, application intents, player-visible consequences, and Ring 1 milestones without collecting raw keystrokes, transmitting data, exposing hidden world state, or turning generated-world observations into acceptance gates.
 
 The executable enables tracing with `-T` or `--playtest-trace`. Either form may omit its path and use a safe default under `playtest-logs/`.
+
+## Implementation audit — 2026-07-23
+
+The feature is implemented. `game-play` owns dependency-free CLI parsing, collision-safe raw/summary artifact reservation, compact RON-lines serialization, typed summary accumulation, and finalization after terminal cleanup. `game-tui` owns a no-I/O semantic event queue and an injectable fallible observer boundary. Ordinary and paced-batch application dispatch now pass through one observed path, while tracing-disabled startup remains unchanged.
+
+The trace records startup transitions, semantic surfaces and drafts, typed intents and outcomes, assessments, committed tick deltas, admitted selection changes, Ring 1 milestones, and orderly shutdown. Summaries report typed intent/rejection/assessment/draft/tick distributions, milestone intervals, admitted stock and population deltas, selection changes, and explicitly inferred possible-banking windows. Raw keys, rendered screens, aliases, machine paths, and privileged or unreceived world state are absent.
+
+The originally proposed normalized profile fingerprint is not present in `TraceStarted`: the approved startup/player boundary intentionally omits reproduction identity and exposing it solely for analytics would violate the plan's player-safe constraint. `TraceStarted` records the initial seed, display profile name, package version, and schema version; `PreviewAccepted` records the final admitted seed and profile name after startup edits. No in-game annotation UI was added.
+
+Validation passed formatting, workspace all-target/all-feature checking, Clippy with warnings denied, and the all-feature workspace suite (128 tests, none ignored). CLI/artifact tests cover default and explicit paths, collision handling, and no-overwrite behavior. TUI tests cover traced startup, direct and batch tick uniqueness, milestones, and orderly shutdown; existing deterministic core redaction tests continue to own hidden-route, report, and founding boundaries.
 
 ## Player and researcher outcome
 

@@ -12,6 +12,8 @@ path = "src/main.rs"
 [dependencies]
 game-app = { path = "../game-app" }
 game-tui = { path = "../game-tui" }
+ron.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true
