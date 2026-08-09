@@ -9,7 +9,8 @@ release:
   last_publish: null
   landed_commit: 54a12526daf14186be8a906b92b1139802c1f0a6
   ci_verified: true
-  ci_workflow: https://github.com/aefreedman/4x-term/actions/runs/31336279068
+  ci_verified_commit: 01dfa74083e369f141959e1e223164eebdad2561
+  ci_workflow: https://github.com/aefreedman/4x-term/actions/runs/31336409840
 epic_cycle:
   current_step: null
   next_skill: null
@@ -19,7 +20,7 @@ bug_cycle:
   completed_steps: []
 git:
   branch: main
-  hash: 54a1252
+  head_source: "Resolve the current commit with git rev-parse HEAD; do not persist a self-referential commit hash."
 active_decisions:
   - id: integration-workflow
     decision: "Use the solo-git workflow in specs/workflows/solo-git.yaml."
