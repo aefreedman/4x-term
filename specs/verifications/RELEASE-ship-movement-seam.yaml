@@ -1,0 +1,37 @@
+release_gate:
+  generated_at: "2026-08-09T21:12:20Z"
+  branch: refactor-ship-movement-seam
+  merge_base: f8751e968d78e95f75b86f6de29f407af5c199fc
+  verdict: PASS
+  preflight:
+    passed: true
+    note: "Passed during verify-work and audit-code; scripts/land-branch.sh reruns it immediately before integration."
+  coverage:
+    tool: "cargo-llvm-cov 0.8.7"
+    command: "cargo llvm-cov --workspace --all-features --summary-only"
+    overall_line_coverage: "81.76%"
+    overall_threshold: "80%"
+    changed_business_logic:
+      basis: "Instrumented lines added or changed versus main in crates/game-core/src/ships.rs and crates/game-core/src/simulation.rs"
+      covered_lines: 17
+      total_lines: 17
+      coverage: "100.00%"
+      threshold: "95%"
+    passed: true
+  security:
+    evidence: specs/security/REVIEW.md
+    production_diff_fresh: true
+    unresolved_high_findings: 0
+    passed: true
+  traceability:
+    evidence: specs/verifications/GATE-TRACE-ship-movement-seam.yaml
+    verdict: WAIVED
+    reason: "No active story or traceability inputs; direct evidence links were adversarially checked."
+  commit_hygiene:
+    conventional_commits: true
+    coauthor_footers_absent: true
+    secret_scan_passed: true
+  review:
+    self_audit: specs/verifications/AUDIT-ship-movement-seam.md
+    dual_blind_review: specs/verifications/REVIEW-ship-movement-seam.md
+    santa_and_gate: PASS

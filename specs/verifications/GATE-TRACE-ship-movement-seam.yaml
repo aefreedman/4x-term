@@ -1,0 +1,10 @@
+gate_trace:
+  verdict: WAIVED
+  generated_at: "2026-08-09T21:12:20Z"
+  rationale: "No active epic or story exists for this architecture refactor, and the repository has no traceability matrix or blind-spot inputs. The setup bug omitted the generator scripts. Commit-linked requirements, verification evidence, security review, self-audit, and dual-blind review were checked directly."
+  heuristic_ratio: null
+  downgrade_applied: false
+  completeness_critic: "WAIVED: the source-clone critic binds to the bigpowers repository and requires absent story traceability artifacts."
+  refutation:
+    attempted_gap: "The refactor might lack a story tag, verify evidence, or a security review."
+    result: "Not a real blocking gap: no story is active; specs/tech-architecture/REFACTOR_LATEST.md links the implementation and verification commits; specs/verifications/ship-movement-seam-verify.yaml and specs/security/REVIEW.md cover the complete production diff."

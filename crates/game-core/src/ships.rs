@@ -983,27 +983,41 @@ impl WorldState {
         }
         Ok(route)
     }
+
+    /// Advances ships in stable ship-ID order by at most one tick of their current leg.
+    /// Reached stops are observed after any final expedition settlement or loss.
+    pub(crate) fn move_ships(&mut self) -> Result<(), CoreError> {
+        move_ships(MovementPhaseContext {
+            time: self.time,
+            origin_system: &self.origin_system,
+            locations: &self.locations,
+            map_systems: &self.map_systems,
+            systems: &mut self.systems,
+            communities: &mut self.communities,
+            populations: &mut self.populations,
+            population_accounting: &mut self.population_accounting,
+            ships: &mut self.transit,
+            knowledge: &mut self.knowledge,
+            tuning: &self.tuning,
+        })
+    }
 }
 
-/// Aggregate context required for movement, arrival, population transfer, observations, and reports.
-pub(crate) struct MovementPhaseContext<'a> {
-    pub time: SimulationTime,
-    pub origin_system: &'a ContentId,
-    pub locations: &'a [LocationDefinition],
-    pub map_systems: &'a BTreeMap<ContentId, SystemMapDefinition>,
-    pub systems: &'a mut BTreeMap<ContentId, SystemState>,
-    pub communities: &'a mut BTreeMap<ContentId, CommunityDefinition>,
-    pub populations: &'a mut PopulationRegistry,
-    pub population_accounting: &'a mut PopulationAccounting,
-    pub ships: &'a mut Vec<TransitRecord>,
-    pub knowledge: &'a mut KnowledgeState,
-    pub tuning: &'a WorldTuning,
+struct MovementPhaseContext<'a> {
+    time: SimulationTime,
+    origin_system: &'a ContentId,
+    locations: &'a [LocationDefinition],
+    map_systems: &'a BTreeMap<ContentId, SystemMapDefinition>,
+    systems: &'a mut BTreeMap<ContentId, SystemState>,
+    communities: &'a mut BTreeMap<ContentId, CommunityDefinition>,
+    populations: &'a mut PopulationRegistry,
+    population_accounting: &'a mut PopulationAccounting,
+    ships: &'a mut Vec<TransitRecord>,
+    knowledge: &'a mut KnowledgeState,
+    tuning: &'a WorldTuning,
 }
 
-/// Phase 9 movement. Ships are processed in stable ship-ID order, each advances
-/// at most one tick of its current leg, and every reached stop observes in that
-/// same phase. Final expedition settlement/loss occurs before its observation.
-pub(crate) fn move_ships(mut context: MovementPhaseContext<'_>) -> Result<(), CoreError> {
+fn move_ships(mut context: MovementPhaseContext<'_>) -> Result<(), CoreError> {
     context
         .ships
         .sort_by(|left, right| left.ship_id.cmp(&right.ship_id));

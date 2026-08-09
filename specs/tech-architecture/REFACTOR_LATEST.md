@@ -8,7 +8,7 @@ The runtime behavior is not wrong. The architectural problem is a shallow crate-
 
 The preservation invariant is:
 
-> `WorldState::advance_tick` must preserve ship movement behavior: ships process in stable ship-ID order, advance at most one leg tick, resolve expedition settlement or loss before observation, schedule and receive information at the same ticks, preserve population and accounting invariants, and remain inside the atomic whole-tick transaction.
+> `WorldState::advance_tick` must preserve ship movement behavior. Ships process in stable ship-ID order. Each ship advances at most one leg tick. Expedition settlement or loss occurs before observation. Information is scheduled and received at the same ticks. Population and accounting invariants remain intact. Movement remains inside the atomic whole-tick transaction.
 
 ## Solution
 
@@ -18,7 +18,7 @@ Keep `MovementPhaseContext` as a private borrow-management implementation detail
 
 ## Commits
 
-1. Deepen the crate-internal ship-movement seam: add the world-owned movement operation, move context construction behind it, make the context and free implementation private, simplify the global tick caller, and clarify the movement description → verify: `cargo test -p game-core --test global_tick_integration --test ships_expansion && cargo test -p game-core --lib stage5_boundary_tests`
+1. Deepen the crate-internal ship-movement seam: add the world-owned movement operation, move context construction behind it, make the context and free implementation private, simplify the global tick caller, and clarify the movement description → verify: `cargo test -p game-core --all-features --test global_tick_integration --test ships_expansion && cargo test -p game-core --all-features --lib stage5_boundary_tests`
 
 After the focused verification, run the repository preflight before review: `cargo fmt --all -- --check && cargo check --workspace --all-targets --all-features && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features`.
 
@@ -52,3 +52,5 @@ After the focused verification, run the repository preflight before review: `car
 ## Further Notes
 
 The impact assessment classifies this as low risk because there is one production caller and existing deterministic tests exercise the behavior through the established world interface.
+
+Implementation commit: `b50c7f9 refactor(core): deepen ship movement boundary`. Verification evidence commit: `797c8c0 chore(verify): record ship movement evidence`.

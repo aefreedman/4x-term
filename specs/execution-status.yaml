@@ -1,2 +1,8 @@
 development_status:
   e00: complete
+
+gate_trace:
+  verdict: WAIVED
+  generated_at: "2026-08-09T21:12:20Z"
+  context: ship-movement-seam
+  evidence: specs/verifications/GATE-TRACE-ship-movement-seam.yaml

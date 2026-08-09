@@ -15,8 +15,8 @@ bug_cycle:
   current_step: null
   completed_steps: []
 git:
-  branch: bigpowers-test
-  hash: 1da3f4d
+  branch: refactor-ship-movement-seam
+  hash: 944450f
 active_decisions:
   - id: integration-workflow
     decision: "Use the solo-git workflow in specs/workflows/solo-git.yaml."
@@ -25,11 +25,11 @@ active_decisions:
     decision: "Expose ship movement to tick orchestration as one world-owned operation and keep MovementPhaseContext private inside the implementation."
     rationale: "The sole caller should not construct an eleven-field world-state partition; retaining the private context keeps the refactor small and preserves useful borrow management."
 handoff:
-  last_step_completed: "Assessed and planned the low-risk ship-movement seam refactor."
+  last_step_completed: "Prepared the Conventional Commits squash message for the verified ship-movement boundary refactor; the change is non-breaking and produces no semantic-release bump."
   open_decisions: []
   required_reading:
     - AGENTS.md
     - docs/architecture.md
     - docs/design/README.md
     - specs/tech-architecture/tech-stack.md
-  next_skill: kickoff-branch
+  next_skill: release-branch

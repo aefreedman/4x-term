@@ -1,0 +1,79 @@
+story_id: ship-movement-seam
+verified_at: "2026-08-09T20:41:14Z"
+verifier: verify-work
+risk: P1
+scope: "Behavior-preserving refactor governed by specs/tech-architecture/REFACTOR_LATEST.md; no active epic story."
+phases:
+  smoke:
+    passed: true
+    note: "Not applicable to this headless library refactor; public-interface integration tests provide the cold-start-equivalent evidence."
+  preflight:
+    passed: true
+    command: "cargo fmt --all -- --check && cargo check --workspace --all-targets --all-features && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features"
+    note: "Single full Preflight run passed before UAT."
+  build:
+    passed: true
+    command: "cargo check --workspace --all-targets --all-features"
+  typecheck:
+    passed: true
+    command: "cargo check --workspace --all-targets --all-features"
+  lint:
+    passed: true
+    command: "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings"
+  tests:
+    passed: true
+    command: "cargo test --workspace --all-features"
+    focused_result: "21 movement and Stage 5 boundary tests passed during implementation verification; the terminal verdict below reran 10 public-interface integration tests."
+  terminal_verdict:
+    command: "cargo test -p game-core --all-features --test global_tick_integration --test ships_expansion"
+    exit_code: 0
+    captured_at: "2026-08-09T20:41:14Z"
+    note: "One contiguous run; stdout and stderr were merged by 2>&1."
+    output: |
+      Finished `test` profile [unoptimized + debuginfo] target(s) in 1.36s
+      Running tests\global_tick_integration.rs (target\debug\deps\global_tick_integration-67470ce3c31210eb.exe)
+
+      running 3 tests
+      test generated_population_ids_remain_unique_through_departure_arrival_and_loss ... ok
+      test project_cancel_complete_launch_arrival_overflow_and_loss_reconcile_exactly ... ok
+      test two_system_tick_orders_production_arrival_observation_receipt_and_retention_exactly ... ok
+
+      test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+      Running tests\ships_expansion.rs (target\debug\deps\ships_expansion-09b08e010703a830.exe)
+
+      running 7 tests
+      test begun_shipyard_project_cancellation_rejects_without_mutating_world ... ok
+      test shipyards_have_independent_fifo_queues_pause_cancel_and_never_reuse_ids ... ok
+      test no_population_and_insufficient_launch_energy_reject_without_mutation ... ok
+      test probe_duration_one_multileg_stops_reveal_and_launch_rejections_are_exact ... ok
+      test simultaneous_summary_arrivals_succeed_then_lose_in_ship_id_order ... ok
+      test complete_knowledge_reserves_typed_slots_and_success_unlocks_only_after_report ... ok
+      test player_view_recomputes_active_route_revelation_and_hides_arrived_outcome ... ok
+
+      test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+  security:
+    passed: true
+    evidence: "specs/security/REVIEW.md"
+    high_findings: 0
+  blind_spots:
+    passed: true
+    method: manual_equivalent
+    note: "The setup bug omitted the project scripts. Source-clone scripts were not run because they bind to the bigpowers repository, omit Rust from code-file analysis, expect incompatible status values, and require a traceability matrix this repository does not have. Manual structural checks found no gap."
+  completeness:
+    passed: true
+    method: manual_equivalent
+    note: "The source-clone critic cannot validly target this worktree and requires absent story traceability artifacts. The branch diff, tests, security review, and evidence bundle were checked directly."
+  manual:
+    confirmed_at: "2026-08-09T20:41:14Z"
+    confirmation: "User replied: ok, proceed"
+    steps:
+      - step: "Confirm the behavior-preserving ship-movement seam refactor may proceed."
+        expected: "Ship travel, settlement or loss, observation, transmission timing, population accounting, and whole-tick rollback remain unchanged while tick orchestration stops constructing the eleven-field movement context."
+        actual: "Focused and full automated verification passed; the structural check confirmed simulation orchestration calls WorldState::move_ships and the context remains private."
+        passed: true
+  gaps:
+    closed: true
+    count: 0
+verdict: PASS
+next_skill: audit-code

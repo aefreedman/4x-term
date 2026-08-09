@@ -60,19 +60,7 @@ impl WorldState {
             self.construction_phase(id)?;
         }
         // 9. Movement, arrival/loss, observations, and due transmissions.
-        move_ships(MovementPhaseContext {
-            time: self.time,
-            origin_system: &self.origin_system,
-            locations: &self.locations,
-            map_systems: &self.map_systems,
-            systems: &mut self.systems,
-            communities: &mut self.communities,
-            populations: &mut self.populations,
-            population_accounting: &mut self.population_accounting,
-            ships: &mut self.transit,
-            knowledge: &mut self.knowledge,
-            tuning: &self.tuning,
-        })?;
+        self.move_ships()?;
         self.knowledge
             .receive_due(self.time.tick)
             .map_err(|error| CoreError::KnowledgeIntegration(error.to_string()))?;
