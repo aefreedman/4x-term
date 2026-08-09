@@ -1,0 +1,28 @@
+name: solo-git
+command: /ship
+description: "Verify and land completed feature work without routine pull-request ceremony."
+workflow_mode: solo-git
+terminal_states:
+  - success
+  - no-op
+  - blocked
+  - exhausted
+skills:
+  - order: 1
+    skill: audit-code
+    gate: "The code-quality audit passes."
+    verify: "cargo fmt --all -- --check && cargo check --workspace --all-targets --all-features && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features"
+  - order: 2
+    skill: commit-message
+    gate: "The proposed message follows Conventional Commits."
+    verify: "test -x .githooks/commit-msg"
+  - order: 3
+    skill: release-branch
+    args:
+      mode: solo-local
+    gate: "Release review confirms the branch is ready to land."
+    verify: "test \"$(git branch --show-current)\" != main && test \"$(git branch --show-current)\" != master"
+  - order: 4
+    command: "bash scripts/land-branch.sh <feature-branch> <conventional-message>"
+    gate: "Run only from the primary repository after release-branch approval."
+    verify: "test \"$(git branch --show-current)\" = main || test \"$(git branch --show-current)\" = master"

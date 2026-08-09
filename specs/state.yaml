@@ -1,0 +1,35 @@
+workflow_mode: solo-git
+active_flow: null
+active_epic_id: null
+active_story_id: null
+active_bug_id: null
+release:
+  target_version: null
+  last_tag: v0.8.0
+  last_publish: null
+epic_cycle:
+  current_step: null
+  next_skill: null
+  completed_steps: []
+bug_cycle:
+  current_step: null
+  completed_steps: []
+git:
+  branch: bigpowers-test
+  hash: 1da3f4d
+active_decisions:
+  - id: integration-workflow
+    decision: "Use the solo-git workflow in specs/workflows/solo-git.yaml."
+    rationale: "The repository is maintained by a solo developer without routine pull-request ceremony."
+  - id: deepen-ship-movement-seam
+    decision: "Expose ship movement to tick orchestration as one world-owned operation and keep MovementPhaseContext private inside the implementation."
+    rationale: "The sole caller should not construct an eleven-field world-state partition; retaining the private context keeps the refactor small and preserves useful borrow management."
+handoff:
+  last_step_completed: "Assessed and planned the low-risk ship-movement seam refactor."
+  open_decisions: []
+  required_reading:
+    - AGENTS.md
+    - docs/architecture.md
+    - docs/design/README.md
+    - specs/tech-architecture/tech-stack.md
+  next_skill: kickoff-branch

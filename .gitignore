@@ -11,6 +11,7 @@ target/
 *.log
 playtest-logs/
 
-# Generated Compound Game Dev artifact index.
+# Generated Compound Game Dev and bigpowers artifacts.
 .compound-game-dev/
+.bigpowers/
 .worktrees

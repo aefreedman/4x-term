@@ -28,3 +28,37 @@
 - When a generated-world failure occurs, reproduce and retain the failure class as a Tier 1 fixture where possible before fixing it.
 
 The current trader-first authored market network is a full replacement target, not a compatibility contract. During the migration, the workspace must remain buildable around retained contracts but need not remain playable. Delete obsolete code, content, tests, diagnostics, and docs instead of preserving compatibility or copying them into an archive; Git history is the recovery path.
+
+<!-- BEGIN bigpowers:project -->
+## Bigpowers workflow
+
+- Read `CONVENTIONS.md` before Git or GitHub operations.
+- Read `specs/state.yaml` before starting scoped work.
+- Keep planning and execution artifacts under `specs/`.
+- Keep game-design authority under `docs/design/`.
+- Use `workflow_mode: solo-git` for integration.
+- Run `/ship` through `specs/workflows/solo-git.yaml`.
+- Do not create `CLAUDE.md`; `AGENTS.md` is the sole agent-guidance file.
+<!-- END bigpowers:project -->
+
+<!-- BEGIN bigpowers:context-routing -->
+## Context routing
+
+| Scope | Required context |
+| --- | --- |
+| Architecture | `docs/architecture.md`, `specs/tech-architecture/tech-stack.md` |
+| Game design | `docs/design/README.md` and the applicable authority page |
+| Active delivery | `specs/state.yaml`, `specs/release-plan.yaml`, active epic capsule |
+| Testing | `AGENTS.md`, applicable test plan or story specification |
+<!-- END bigpowers:context-routing -->
+
+<!-- BEGIN bigpowers:learned-preferences -->
+## Learned preferences
+
+- Use `AGENTS.md` without a `CLAUDE.md` mirror.
+- Use the bigpowers `solo-git` workflow.
+
+## Workspace facts
+
+- `docs/design/README.md` owns project principles and design governance.
+<!-- END bigpowers:learned-preferences -->

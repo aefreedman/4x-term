@@ -1,0 +1,13 @@
+workflows:
+  survey-context:
+    status: done
+  scope-work:
+    status: pending
+  research-first:
+    status: pending
+  elaborate-spec:
+    status: pending
+  plan-release:
+    status: pending
+  slice-tasks:
+    status: pending

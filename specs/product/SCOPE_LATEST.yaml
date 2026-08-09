@@ -1,0 +1,6 @@
+status: uninitialized
+initiative: null
+in_scope: []
+out_of_scope: []
+notes:
+  - "No active initiative is scoped. Run scope-work before planning new implementation."

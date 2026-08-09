@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+branch="$(git branch --show-current)"
+if [[ "$branch" == "main" || "$branch" == "master" ]]; then
+  if [[ "${GIT_BIGPOWERS_LAND:-0}" != "1" ]]; then
+    echo "ERROR: Direct commits to protected branch '$branch' are forbidden." >&2
+    echo "Use a feature worktree and scripts/land-branch.sh." >&2
+    exit 1
+  fi
+fi
+
+secret_pattern='(sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xoxb-[A-Za-z0-9-]+|-----BEGIN ([A-Z ]+ )?PRIVATE KEY-----)'
+while IFS= read -r -d '' path; do
+  if git cat-file -e ":$path" 2>/dev/null && git show ":$path" 2>/dev/null | grep -aEq "$secret_pattern"; then
+    echo "ERROR: Staged file '$path' matches a blocked credential pattern." >&2
+    exit 1
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)

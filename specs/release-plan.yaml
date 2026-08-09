@@ -1,0 +1,19 @@
+release:
+  version: "0.8.1"
+  codename: Repository baseline
+  status: released
+  semantic_release: false
+  bump_hint: none
+epics:
+  - id: e00
+    title: Repository baseline
+    wsjf: 0
+    file: epics/archive/e00-repository-baseline/epic.yaml
+    capsule_dir: epics/archive/e00-repository-baseline
+bugs:
+  total: 0
+  fixed: 0
+  deferred: 0
+  wontfix: 0
+  open: 0
+  registry: bugs/registry.yaml

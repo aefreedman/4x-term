@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/master)
+      if [[ "${GIT_BIGPOWERS_LAND:-0}" != "1" ]]; then
+        echo "ERROR: Direct pushes to protected branch '${remote_ref#refs/heads/}' are forbidden." >&2
+        echo "Use scripts/land-branch.sh after release approval." >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
