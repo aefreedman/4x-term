@@ -7,6 +7,9 @@ release:
   target_version: null
   last_tag: v0.8.0
   last_publish: null
+  landed_commit: 54a12526daf14186be8a906b92b1139802c1f0a6
+  ci_verified: true
+  ci_workflow: https://github.com/aefreedman/4x-term/actions/runs/31336279068
 epic_cycle:
   current_step: null
   next_skill: null
@@ -15,8 +18,8 @@ bug_cycle:
   current_step: null
   completed_steps: []
 git:
-  branch: refactor-ship-movement-seam
-  hash: 944450f
+  branch: main
+  hash: 54a1252
 active_decisions:
   - id: integration-workflow
     decision: "Use the solo-git workflow in specs/workflows/solo-git.yaml."
@@ -25,11 +28,11 @@ active_decisions:
     decision: "Expose ship movement to tick orchestration as one world-owned operation and keep MovementPhaseContext private inside the implementation."
     rationale: "The sole caller should not construct an eleven-field world-state partition; retaining the private context keeps the refactor small and preserves useful borrow management."
 handoff:
-  last_step_completed: "Prepared the Conventional Commits squash message for the verified ship-movement boundary refactor; the change is non-breaking and produces no semantic-release bump."
+  last_step_completed: "Released the ship-movement boundary refactor to main as 54a1252; remote visibility and GitHub CI success were independently verified."
   open_decisions: []
   required_reading:
     - AGENTS.md
     - docs/architecture.md
     - docs/design/README.md
     - specs/tech-architecture/tech-stack.md
-  next_skill: release-branch
+  next_skill: survey-context
