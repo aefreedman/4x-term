@@ -1,0 +1,20 @@
+{
+  "generated_at": "2026-08-10T13:41:52.746278+00:00",
+  "matrix_version": "1.0",
+  "stories": [],
+  "summary": {
+    "total_stories": 0,
+    "tagged_stories": 0,
+    "dark_stories": [],
+    "dark_count": 0,
+    "orphan_tags": [],
+    "orphan_count": 0,
+    "stale_tags": [],
+    "stale_count": 0,
+    "oracle_stats": {
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    }
+  }
+}
